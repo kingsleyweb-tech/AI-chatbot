@@ -468,10 +468,152 @@ function UsageSection() {
               </ul>
             </div>
           )}
-          <p className="py-4 text-xs text-subtle">Token counts are reported by the provider. Free models report zero cost.</p>
+          <UsageBreakdown data={data} />
+          <p className="py-4 text-xs text-subtle">
+            Token counts and cost are as reported by the provider. Free models (including Gemini on the free tier) report zero cost. Counts cover the last 30 active days and are recorded on the server; they never include message text.
+          </p>
         </>
       )}
     </Section>
+  );
+}
+
+const PROVIDER_LABEL: Record<string, string> = { gemini: 'Google Gemini', openrouter: 'OpenRouter', serpapi: 'SerpAPI', tavily: 'Tavily' };
+const REASON_LABEL: Record<string, string> = {
+  smalltalk: 'Greeting or small talk',
+  math: 'Arithmetic',
+  writing: 'Writing task',
+  memory: 'About earlier chats',
+  document: 'About attached documents',
+  model_knowledge: 'Answered from model knowledge',
+  mode_manual: 'Search set to "only when I ask"',
+  empty: 'Empty message',
+  toggle: 'Search toggle on',
+  explicit_request: 'Asked to search',
+  url: 'Contained a link',
+  current_info: 'Needed current information',
+  eager: '"Whenever it may help" mode',
+  research_toggle: 'Deep Research toggle',
+  research_request: 'Asked for in-depth research',
+};
+
+function sumInto(target: Record<string, Record<string, number>>, src: Record<string, Record<string, number | undefined>> | undefined) {
+  for (const [k, v] of Object.entries(src ?? {})) {
+    const t = (target[k] ??= {});
+    for (const [f, n] of Object.entries(v ?? {})) if (typeof n === 'number') t[f] = (t[f] ?? 0) + n;
+  }
+}
+
+/** Providers, routing, web search and search decisions over the loaded days. */
+function UsageBreakdown({ data }: { data: UsageDay[] }) {
+  const t = useMemo(() => {
+    const providers: Record<string, Record<string, number>> = {};
+    const search: Record<string, Record<string, number>> = {};
+    const routing: Record<string, number> = {};
+    const decisions: Record<string, number> = {};
+    const reasons: Record<string, number> = {};
+    for (const d of data) {
+      sumInto(providers, d.providers);
+      sumInto(search, d.search);
+      for (const [k, n] of Object.entries(d.routing ?? {})) routing[k] = (routing[k] ?? 0) + (n ?? 0);
+      for (const [k, n] of Object.entries(d.searchDecisions ?? {})) if (typeof n === 'number') decisions[k] = (decisions[k] ?? 0) + n;
+      for (const [k, n] of Object.entries(d.searchDecisions?.reasons ?? {})) reasons[k] = (reasons[k] ?? 0) + n;
+    }
+    return { providers, search, routing, decisions, reasons };
+  }, [data]);
+
+  const decided = Object.values(t.decisions).reduce((a, b) => a + b, 0);
+  const searchedFresh = Object.values(t.search).reduce((a, s) => a + (s.requests ?? 0), 0);
+  const cached = Object.values(t.search).reduce((a, s) => a + (s.cached ?? 0), 0);
+  const credits = Object.values(t.search).reduce((a, s) => a + (s.credits ?? 0), 0);
+  const lookups = searchedFresh + cached;
+  const table = (rows: [string, ...(string | number)[]][], head: string[]) => (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-xs text-muted">
+            {head.map((h, i) => (
+              <th key={h} className={cn('pb-1 font-normal', i > 0 && 'text-right')}>
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(([name, ...cells]) => (
+            <tr key={name} className="border-t border-border">
+              <td className="py-1.5 pr-3">{name}</td>
+              {cells.map((c, i) => (
+                <td key={i} className="py-1.5 pl-3 text-right tabular-nums text-muted">
+                  {c}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+
+  return (
+    <>
+      {Object.keys(t.providers).length > 0 && (
+        <div className="py-4">
+          <div className="mb-2 text-xs text-muted">AI providers</div>
+          {table(
+            Object.entries(t.providers)
+              .sort((a, b) => Number(b[0] === 'gemini') - Number(a[0] === 'gemini'))
+              .map(([id, p]) => [PROVIDER_LABEL[id] ?? id, p.requests ?? 0, formatTokens(p.tokens ?? 0), p.failed ?? 0, p.rateLimited ?? 0]),
+            ['Provider', 'Replies', 'Tokens', 'Failed', 'Rate limited'],
+          )}
+          <p className="mt-2 text-xs text-subtle">
+            {t.routing.fallbacks ?? 0} fallbacks, {t.routing.providerSwitches ?? 0} switched provider, {t.routing.switched ?? 0} replies routed to a
+            different model than the one selected.
+          </p>
+        </div>
+      )}
+      {(decided > 0 || lookups > 0) && (
+        <div className="py-4">
+          <div className="mb-2 text-xs text-muted">Web search</div>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-3 pb-3 sm:grid-cols-4">
+            {[
+              ['Messages checked', decided.toLocaleString()],
+              ['Searches avoided', (t.decisions.none ?? 0).toLocaleString()],
+              ['Cache hit rate', lookups ? `${Math.round((cached / lookups) * 100)}%` : '–'],
+              ['Credits used', credits.toLocaleString()],
+            ].map(([k, v]) => (
+              <div key={k}>
+                <div className="text-xs text-muted">{k}</div>
+                <div className="mt-0.5 font-semibold tabular-nums">{v}</div>
+              </div>
+            ))}
+          </div>
+          {Object.keys(t.search).length > 0 &&
+            table(
+              Object.entries(t.search).map(([id, s]) => [PROVIDER_LABEL[id] ?? id, s.requests ?? 0, s.cached ?? 0, s.failed ?? 0, s.credits ?? 0]),
+              ['Provider', 'Searches', 'From cache', 'Failed', 'Credits'],
+            )}
+          {Object.keys(t.reasons).length > 0 && (
+            <>
+              <div className="mb-1 mt-4 text-xs text-muted">Why (decisions)</div>
+              <ul className="space-y-1 text-sm">
+                {Object.entries(t.reasons)
+                  .sort((a, b) => b[1] - a[1])
+                  .map(([k, v]) => (
+                    <li key={k} className="flex justify-between gap-4">
+                      <span className="truncate">{REASON_LABEL[k] ?? k}</span>
+                      <span className="tabular-nums text-muted">{v}</span>
+                    </li>
+                  ))}
+              </ul>
+            </>
+          )}
+          <p className="mt-2 text-xs text-subtle">
+            Deep Research runs: {t.decisions.research ?? 0}. Credits are counted by Tessera; the provider dashboards show the account totals.
+          </p>
+        </div>
+      )}
+    </>
   );
 }
 

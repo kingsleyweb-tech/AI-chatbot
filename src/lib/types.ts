@@ -139,4 +139,11 @@ export interface UsageDay {
   completionTokens?: number;
   cost?: number;
   models?: Record<string, { requests?: number; tokens?: number }>;
+  /** per AI provider (gemini, openrouter) */
+  providers?: Record<string, { requests?: number; tokens?: number; failed?: number; rateLimited?: number }>;
+  routing?: { fallbacks?: number; providerSwitches?: number; switched?: number };
+  /** per search provider (serpapi, tavily) */
+  search?: Record<string, { requests?: number; cached?: number; failed?: number; credits?: number }>;
+  /** decision engine outcomes: none/search/extract/research counts, plus reasons */
+  searchDecisions?: Record<string, number | Record<string, number> | undefined> & { reasons?: Record<string, number> };
 }
