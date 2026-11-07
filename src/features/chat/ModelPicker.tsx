@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion';
-import { Brain, Check, ChevronDown, Eye, RefreshCw, Search, Wrench } from 'lucide-react';
+import { Brain, Check, ChevronDown, Code2, Eye, Mic, RefreshCw, Search, Wrench } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ModelInfo } from '@shared/types';
@@ -20,6 +20,18 @@ export function CapabilityBadges({ m, compact }: { m: ModelInfo; compact?: boole
           {!compact && 'Vision'}
         </Badge>
       )}
+      {m.capabilities.audioInput && !compact && (
+        <Badge>
+          <Mic className="size-3" />
+          Audio
+        </Badge>
+      )}
+      {m.capabilities.code && !compact && (
+        <Badge>
+          <Code2 className="size-3" />
+          Code
+        </Badge>
+      )}
       {m.capabilities.reasoning && (
         <Badge>
           <Brain className="size-3" />
@@ -33,6 +45,7 @@ export function CapabilityBadges({ m, compact }: { m: ModelInfo; compact?: boole
         </Badge>
       )}
       {m.contextLength > 0 && <Badge>{formatTokens(m.contextLength)} ctx</Badge>}
+      {m.capabilities.imageOutput && !compact && <Badge>Image output (not used in app)</Badge>}
     </span>
   );
 }

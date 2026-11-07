@@ -5,12 +5,33 @@ import { retrieveDocuments } from '../docs/documents.js';
 import { embed } from '../embeddings.js';
 import { fieldPath, SERVER_TIME, type Write } from '../firestore.js';
 import { HttpError, sseEncode, sseHeaders } from '../http.js';
-import { extractAndStoreMemories, formatMemories, loadMemories, selectRelevant } from '../memory/memory.js';
-import { generateTitle, relatedConversations, updateConversationSummary } from '../memory/conversations.js';
-import { fallbackChain, getCatalog, providerFor } from '../providers/registry.js';
+import {
+  extractAndStoreMemories,
+  formatMemories,
+  loadMemories,
+  selectRelevant,
+} from '../memory/memory.js';
+import {
+  generateTitle,
+  relatedConversations,
+  updateConversationSummary,
+} from '../memory/conversations.js';
+import { getCatalog, providerFor } from '../providers/registry.js';
+import { routeModel } from '../router/route.js';
+import { detectTask } from '../router/task.js';
 import { ProviderError } from '../providers/types.js';
 import { gatherWebContext } from '../search/web.js';
-import type { ChatRequestBody, ModelInfo, ResearchStep, SearchInfo, Source, StreamEvent, UsageInfo } from '../shared/types.js';
+import type {
+  ApprovalRequest,
+  ChatRequestBody,
+  ModelInfo,
+  ResearchStep,
+  RouteInfo,
+  SearchInfo,
+  Source,
+  StreamEvent,
+  UsageInfo,
+} from '../shared/types.js';
 import { buildSystemPrompt, toProviderMessages, type UserSettings } from './prompt.js';
 
 const attachmentSchema = z.discriminatedUnion('kind', [
@@ -18,7 +39,10 @@ const attachmentSchema = z.discriminatedUnion('kind', [
     kind: z.literal('image'),
     name: z.string().max(300),
     mime: z.string().max(100),
-    dataUrl: z.string().max(1_500_000).regex(/^data:image\/(png|jpe?g|webp|gif);base64,/),
+    dataUrl: z
+      .string()
+      .max(1_500_000)
+      .regex(/^data:image\/(png|jpe?g|webp|gif);base64,/),
     width: z.number().optional(),
     height: z.number().optional(),
   }),
@@ -31,8 +55,16 @@ const attachmentSchema = z.discriminatedUnion('kind', [
 ]);
 
 export const chatRequestSchema = z.object({
-  conversationId: z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/),
-  assistantMessageId: z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/),
+  conversationId: z
+    .string()
+    .min(1)
+    .max(128)
+    .regex(/^[A-Za-z0-9_-]+$/),
+  assistantMessageId: z
+    .string()
+    .min(1)
+    .max(128)
+    .regex(/^[A-Za-z0-9_-]+$/),
   model: z.string().min(1).max(200),
   messages: z
     .array(
@@ -49,6 +81,7 @@ export const chatRequestSchema = z.object({
     autoSearch: z.boolean().optional(),
     deepResearch: z.boolean().optional(),
     memory: z.boolean(),
+    approvedPaidModel: z.string().max(200).nullable().optional(),
     documentIds: z.array(z.string().max(128)).max(10),
     projectId: z.string().max(128).nullable().optional(),
   }),
@@ -64,24 +97,66 @@ interface ConversationDoc {
   summaryAt?: string;
 }
 
+const APPROVAL_STOP = Symbol('approval_required');
+
+/** Honest statements about what this model / app can and cannot do for this request. */
+function capabilityNotes(
+  task: ReturnType<typeof detectTask>,
+  model: ModelInfo | undefined,
+): string[] {
+  const notes: string[] = [];
+  if (model) {
+    const inputs = [
+      'text',
+      model.capabilities.vision && 'images',
+      model.capabilities.audioInput && 'audio',
+    ]
+      .filter(Boolean)
+      .join(', ');
+    notes.push(
+      `You are running as ${model.name}, which accepts: ${inputs}. Never claim to see images, hear audio or read files that were not provided to you.`,
+    );
+  }
+  if (task.intent === 'imageGen' || task.intent === 'imageEdit') {
+    notes.push(
+      'Image generation and image editing are not available in this app. If the user asks you to create or edit an image, say so plainly. You may offer a detailed description, or a prompt they could use in an image tool. Never claim you produced or edited an image.',
+    );
+  }
+  return notes;
+}
+
 export function friendlyError(err: unknown): Extract<StreamEvent, { type: 'error' }> {
   if (err instanceof ProviderError) {
     const suggestion =
       err.code === 'insufficient_credits'
         ? 'Choose a free model, or add credits to your OpenRouter account.'
-        : err.code === 'rate_limited'
-          ? 'Wait a moment and retry, or switch to another model.'
-          : err.code === 'unsupported_input'
-            ? 'Switch to a model that supports images.'
-            : err.code === 'context_too_long'
-              ? 'Start a new chat or choose a model with a larger context window.'
-              : err.code === 'invalid_key'
-                ? 'Check the OPENROUTER_API_KEY server setting.'
-                : undefined;
-    return { type: 'error', code: err.code, message: err.message, retryable: err.retryable, suggestion };
+        : err.code === 'daily_limit'
+          ? 'Try again after the reset, or add OpenRouter credits (purchasing at least $10 raises the free-model limit). Tessera never buys credits for you.'
+          : err.code === 'rate_limited'
+            ? 'Wait a moment and retry, or switch to another model.'
+            : err.code === 'unsupported_input'
+              ? 'Switch to a model that supports images.'
+              : err.code === 'context_too_long'
+                ? 'Start a new chat or choose a model with a larger context window.'
+                : err.code === 'invalid_key'
+                  ? 'Check the OPENROUTER_API_KEY server setting.'
+                  : undefined;
+    return {
+      type: 'error',
+      code: err.code,
+      message: err.message,
+      retryable: err.retryable,
+      suggestion,
+    };
   }
-  if (err instanceof HttpError) return { type: 'error', code: err.code, message: err.message, retryable: false };
-  return { type: 'error', code: 'internal', message: 'Something went wrong while generating a response.', retryable: true };
+  if (err instanceof HttpError)
+    return { type: 'error', code: err.code, message: err.message, retryable: false };
+  return {
+    type: 'error',
+    code: 'internal',
+    message: 'Something went wrong while generating a response.',
+    retryable: true,
+  };
 }
 
 /**
@@ -101,15 +176,27 @@ export async function runChat(
   const convPath = `${base}/conversations/${body.conversationId}`;
   const lastUser = [...body.messages].reverse().find((m) => m.role === 'user');
   if (!lastUser) throw new HttpError(400, 'bad_request', 'No user message to answer.');
-  const needsVision = body.messages.slice(-3).some((m) => m.attachments?.some((a) => a.kind === 'image'));
 
-  // Load settings + conversation + catalog in parallel.
-  const [userDoc, convDoc, catalog] = await Promise.all([
+  // Load settings + conversation + catalog + attached document names in parallel.
+  const [userDoc, convDoc, catalog, docMetas] = await Promise.all([
     db.get<{ settings?: UserSettings; displayName?: string }>(base),
     db.get<ConversationDoc>(convPath),
     getCatalog().catch(() => null),
+    Promise.all(
+      body.options.documentIds.map((id) =>
+        db.get<{ name?: string; mime?: string }>(`${base}/documents/${id}`).catch(() => null),
+      ),
+    ),
   ]);
-  const settings: UserSettings = { ...(userDoc?.data.settings ?? {}), displayName: userDoc?.data.displayName };
+  const task = detectTask(
+    body.messages,
+    docMetas.filter((d) => d).map((d) => ({ name: d!.data.name ?? '', mime: d!.data.mime ?? '' })),
+  );
+  const needsVision = task.needsVision;
+  const settings: UserSettings = {
+    ...(userDoc?.data.settings ?? {}),
+    displayName: userDoc?.data.displayName,
+  };
   const memoryOn = body.options.memory && settings.memoryEnabled !== false;
   const projectId = body.options.projectId ?? convDoc?.data.projectId ?? null;
 
@@ -140,6 +227,8 @@ export async function runChat(
         const notices: string[] = [];
         let searchInfo: SearchInfo | null = null;
         let researchSteps: ResearchStep[] = [];
+        let routeInfo: RouteInfo | null = null;
+        let approval: ApprovalRequest | null = null;
         const notice = (message: string, model?: string) => {
           notices.push(message);
           send({ type: 'notice', message, ...(model ? { model } : {}) });
@@ -150,35 +239,80 @@ export async function runChat(
           controller.enqueue(encoder.encode(': ok\n\n'));
 
           const models: ModelInfo[] = catalog?.models ?? [];
-          const { chain, skipped } = fallbackChain(body.model, models, {
-            needsVision,
+          const nameOf = (id: string) => models.find((m) => m.id === id)?.name ?? id;
+          const route = routeModel(body.model, task, models, {
             paidAvailable: catalog?.paidAvailable ?? null,
+            approvedPaid: body.options.approvedPaidModel ?? null,
           });
-          if (!chain.length) {
+          if (route.kind === 'none') {
             throw new ProviderError(
               needsVision ? 'unsupported_input' : 'model_unavailable',
-              needsVision ? 'None of the configured models can read images.' : 'No available model could handle this request.',
+              route.reason,
               400,
             );
           }
-          const req = skipped.find((s) => s.id === body.model);
-          if (req) notice(`${body.model} ${req.reason}; using ${chain[0]} instead.`, chain[0]);
+          if (route.kind === 'approval') {
+            // Never spend money without permission: stop here and ask.
+            approval = {
+              model: route.model.id,
+              modelName: route.model.name,
+              reason: route.reason,
+              estCost: route.estCost,
+              creditsNeeded: route.creditsNeeded,
+            };
+            send({ type: 'approval_required', approval });
+            finishReason = 'approval_required';
+            status = 'error';
+            errorEvent = {
+              type: 'error',
+              code: 'approval_required',
+              message: route.creditsNeeded
+                ? `${route.reason} The OpenRouter account has no credits, so it cannot be used until credits are added.`
+                : `${route.reason} Approve it to continue.`,
+              retryable: false,
+            };
+            send({ type: 'done', finishReason, model: body.model });
+            // Leave the try block without generating; the message is still persisted below.
+            throw APPROVAL_STOP;
+          }
+          const chain = route.chain;
+          if (route.switched) {
+            routeInfo = {
+              ...route.switched,
+              fromName: nameOf(route.switched.from),
+              toName: nameOf(route.switched.to),
+            };
+            send({ type: 'route', info: routeInfo });
+          }
 
           // ---- Context assembly (in parallel) ----
           const queryText = lastUser.content.slice(0, 2000);
-          const queryEmbedding = memoryOn || body.options.documentIds.length ? await embed([queryText]) : null;
-          const query = { text: queryText, vector: queryEmbedding?.vectors[0], model: queryEmbedding?.model };
+          const queryEmbedding =
+            memoryOn || body.options.documentIds.length ? await embed([queryText]) : null;
+          const query = {
+            text: queryText,
+            vector: queryEmbedding?.vectors[0],
+            model: queryEmbedding?.model,
+          };
           const firstModel = models.find((m) => m.id === chain[0]);
           const contextWindow = firstModel?.contextLength || 32_000;
           const budget = Math.min(Math.floor(contextWindow * 0.6), 100_000);
 
           const [memories, related, project, docs, web] = await Promise.all([
-            memoryOn ? loadMemories(db, uid).then((m) => selectRelevant(m, query)).catch(() => []) : Promise.resolve([]),
             memoryOn
-              ? relatedConversations({ db, uid, excludeId: body.conversationId, query }).catch(() => [])
+              ? loadMemories(db, uid)
+                  .then((m) => selectRelevant(m, query))
+                  .catch(() => [])
+              : Promise.resolve([]),
+            memoryOn
+              ? relatedConversations({ db, uid, excludeId: body.conversationId, query }).catch(
+                  () => [],
+                )
               : Promise.resolve([]),
             projectId
-              ? db.get<{ name?: string; instructions?: string }>(`${base}/projects/${projectId}`).catch(() => null)
+              ? db
+                  .get<{ name?: string; instructions?: string }>(`${base}/projects/${projectId}`)
+                  .catch(() => null)
               : Promise.resolve(null),
             body.options.documentIds.length
               ? retrieveDocuments({
@@ -189,8 +323,15 @@ export async function runChat(
                   budgetTokens: Math.floor(budget * 0.5),
                   sourceOffset: 0,
                 }).catch((err) => {
-                  console.warn('[chat] document retrieval failed', err instanceof Error ? err.message : err);
-                  return { text: '', sources: [] as Source[], failed: ['attached documents (retrieval error)'] };
+                  console.warn(
+                    '[chat] document retrieval failed',
+                    err instanceof Error ? err.message : err,
+                  );
+                  return {
+                    text: '',
+                    sources: [] as Source[],
+                    failed: ['attached documents (retrieval error)'],
+                  };
                 })
               : Promise.resolve(null),
             gatherWebContext({
@@ -235,6 +376,10 @@ export async function runChat(
             failedDocuments: docs?.failed,
             webResults: web?.text || undefined,
             webSearchFailed: web?.failure ?? null,
+            capabilityNotes: capabilityNotes(
+              task,
+              models.find((m) => m.id === chain[0]),
+            ),
             deepResearch: Boolean(body.options.deepResearch && web?.text),
           });
 
@@ -286,9 +431,16 @@ export async function runChat(
             } catch (err) {
               if (signal.aborted) throw err;
               lastErr = err;
-              const canFallback = err instanceof ProviderError && err.fallbackable && !content && i < chain.length - 1;
+              const canFallback =
+                err instanceof ProviderError &&
+                err.fallbackable &&
+                !content &&
+                i < chain.length - 1;
               if (!canFallback) break;
-              notice(`${modelId}: ${(err as ProviderError).message} Trying ${chain[i + 1]}.`, chain[i + 1]);
+              notice(
+                `${modelId}: ${(err as ProviderError).message} Trying ${chain[i + 1]}.`,
+                chain[i + 1],
+              );
             }
           }
           if (lastErr) throw lastErr;
@@ -297,7 +449,9 @@ export async function runChat(
           }
           send({ type: 'done', finishReason, model: usedModel });
         } catch (err) {
-          if (signal.aborted) {
+          if (err === APPROVAL_STOP) {
+            // status and errorEvent were already set; nothing more to send
+          } else if (signal.aborted) {
             status = 'stopped';
           } else {
             status = 'error';
@@ -327,10 +481,18 @@ export async function runChat(
               status,
               sources,
               notices: notices.slice(0, 12),
+              route: routeInfo,
+              approval,
               search: searchInfo,
               researchSteps: researchSteps.slice(0, 20),
               usage,
-              error: errorEvent ? { code: errorEvent.code, message: errorEvent.message, suggestion: errorEvent.suggestion ?? null } : null,
+              error: errorEvent
+                ? {
+                    code: errorEvent.code,
+                    message: errorEvent.message,
+                    suggestion: errorEvent.suggestion ?? null,
+                  }
+                : null,
               createdAt: SERVER_TIME,
             },
           },
@@ -361,7 +523,10 @@ export async function runChat(
         try {
           await db.commit(writes);
         } catch (err) {
-          console.error('[chat] failed to persist assistant message', err instanceof Error ? err.message : err);
+          console.error(
+            '[chat] failed to persist assistant message',
+            err instanceof Error ? err.message : err,
+          );
         }
 
         // ---- Background jobs: title, memory, summary ----
@@ -387,7 +552,12 @@ export async function runChat(
                     conversationTitle: title,
                     userText: lastUser.content,
                     assistantText: content,
-                  }).catch((err) => console.warn('[memory] extraction failed', err instanceof Error ? err.message : err)),
+                  }).catch((err) =>
+                    console.warn(
+                      '[memory] extraction failed',
+                      err instanceof Error ? err.message : err,
+                    ),
+                  ),
                 );
                 const count = body.messages.length + 1;
                 if (count === 2 || count % 6 === 0) {
@@ -398,7 +568,9 @@ export async function runChat(
                       conversationId: body.conversationId,
                       title,
                       messages: [...body.messages, { role: 'assistant', content }],
-                    }).catch((err) => console.warn('[summary] failed', err instanceof Error ? err.message : err)),
+                    }).catch((err) =>
+                      console.warn('[summary] failed', err instanceof Error ? err.message : err),
+                    ),
                   );
                 }
               }

@@ -30,6 +30,7 @@ export type ProviderErrorCode =
   | 'insufficient_credits'
   | 'model_unavailable'
   | 'rate_limited'
+  | 'daily_limit'
   | 'timeout'
   | 'context_too_long'
   | 'unsupported_input'

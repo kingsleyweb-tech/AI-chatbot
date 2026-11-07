@@ -120,6 +120,26 @@ export interface Source {
   provider?: SearchProviderId;
 }
 
+/** The reply came from a different model than the selected one (one reply only). */
+export interface RouteInfo {
+  from: string;
+  to: string;
+  fromName: string;
+  toName: string;
+  reason: string;
+}
+
+/** Only a paid model can handle the request; the user must approve it. */
+export interface ApprovalRequest {
+  model: string;
+  modelName: string;
+  reason: string;
+  /** rough USD estimate from catalog pricing; not a bill */
+  estCost: number | null;
+  /** the provider account has no credits, so the request cannot run yet */
+  creditsNeeded: boolean;
+}
+
 export interface ChatTurn {
   role: 'user' | 'assistant';
   content: string;
@@ -139,6 +159,8 @@ export interface ChatRequestBody {
     /** multi-step research with a fixed search budget */
     deepResearch?: boolean;
     memory: boolean;
+    /** a paid model the user explicitly approved for this one request */
+    approvedPaidModel?: string | null;
     documentIds: string[];
     projectId?: string | null;
   };
@@ -156,6 +178,8 @@ export type StreamEvent =
   | { type: 'notice'; message: string; model?: string }
   | { type: 'sources'; sources: Source[] }
   | { type: 'search'; info: SearchInfo }
+  | { type: 'route'; info: RouteInfo }
+  | { type: 'approval_required'; approval: ApprovalRequest }
   | { type: 'research'; step: ResearchStep }
   | { type: 'context'; memories: number; documents: number; conversations: number }
   | { type: 'reasoning'; text: string }

@@ -23,6 +23,8 @@ export interface PromptContext {
   failedDocuments?: string[];
   webResults?: string;
   webSearchFailed?: string | null;
+  /** honest capability statements for this request */
+  capabilityNotes?: string[];
   /** structure the answer as a research report */
   deepResearch?: boolean;
   now?: Date;
@@ -58,6 +60,7 @@ export function buildSystemPrompt(ctx: PromptContext): string {
       'Your knowledge has a cutoff; for recent events say you may be out of date unless web results are provided.',
     ].join(' '),
   ];
+  if (ctx.capabilityNotes?.length) parts.push(ctx.capabilityNotes.join(' '));
   const prefs = [
     STYLE[s.responseStyle ?? 'balanced'],
     s.tone ? TONE[s.tone] : '',

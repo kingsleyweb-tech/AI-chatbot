@@ -194,7 +194,7 @@ export default function ChatPage() {
 
   // ----- actions -----
   const runGeneration = useCallback(
-    (cid: string, history: Message[], extraDocs?: string[]) => {
+    (cid: string, history: Message[], extraDocs?: string[], approvedPaidModel?: string) => {
       void generate({
         uid,
         conversationId: cid,
@@ -207,6 +207,8 @@ export default function ChatPage() {
           memory: settings.memoryEnabled,
           documentIds: extraDocs ?? docIds,
           projectId,
+          // explicit, one-request approval of a paid model (never remembered)
+          approvedPaidModel: approvedPaidModel ?? null,
         },
       });
       // Deep Research spends search credits, so it applies to one message at a time.
@@ -246,13 +248,14 @@ export default function ChatPage() {
     }
   };
 
-  const regenerate = async (m: Message) => {
+  const regenerate = async (m: Message, approvedPaidModel?: string) => {
     if (!conversationId) return;
     const idx = messages.findIndex((x) => x.id === m.id);
     if (idx < 0) return;
     const after = messages.slice(idx).map((x) => x.id);
     await deleteMessages(uid, conversationId, after).catch(() => undefined);
-    runGeneration(conversationId, messages.slice(0, idx));
+    clearLiveReply(conversationId);
+    runGeneration(conversationId, messages.slice(0, idx), undefined, approvedPaidModel);
   };
 
   const retry = () => {
@@ -280,7 +283,8 @@ export default function ChatPage() {
   };
 
   const actions: MessageActions = {
-    onRegenerate: regenerate,
+    onRegenerate: (m) => void regenerate(m),
+    onApprovePaid: (m, model) => void regenerate(m, model),
     onEdit: edit,
     onRetry: retry,
     onDelete: (m) => conversationId && deleteMessages(uid, conversationId, [m.id]).catch(() => toast('Could not delete.', 'error')),

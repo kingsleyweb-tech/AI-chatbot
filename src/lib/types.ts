@@ -1,7 +1,7 @@
 import type { Timestamp } from 'firebase/firestore';
-import type { Attachment, MemoryCategory, MessageStatus, ResearchStep, SearchInfo, Source, UsageInfo } from '@shared/types';
+import type { ApprovalRequest, Attachment, MemoryCategory, MessageStatus, ResearchStep, RouteInfo, SearchInfo, Source, UsageInfo } from '@shared/types';
 
-export type { Attachment, MemoryCategory, MessageStatus, ResearchStep, SearchInfo, Source, UsageInfo };
+export type { ApprovalRequest, Attachment, MemoryCategory, MessageStatus, ResearchStep, RouteInfo, SearchInfo, Source, UsageInfo };
 
 export type Theme = 'light' | 'dark' | 'system';
 export type Accent = 'teal' | 'cyan' | 'emerald' | 'blue' | 'amber' | 'graphite';
@@ -75,6 +75,8 @@ export interface Message {
   notices?: string[];
   search?: SearchInfo | null;
   researchSteps?: ResearchStep[];
+  route?: RouteInfo | null;
+  approval?: ApprovalRequest | null;
   usage?: UsageInfo | null;
   reasoning?: string | null;
   error?: { code: string; message: string; suggestion?: string | null } | null;

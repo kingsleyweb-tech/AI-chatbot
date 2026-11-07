@@ -4,6 +4,7 @@ import {
   Brain,
   Check,
   ChevronDown,
+  CircleDollarSign,
   Copy,
   FileText,
   Globe,
@@ -14,6 +15,7 @@ import {
   MoreHorizontal,
   Pencil,
   RefreshCw,
+  Shuffle,
   Sparkles,
   StepForward,
   Telescope,
@@ -22,7 +24,7 @@ import {
   VolumeX,
 } from 'lucide-react';
 import { memo, useState } from 'react';
-import type { QuickAction, ResearchStep, SearchInfo, Source } from '@shared/types';
+import type { ApprovalRequest, QuickAction, ResearchStep, RouteInfo, SearchInfo, Source } from '@shared/types';
 import { LogoMark } from '@/components/Logo';
 import { Markdown } from '@/components/Markdown';
 import { Button, IconButton, Menu, Textarea } from '@/components/ui';
@@ -162,6 +164,58 @@ export interface MessageActions {
   onToggleSave?: (m: Message, saved: boolean) => void;
   onQuickAction?: (action: QuickAction) => void;
   onRetry?: () => void;
+  /** resend this reply once with a paid model the user explicitly approved */
+  onApprovePaid?: (m: Message, model: string) => void;
+}
+
+function RouteNote({ route }: { route: RouteInfo }) {
+  return (
+    <div className="mb-2 flex items-start gap-1.5 text-xs text-muted">
+      <Shuffle className="mt-px size-3.5 shrink-0 text-accent" />
+      <span>
+        Answered by <span className="text-fg">{route.toName}</span> because {route.fromName} {route.reason}. Your selected model is unchanged.
+      </span>
+    </div>
+  );
+}
+
+function ApprovalCard({
+  approval,
+  canAct,
+  onApprove,
+}: {
+  approval: ApprovalRequest;
+  canAct: boolean;
+  onApprove: () => void;
+}) {
+  const cost =
+    approval.estCost == null ? 'unknown' : approval.estCost < 0.01 ? 'under $0.01' : `about $${approval.estCost.toFixed(2)}`;
+  return (
+    <div className="mt-1 rounded-xl border border-border px-3.5 py-3 text-[13px]">
+      <div className="flex items-start gap-2.5">
+        <CircleDollarSign className="mt-0.5 size-4 shrink-0 text-accent" />
+        <div className="min-w-0 flex-1 space-y-1">
+          <p className="font-medium text-fg">A paid model is needed for this request</p>
+          <p className="text-muted">{approval.reason}</p>
+          <p className="text-muted">
+            Estimated cost for this one reply: {cost} (estimate from list prices, not a bill). Nothing has been charged.
+          </p>
+          {approval.creditsNeeded && (
+            <p className="text-muted">
+              The OpenRouter account has no credits, so this model cannot run until credits are added. Tessera never buys credits for you.
+            </p>
+          )}
+        </div>
+      </div>
+      {canAct && !approval.creditsNeeded && (
+        <div className="mt-2.5 flex justify-end">
+          <Button size="sm" variant="outline" onClick={onApprove}>
+            Use {approval.modelName} once
+          </Button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export const UserMessage = memo(function UserMessage({
@@ -293,6 +347,8 @@ export const AssistantMessage = memo(function AssistantMessage({
   const model = live?.model ?? m.model;
   const error = live?.error ?? m.error;
   const status = live ? live.status : m.status;
+  const route = live ? live.route : m.route;
+  const approval = live ? live.approval : m.approval;
 
   return (
     <div className="group flex gap-3">
@@ -302,6 +358,7 @@ export const AssistantMessage = memo(function AssistantMessage({
         </div>
       </div>
       <div className="min-w-0 flex-1">
+        {route && <RouteNote route={route} />}
         <SearchStatus info={search} steps={researchSteps} live={streaming} />
         {notices.map((n, i) => (
           <div key={i} className="mb-2 rounded-lg bg-surface px-3 py-1.5 text-xs text-muted">
@@ -325,7 +382,14 @@ export const AssistantMessage = memo(function AssistantMessage({
           </div>
         )}
         {status === 'stopped' && <p className="mt-2 text-xs text-subtle">Stopped</p>}
-        {error && (status === 'error' || !content) && (
+        {approval && (
+          <ApprovalCard
+            approval={approval}
+            canAct={!live && isLast && !busy && Boolean(actions.onApprovePaid)}
+            onApprove={() => actions.onApprovePaid?.(m, approval.model)}
+          />
+        )}
+        {error && !approval && (status === 'error' || !content) && (
           <div className="mt-2 flex items-start gap-2.5 rounded-xl border border-border bg-danger-soft px-3 py-2.5 text-[13px]">
             <AlertCircle className="mt-0.5 size-4 shrink-0 text-danger" />
             <div className="min-w-0 flex-1">

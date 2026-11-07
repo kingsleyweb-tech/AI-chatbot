@@ -1,4 +1,4 @@
-import { ArrowUp, FileText, Globe, ImagePlus, Library, Loader2, Mic, Paperclip, Square, Telescope, TriangleAlert, X } from 'lucide-react';
+import { ArrowUp, FileText, Globe, ImagePlus, Library, Loader2, Mic, Paperclip, Square, Telescope, Info, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
 import type { ImageAttachment, ModelInfo } from '@shared/types';
 import { IconButton, Menu } from '@/components/ui';
@@ -130,9 +130,11 @@ export function Composer(props: ComposerProps) {
   return (
     <div className="mx-auto w-full max-w-3xl px-3 sm:px-4">
       {needsVisionSwitch && (
-        <div className="mb-2 flex items-center gap-2 rounded-xl border border-border bg-warn-soft px-3 py-2 text-[13px]">
-          <TriangleAlert className="size-4 shrink-0 text-warn" />
-          <span className="min-w-0 flex-1">{props.model!.name} can’t view images.</span>
+        <div className="mb-2 flex items-center gap-2 rounded-xl border border-border bg-surface px-3 py-2 text-[13px]">
+          <Info className="size-4 shrink-0 text-accent" />
+          <span className="min-w-0 flex-1 text-muted">
+            {props.model!.name} can’t view images, so this message will be answered by a free vision model. Your selected model stays the same.
+          </span>
           {props.visionAlternative && (
             <button
               className="shrink-0 font-medium text-accent hover:underline"

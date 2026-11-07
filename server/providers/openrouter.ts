@@ -70,6 +70,29 @@ export function mapModel(m: ORModel, featuredIds: string[]): ModelInfo {
   };
 }
 
+/** Free-model daily cap: remembered in-process until the next UTC midnight. */
+let freeDailyLimitUntil = 0;
+function nextUtcMidnight(now = Date.now()): number {
+  const d = new Date(now);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1);
+}
+export function markFreeDailyLimit(now = Date.now()) {
+  freeDailyLimitUntil = nextUtcMidnight(now);
+}
+export function freeDailyLimitActive(now = Date.now()): boolean {
+  return now < freeDailyLimitUntil;
+}
+export function resetFreeDailyLimit() {
+  freeDailyLimitUntil = 0;
+}
+function dailyLimitError(): ProviderError {
+  return new ProviderError(
+    'daily_limit',
+    'The daily limit for free OpenRouter models has been reached (50 requests per day on an account without purchased credits). It resets at midnight UTC.',
+    429,
+  );
+}
+
 /** Map an OpenRouter HTTP error to a typed ProviderError. */
 export function mapError(status: number, body: string): ProviderError {
   let message = body;
@@ -83,6 +106,12 @@ export function mapError(status: number, body: string): ProviderError {
   if (status === 401) return new ProviderError('invalid_key', 'The AI provider rejected the API key.', 401);
   if (status === 402)
     return new ProviderError('insufficient_credits', 'This model needs OpenRouter credits, and the account has none.', 402);
+  if (status === 429 && /per[- ]day|daily/.test(lower)) {
+    // Account-wide cap on free-model requests: every free model fails the same way
+    // until it resets, so trying other free models would only waste requests.
+    markFreeDailyLimit();
+    return dailyLimitError();
+  }
   if (status === 429) return new ProviderError('rate_limited', 'The model is rate-limited right now.', 429);
   if (status === 408) return new ProviderError('timeout', 'The model took too long to respond.', 504);
   if (status === 403 && lower.includes('moderation'))
@@ -156,6 +185,7 @@ export class OpenRouterProvider implements ChatProvider {
 
   async *stream(p: CompletionParams): AsyncGenerator<ProviderChunk> {
     const headers = this.headers(); // throws not_configured before any network call
+    if (p.model.endsWith(':free') && freeDailyLimitActive()) throw dailyLimitError();
     const connect = new AbortController();
     const timer = setTimeout(() => connect.abort(), CONNECT_TIMEOUT_MS);
     const signals = [connect.signal, p.signal].filter(Boolean) as AbortSignal[];
@@ -239,6 +269,7 @@ export class OpenRouterProvider implements ChatProvider {
   }
 
   async complete(p: CompletionParams): Promise<string> {
+    if (p.model.endsWith(':free') && freeDailyLimitActive()) throw dailyLimitError();
     const signals = [AbortSignal.timeout(CONNECT_TIMEOUT_MS), p.signal].filter(Boolean) as AbortSignal[];
     let res: Response;
     try {
