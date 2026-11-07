@@ -9,6 +9,7 @@ import { db } from '@/lib/firebase';
 import { useDocument, useQuery } from '@/lib/hooks';
 import { ttsSupported } from '@/lib/speech';
 import type { Accent, Theme, UsageDay, UserSettings } from '@/lib/types';
+import type { AiConfig } from '@shared/types';
 import { cn, formatTokens, isIOS, isStandalone, modelShortName } from '@/lib/utils';
 import { BOOTSTRAP_ADMINS, useAuth, useUid } from '@/state/auth';
 import { useCatalog } from '@/state/catalog';
@@ -274,8 +275,13 @@ function ModelsSection() {
       </Row>
       <Row title="Provider" description="Model access is proxied through the server. The API key is never sent to this device.">
         <span className="text-sm text-muted">
-          {caps?.providers.length ? caps.providers.map((p) => (p === 'openrouter' ? 'OpenRouter' : p)).join(', ') : 'Not configured'}
-          {catalog && (catalog.paidAvailable ? ' · paid models enabled' : ' · free models only (no credits)')}
+          {caps?.providers.length
+            ? [...caps.providers]
+                .sort((a, b) => Number(a !== (catalog?.preferredProvider ?? 'gemini')) - Number(b !== (catalog?.preferredProvider ?? 'gemini')))
+                .map((p, i) => `${p === 'openrouter' ? 'OpenRouter' : p === 'gemini' ? 'Google Gemini' : p}${caps.providers.length > 1 ? (i === 0 ? ' (primary)' : ' (secondary)') : ''}`)
+                .join(', ')
+            : 'Not configured'}
+          {catalog && (catalog.paidAvailable ? ' · OpenRouter paid models enabled' : ' · OpenRouter free models only (no credits)')}
         </span>
       </Row>
       <Row title="Web search" description="SerpAPI handles general and news searches; Tavily handles research and page reading. Keys stay on the server.">
@@ -315,7 +321,63 @@ function ModelsSection() {
           Refresh
         </Button>
       </Row>
+      <AdminAiRows />
     </Section>
+  );
+}
+
+/** App-wide AI routing settings (Firestore config/ai). Admins only. */
+function AdminAiRows() {
+  const { admin } = useAuth();
+  const toast = useToast();
+  const { catalog } = useCatalog();
+  const cfg = useDocument<Partial<AiConfig>>(doc(db, 'config', 'ai'), []);
+  if (!admin) return null;
+  const current: AiConfig = {
+    preferredProvider: cfg.data?.preferredProvider ?? 'gemini',
+    defaultModel: cfg.data?.defaultModel ?? null,
+    fallback: cfg.data?.fallback ?? 'any',
+  };
+  const save = async (patch: Partial<AiConfig>) => {
+    try {
+      await setDoc(doc(db, 'config', 'ai'), { ...current, ...patch, updatedAt: serverTimestamp() });
+      toast('Saved. The server picks this up within 5 minutes.');
+    } catch {
+      toast('Could not save. Deploy the latest Firestore rules first.', 'error');
+    }
+  };
+  return (
+    <>
+      <h3 className="mt-6 text-xs font-medium uppercase tracking-wide text-muted">Admin: AI routing (all users)</h3>
+      <Row title="Preferred provider" description="Tried first whenever Tessera picks a model automatically. A model a user chose is always kept when it can answer.">
+        <Select
+          className="sm:w-48"
+          value={current.preferredProvider}
+          onChange={(v) => void save({ preferredProvider: v as AiConfig['preferredProvider'] })}
+          options={[
+            { value: 'gemini', label: 'Google Gemini' },
+            { value: 'openrouter', label: 'OpenRouter' },
+          ]}
+        />
+      </Row>
+      <Row title="App default model" description="For users who have not chosen a default model themselves.">
+        <div className="-mx-2.5">
+          <ModelPicker value={current.defaultModel ?? catalog?.defaultModel ?? ''} onChange={(id) => void save({ defaultModel: id })} align="end" />
+        </div>
+      </Row>
+      <Row title="Automatic fallback" description="When a model fails with a recoverable error (busy, quota, outage). Paid models are never used without the user's approval.">
+        <Select
+          className="sm:w-56"
+          value={current.fallback}
+          onChange={(v) => void save({ fallback: v as AiConfig['fallback'] })}
+          options={[
+            { value: 'any', label: 'Any free model, any provider' },
+            { value: 'same_provider', label: 'Same provider only' },
+            { value: 'off', label: 'Off (show the error)' },
+          ]}
+        />
+      </Row>
+    </>
   );
 }
 

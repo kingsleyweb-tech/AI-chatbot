@@ -148,7 +148,7 @@ export default function ChatPage() {
   const attachedDocs = useMemo(() => allDocs.filter((d) => docIds.includes(d.id)), [allDocs, docIds]);
 
   // ----- model -----
-  const fallbackDefault = catalog?.defaultModel ?? 'nvidia/nemotron-3-ultra-550b-a55b:free';
+  const fallbackDefault = catalog?.defaultModel ?? 'gemini:gemini-3.5-flash';
   const modelId = (conversationId ? conv?.model : draftModel) ?? settings.defaultModel ?? fallbackDefault;
   const model = getModel(modelId);
   const visionAlternative = useMemo<ModelInfo | undefined>(() => {

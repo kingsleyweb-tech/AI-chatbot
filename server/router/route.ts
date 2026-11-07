@@ -17,6 +17,10 @@ export interface RouteOptions {
   /** a paid model the user approved for this one request */
   approvedPaid?: string | null;
   maxChain?: number;
+  /** provider ranked first among capable free models (admin setting, default gemini) */
+  preferredProvider?: 'gemini' | 'openrouter';
+  /** automatic fallback policy (admin setting) */
+  fallback?: 'any' | 'same_provider' | 'off';
 }
 
 export type RouteResult =
@@ -59,12 +63,12 @@ function preferenceList(task: Task, selected?: ModelInfo): string[] {
   return TASK_PREFERENCES.general;
 }
 
-function rankCandidates(models: ModelInfo[], prefs: string[]): ModelInfo[] {
+function rankCandidates(models: ModelInfo[], prefs: string[], preferred?: string): ModelInfo[] {
   const fallbacks = modelConfig().fallbackModels;
   const score = (m: ModelInfo) => {
     const p = prefs.indexOf(m.id);
     const f = fallbacks.indexOf(m.id);
-    return [p === -1 ? 999 : p, f === -1 ? 999 : f, m.featured ? 0 : 1, -m.contextLength];
+    return [preferred && m.provider !== preferred ? 1 : 0, p === -1 ? 999 : p, f === -1 ? 999 : f, m.featured ? 0 : 1, -m.contextLength];
   };
   return [...models].sort((a, b) => {
     const sa = score(a);
@@ -74,7 +78,41 @@ function rankCandidates(models: ModelInfo[], prefs: string[]): ModelInfo[] {
   });
 }
 
+/**
+ * Which chain entry to try after a failure, or -1 to stop. Failures that hit a
+ * whole provider (free daily cap, rejected key) skip to another provider, so
+ * no request is wasted on models that cannot work. Non-recoverable errors
+ * (bad request, content policy) never fall back.
+ */
+export function nextInChain(
+  chain: string[],
+  i: number,
+  err: { code: string; fallbackable: boolean },
+  providerOf: (id: string) => string,
+): number {
+  if (err.code === 'daily_limit' || err.code === 'invalid_key') {
+    return chain.findIndex((id, j) => j > i && providerOf(id) !== providerOf(chain[i]));
+  }
+  return err.fallbackable && i < chain.length - 1 ? i + 1 : -1;
+}
+
+/** Apply the admin fallback policy to a chain (the first entry is always kept). */
+export function applyFallbackPolicy(chain: string[], catalog: ModelInfo[], policy: RouteOptions['fallback'] = 'any'): string[] {
+  if (policy === 'off') return chain.slice(0, 1);
+  if (policy === 'same_provider') {
+    const providerOf = (id: string) => catalog.find((m) => m.id === id)?.provider ?? (id.startsWith('gemini:') ? 'gemini' : 'openrouter');
+    const first = providerOf(chain[0]);
+    return chain.filter((id) => providerOf(id) === first);
+  }
+  return chain;
+}
+
 export function routeModel(selectedId: string, task: Task, catalog: ModelInfo[], opts: RouteOptions): RouteResult {
+  const r = routeInner(selectedId, task, catalog, opts);
+  return r.kind === 'ok' && r.chain.length ? { ...r, chain: applyFallbackPolicy(r.chain, catalog, opts.fallback) } : r;
+}
+
+function routeInner(selectedId: string, task: Task, catalog: ModelInfo[], opts: RouteOptions): RouteResult {
   const maxChain = opts.maxChain ?? 4;
   if (!catalog.length) {
     // Catalog unavailable: fall back to the configured order and let the provider decide.
@@ -86,7 +124,7 @@ export function routeModel(selectedId: string, task: Task, catalog: ModelInfo[],
   const usable = (m: ModelInfo) =>
     m.free || m.id === opts.approvedPaid || (m.id === selectedId && opts.paidAvailable !== false);
 
-  const freeFit = rankCandidates(catalog.filter((m) => m.free && fits(m)), preferenceList(task, selected));
+  const freeFit = rankCandidates(catalog.filter((m) => m.free && fits(m)), preferenceList(task, selected), opts.preferredProvider);
 
   const approved = opts.approvedPaid ? catalog.find((m) => m.id === opts.approvedPaid) : undefined;
   if (approved && fits(approved)) {

@@ -13,6 +13,7 @@ export interface FeaturedModel {
 
 /** Shown first in the model picker, in this order. */
 export const FEATURED_MODELS: FeaturedModel[] = [
+  // Gemini models are featured by the Gemini provider itself (primary provider).
   {
     id: 'nvidia/nemotron-3-ultra-550b-a55b:free',
     blurb: 'Large free reasoning model with a 1M-token context. Text only.',
@@ -36,21 +37,25 @@ export const FEATURED_MODELS: FeaturedModel[] = [
  * always need the user's approval.
  */
 export const TASK_PREFERENCES: Record<'vision' | 'code' | 'longContext' | 'general', string[]> = {
-  // Providers are interleaved so a fallback chain never depends on one provider's quota.
+  // Gemini is the primary provider, OpenRouter the secondary. The router also
+  // ranks the preferred provider (config/ai) first, so these lists only order
+  // models within a provider.
   vision: [
-    'nvidia/nemotron-3.5-super-vl:free',
     'gemini:gemini-3.5-flash',
-    'google/gemma-4-31b-it:free',
     'gemini:gemini-3.8-flash',
+    'gemini:gemini-3.5-flash-lite',
+    'nvidia/nemotron-3.5-super-vl:free',
+    'google/gemma-4-31b-it:free',
     'google/gemma-4-26b-a4b-it:free',
   ],
-  code: ['cohere/north-mini-code:free', 'gemini:gemini-3.5-flash', 'gemini:gemini-3.8-flash'],
-  longContext: ['gemini:gemini-3.5-flash', 'gemini:gemini-3.8-flash', 'nvidia/nemotron-3.5-super-vl:free', 'nvidia/nemotron-3-ultra-550b-a55b:free'],
+  code: ['gemini:gemini-3.5-flash', 'gemini:gemini-3.8-flash', 'cohere/north-mini-code:free', 'nvidia/nemotron-3-ultra-550b-a55b:free'],
+  longContext: ['gemini:gemini-3.5-flash', 'gemini:gemini-3.8-flash', 'nvidia/nemotron-3-ultra-550b-a55b:free', 'nvidia/nemotron-3.5-super-vl:free'],
   general: [
-    'nvidia/nemotron-3-ultra-550b-a55b:free',
     'gemini:gemini-3.5-flash',
-    'google/gemma-4-31b-it:free',
     'gemini:gemini-3.8-flash',
+    'gemini:gemini-3.5-flash-lite',
+    'nvidia/nemotron-3-ultra-550b-a55b:free',
+    'google/gemma-4-31b-it:free',
     'google/gemma-4-26b-a4b-it:free',
   ],
 };
@@ -58,12 +63,14 @@ export const TASK_PREFERENCES: Record<'vision' | 'code' | 'longContext' | 'gener
 export function modelConfig() {
   const e = env();
   return {
-    defaultModel: e.defaultModel ?? 'nvidia/nemotron-3-ultra-550b-a55b:free',
+    // Gemini when its key is set; otherwise the best free OpenRouter model.
+    defaultModel: e.defaultModel ?? (e.geminiKey ? 'gemini:gemini-3.5-flash' : 'nvidia/nemotron-3-ultra-550b-a55b:free'),
     fallbackModels: e.fallbackModels ?? [
       'gemini:gemini-3.5-flash',
+      'gemini:gemini-3.5-flash-lite',
+      'nvidia/nemotron-3-ultra-550b-a55b:free',
       'nvidia/nemotron-3.5-super-vl:free',
       'google/gemma-4-26b-a4b-it:free',
-      'google/gemma-4-31b-it:free',
     ],
     /** small/fast models for titles, memory extraction and summaries */
     // Gemini Flash-Lite first: background jobs then don't use the 50/day OpenRouter free quota.

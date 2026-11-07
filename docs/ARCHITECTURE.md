@@ -35,9 +35,22 @@ The browser keeps live replies in a module-level store (`src/features/chat/engin
 
 ## Providers and model routing (`server/providers`, `server/router`)
 
-- **Providers.** OpenRouter (default prefix) and Google Gemini (`gemini:<model>`, AI Studio key) implement one `ChatProvider` interface and are registered in `server/providers/registry.ts`. One catalog, one router and one conversation engine serve both, so history, memory, documents and settings are shared.
-- **Routing** (`server/router/route.ts`). `detectTask` reads the request without a model call: images, document types, intent and a token estimate. `routeModel` keeps the selected model when it fits. Otherwise it uses the best free model for the task, for that reply only. If only a paid model fits, the server returns `approval_required` and spends nothing until the user approves that model for one request. The selected model is never changed.
-- **Fallbacks.** Each model in the chain is tried once, only before any text has streamed. Preference lists interleave providers, so one provider's quota does not stop a reply.
+- **Providers.** Google Gemini (`gemini:<model>`, AI Studio key) is the **primary** provider. OpenRouter (default prefix) is the **secondary**. Both implement one `ChatProvider` interface and are registered in `server/providers/registry.ts`. One catalog, one router and one conversation engine serve both, so history, memory, documents and settings are shared.
+- **Default model.** `gemini:gemini-3.5-flash` when `GEMINI_API_KEY` is set. An admin can set another app default in `config/ai`, and a user's own default or per-chat choice always wins. Tessera never changes a user's chosen model.
+- **Routing** (`server/router/route.ts`):
+  - `detectTask` reads the request without a model call: images, document types, intent and a token estimate.
+  - `routeModel` keeps the selected model when it fits. Otherwise it uses the best free model for the task, for that reply only. Ranking: preferred provider first (`config/ai.preferredProvider`, default Gemini), then the task preference list, then featured models, then context size.
+  - If only a paid model fits, the server returns `approval_required` and spends nothing until the user approves that model for one request.
+- **Fallbacks** (`nextInChain`):
+  - Each model is tried once, only before any text has streamed, and only for recoverable errors: busy, rate limited, timeout, outage, model unavailable.
+  - Errors that affect a whole provider (a rejected key, OpenRouter's free daily cap) skip straight to the other provider.
+  - Bad requests, content blocks and context-too-long errors never fall back.
+  - Each switch is shown as a notice ("Switching to Google Gemini ... for this reply only").
+  - Admins can limit fallback to the same provider, or turn it off (`config/ai.fallback`).
+- **Admin AI settings** (`config/ai`, Settings > Models, admins only): preferred provider, app default model, fallback policy. These are validated by `normalizeAiConfig` and the Firestore rules, and cached for 5 minutes on the server. Paid models always need the user's approval; that is not configurable.
+- **Analytics** in `usage/{day}`:
+  - `providers.<id>.requests/tokens/failed/rateLimited`
+  - `routing.fallbacks`, `routing.providerSwitches`, `routing.switched`
 - **OpenRouter free daily cap.** Accounts without purchased credits get 50 free-model requests per day. The cap is read from OpenRouter's key info, or learned from the first `free-models-per-day` 429. Free OpenRouter models are then marked unavailable until midnight UTC, and requests go to Gemini.
 - **Gemini.** It uses the free tier (no billing on the Google project; `GEMINI_BILLING=paid` flips every Gemini model to paid). Short background calls disable thinking, so it cannot use up their small output budget. Embeddings use `gemini-embedding-001` (768 dimensions). Usage is counted per provider in `usage/{day}.providers.<id>`.
 - **Image generation and editing** are not offered. The prompt tells the model so, and it says so plainly.

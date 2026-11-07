@@ -163,6 +163,18 @@ describe('search limits, cache and document subcollections', () => {
     denied(await write(ADMIN, 'config/limits', { ...limits, providerReserve: 'lots' }));
   });
 
+  it('lets approved users read the AI routing config but only admins change it', async () => {
+    const ai = { preferredProvider: 'gemini', defaultModel: 'gemini:gemini-3.5-flash', fallback: 'any' };
+    ok(await write(ADMIN, 'config/ai', ai));
+    ok(await read(ALLOWED, 'config/ai'));
+    denied(await read(STRANGER, 'config/ai'));
+    denied(await write(ALLOWED, 'config/ai', ai));
+    ok(await write(ADMIN, 'config/ai', { ...ai, preferredProvider: 'openrouter', fallback: 'off', defaultModel: null }));
+    denied(await write(ADMIN, 'config/ai', { ...ai, preferredProvider: 'other' }));
+    denied(await write(ADMIN, 'config/ai', { ...ai, fallback: 'paid' }));
+    denied(await write(ADMIN, 'config/ai', { ...ai, apiKey: 'x' }));
+  });
+
   it('keeps the search cache private to its owner', async () => {
     ok(await write(ALLOWED, 'users/alice/searchCache/k1', { query: 'q', provider: 'serpapi', results: [] }));
     ok(await read(ALLOWED, 'users/alice/searchCache/k1'));

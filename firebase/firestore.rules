@@ -79,6 +79,16 @@ service cloud.firestore {
         && request.resource.data.get('autoReserve', 0) is int;
     }
 
+    // Admin AI settings: preferred provider, default model, fallback policy.
+    match /config/ai {
+      allow read: if isAllowed();
+      allow write: if isAdmin()
+        && request.resource.data.keys().hasOnly(['preferredProvider', 'defaultModel', 'fallback', 'updatedAt'])
+        && request.resource.data.get('preferredProvider', 'gemini') in ['gemini', 'openrouter']
+        && request.resource.data.get('fallback', 'any') in ['any', 'same_provider', 'off']
+        && (request.resource.data.get('defaultModel', null) == null || smallString(request.resource.data.defaultModel, 120));
+    }
+
     match /config/{other} {
       allow read, write: if false;
     }

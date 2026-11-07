@@ -8,7 +8,21 @@ import { cn, formatTokens, modelShortName } from '@/lib/utils';
 import { useIsDesktop } from '@/lib/viewport';
 import { useCatalog } from '@/state/catalog';
 
-type Filter = 'featured' | 'free' | 'vision' | 'gemini' | 'all';
+type Filter = 'featured' | 'free' | 'gemini' | 'openrouter' | 'reasoning' | 'code' | 'vision' | 'documents' | 'audio' | 'images' | 'all';
+const FILTERS: { id: Filter; label: string; test: (m: ModelInfo) => boolean }[] = [
+  { id: 'featured', label: 'Featured', test: (m) => m.featured },
+  { id: 'free', label: 'Free', test: (m) => m.free },
+  { id: 'gemini', label: 'Gemini', test: (m) => m.provider === 'gemini' },
+  { id: 'openrouter', label: 'OpenRouter', test: (m) => m.provider === 'openrouter' },
+  { id: 'reasoning', label: 'Reasoning', test: (m) => m.capabilities.reasoning },
+  { id: 'code', label: 'Code', test: (m) => m.capabilities.code },
+  { id: 'vision', label: 'Vision', test: (m) => m.capabilities.vision },
+  // long documents are read as extracted text, so a large context window matters most
+  { id: 'documents', label: 'Documents', test: (m) => m.capabilities.fileInput || m.contextLength >= 200_000 },
+  { id: 'audio', label: 'Audio / video', test: (m) => m.capabilities.audioInput },
+  { id: 'images', label: 'Image output', test: (m) => m.capabilities.imageOutput },
+  { id: 'all', label: 'All', test: () => true },
+];
 
 export function CapabilityBadges({ m, compact }: { m: ModelInfo; compact?: boolean }) {
   return (
@@ -132,14 +146,13 @@ export function ModelPicker({
   const models = useMemo(() => {
     const all = catalog?.models ?? [];
     const term = q.trim().toLowerCase();
-    let list = all;
-    if (term) list = all.filter((m) => `${m.name} ${m.id} ${m.vendor}`.toLowerCase().includes(term));
-    else if (filter === 'featured') list = all.filter((m) => m.featured);
-    else if (filter === 'free') list = all.filter((m) => m.free);
-    else if (filter === 'vision') list = all.filter((m) => m.capabilities.vision);
-    else if (filter === 'gemini') list = all.filter((m) => m.provider === 'gemini');
+    const list = term
+      ? all.filter((m) => `${m.name} ${m.id} ${m.vendor}`.toLowerCase().includes(term))
+      : all.filter(FILTERS.find((f) => f.id === filter)?.test ?? (() => true));
     const featuredOrder = (catalog?.models ?? []).filter((m) => m.featured).map((m) => m.id);
+    const primary = catalog?.preferredProvider ?? 'gemini';
     return [...list].sort((a, b) => {
+      if ((a.provider === primary) !== (b.provider === primary)) return a.provider === primary ? -1 : 1;
       if (a.featured !== b.featured) return a.featured ? -1 : 1;
       if (a.featured && b.featured) return featuredOrder.indexOf(a.id) - featuredOrder.indexOf(b.id);
       if (a.free !== b.free) return a.free ? -1 : 1;
@@ -162,17 +175,17 @@ export function ModelPicker({
           />
         </div>
         {!q && (
-          <div className="flex gap-1">
-            {(['featured', 'free', 'vision', 'gemini', 'all'] as Filter[]).map((f) => (
+          <div className="-mx-3 flex gap-1 overflow-x-auto px-3 pb-0.5 [scrollbar-width:none]">
+            {FILTERS.map((f) => (
               <button
-                key={f}
-                onClick={() => setFilter(f)}
+                key={f.id}
+                onClick={() => setFilter(f.id)}
                 className={cn(
-                  'rounded-md px-2.5 py-1 text-xs font-medium capitalize transition-colors',
-                  filter === f ? 'bg-fg text-bg' : 'text-muted hover:bg-surface-2',
+                  'shrink-0 rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+                  filter === f.id ? 'bg-fg text-bg' : 'text-muted hover:bg-surface-2',
                 )}
               >
-                {f}
+                {f.label}
               </button>
             ))}
           </div>

@@ -39,9 +39,20 @@ export interface ModelInfo {
   featured: boolean;
 }
 
+/** Admin AI settings (Firestore config/ai). */
+export interface AiConfig {
+  /** provider tried first when routing picks a model */
+  preferredProvider: 'gemini' | 'openrouter';
+  /** app-wide default model for users who have not chosen one (null: built-in default) */
+  defaultModel: string | null;
+  /** automatic fallback on recoverable failures: to any provider, the same provider only, or never */
+  fallback: 'any' | 'same_provider' | 'off';
+}
+
 export interface ModelCatalog {
   models: ModelInfo[];
   defaultModel: string;
+  preferredProvider?: 'gemini' | 'openrouter';
   fallbackModels: string[];
   /** whether the account behind the provider key can use paid models */
   paidAvailable: boolean | null;

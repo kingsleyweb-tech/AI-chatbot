@@ -81,7 +81,8 @@ export function mapGeminiModel(m: GModel): ModelInfo | null {
       reasoning: true,
       structuredOutput: true,
       streaming: true,
-      code: false,
+      // Flash and Pro are general coding models; Lite variants are not listed for code
+      code: !raw.includes('lite'),
     },
     available: true,
     featured: Boolean(cfg.featured),

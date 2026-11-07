@@ -17,7 +17,8 @@ import {
   updateConversationSummary,
 } from '../memory/conversations.js';
 import { getCatalog, providerFor } from '../providers/registry.js';
-import { routeModel } from '../router/route.js';
+import { loadAiConfig } from '../config/ai.js';
+import { routeModel, nextInChain } from '../router/route.js';
 import { detectTask } from '../router/task.js';
 import { ProviderError } from '../providers/types.js';
 import { gatherWebContext } from '../search/web.js';
@@ -186,10 +187,11 @@ export async function runChat(
   if (activeRequests.has(requestKey)) throw new HttpError(409, 'duplicate_request', 'This reply is already being generated.');
 
   // Load settings + conversation + catalog + attached document names in parallel.
-  const [userDoc, convDoc, catalog, docMetas] = await Promise.all([
+  const [userDoc, convDoc, catalog, aiConfig, docMetas] = await Promise.all([
     db.get<{ settings?: UserSettings; displayName?: string }>(base),
     db.get<ConversationDoc>(convPath),
     getCatalog().catch(() => null),
+    loadAiConfig(db),
     Promise.all(
       body.options.documentIds.map((id) =>
         db.get<{ name?: string; mime?: string }>(`${base}/documents/${id}`).catch(() => null),
@@ -258,6 +260,8 @@ export async function runChat(
           const route = routeModel(body.model, task, models, {
             paidAvailable: catalog?.paidAvailable ?? null,
             approvedPaid: body.options.approvedPaidModel ?? null,
+            preferredProvider: aiConfig.preferredProvider,
+            fallback: aiConfig.fallback,
           });
           if (route.kind === 'none') {
             throw new ProviderError(
@@ -456,18 +460,17 @@ export async function runChat(
                 if (err.code === 'rate_limited' || err.code === 'daily_limit') count(['providers', providerFor(modelId).id, 'rateLimited']);
               }
               if (!(err instanceof ProviderError) || content) break;
-              // The OpenRouter free daily cap blocks every free OpenRouter model, so skip
-              // straight to a model from another provider (no wasted requests).
-              const next =
-                err.code === 'daily_limit'
-                  ? chain.findIndex((id, j) => j > i && providerFor(id).id !== providerFor(modelId).id)
-                  : err.fallbackable && i < chain.length - 1
-                    ? i + 1
-                    : -1;
+              const next = nextInChain(chain, i, err, (id) => providerFor(id).id);
               if (next === -1) break;
               count(['routing', 'fallbacks']);
-              if (providerFor(chain[next]).id !== providerFor(modelId).id) count(['routing', 'providerSwitches']);
-              notice(`${nameOf(modelId)}: ${err.message} Trying ${nameOf(chain[next])}.`, chain[next]);
+              const switching = providerFor(chain[next]).id !== providerFor(modelId).id;
+              if (switching) count(['routing', 'providerSwitches']);
+              notice(
+                switching
+                  ? `${nameOf(modelId)}: ${err.message} Switching to ${providerFor(chain[next]).id === 'gemini' ? 'Google Gemini' : 'OpenRouter'}: ${nameOf(chain[next])} (for this reply only; your model is unchanged).`
+                  : `${nameOf(modelId)}: ${err.message} Trying ${nameOf(chain[next])}.`,
+                chain[next],
+              );
               i = next - 1;
             }
           }
