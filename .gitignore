@@ -1,0 +1,25 @@
+# dependencies
+node_modules/
+# builds
+dist/
+dev-dist/
+.vercel/
+coverage/
+playwright-report/
+test-results/
+# env & secrets
+.env
+.env.*
+!.env.example
+*service-account*.json
+*serviceAccount*.json
+*-firebase-adminsdk-*.json
+# firebase
+.firebase/
+firebase-debug*.log
+firestore-debug.log
+ui-debug.log
+# misc
+.DS_Store
+*.log
+.idea/
