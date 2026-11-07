@@ -15,7 +15,7 @@
  */
 import type { SearchLimits } from '../shared/types.js';
 import { SerpApiSearch } from './serpapi.js';
-import { cacheKey, normalizeQuery, type CacheEntry, type SearchStore, type UsageEvent, type UsageSnapshot } from './store.js';
+import { cacheKey, findSimilar, normalizeQuery, type CacheEntry, type SearchStore, type UsageEvent, type UsageSnapshot } from './store.js';
 import { TavilySearch } from './tavily.js';
 import {
   SearchError,
@@ -43,6 +43,8 @@ export type RunResult =
       answer?: string;
       cached: boolean;
       cachedAt?: string;
+      /** reused a cached search for a differently worded, same-meaning question */
+      similar?: boolean;
       notices: string[];
     }
   | { ok: false; reason: string; notices: string[] };
@@ -60,6 +62,10 @@ export interface RunArgs {
   kind?: SearchKind;
   max?: number;
   depth?: 'basic' | 'advanced';
+  /** 'auto' searches cannot use the reserved last credits of the day */
+  priority?: 'auto' | 'explicit';
+  /** embedding of the query, enables meaning-based cache reuse */
+  queryVector?: { vector: number[]; model: string } | null;
   /** apply the per-user rate limit (off for research sub-queries) */
   throttle?: boolean;
   signal?: AbortSignal;
@@ -72,6 +78,7 @@ export function providerOrder(intent: SearchIntent): SearchProviderId[] {
 }
 
 export function ttlHours(intent: SearchIntent, limits: SearchLimits): number {
+  if (intent === 'live') return limits.cacheTtlHours.live;
   return intent === 'news' ? limits.cacheTtlHours.news : intent === 'reference' ? limits.cacheTtlHours.reference : limits.cacheTtlHours.general;
 }
 
@@ -122,10 +129,14 @@ export class SearchService {
     usage: UsageSnapshot,
     limits: SearchLimits,
     signal?: AbortSignal,
+    priority: 'auto' | 'explicit' = 'explicit',
   ): Promise<string | null> {
     if (!this.providers[id].isConfigured()) return `${LABEL[id]} is not configured`;
     const l = limits[id];
     if (usage.day[id] + credits > l.daily) return `${LABEL[id]} daily limit (${l.daily}) reached`;
+    // keep the last few credits of the day for searches the user explicitly asks for
+    if (priority === 'auto' && usage.day[id] + credits > l.daily - (limits.autoReserve ?? 0))
+      return `${LABEL[id]} daily budget for automatic searches is used up (the rest is kept for searches you ask for)`;
     if (usage.month[id] + credits > l.monthly) return `${LABEL[id]} monthly limit (${l.monthly}) reached`;
     const acct = await this.reportedUsage(id, signal);
     if (acct && acct.remaining - credits < limits.providerReserve) return `${LABEL[id]} plan quota is used up`;
@@ -165,6 +176,24 @@ export class SearchService {
       };
     }
 
+    // Same question in other words, still fresh? Reuse it (no credit).
+    if (args.queryVector && args.store.recentCache) {
+      const similar = findSimilar(await args.store.recentCache(40), `search:${kind}`, normalized, args.queryVector, this.now());
+      if (similar) {
+        await args.store.record([{ provider: similar.provider, type: 'cached', credits: 0 }]);
+        return {
+          ok: true,
+          provider: similar.provider,
+          results: similar.results,
+          answer: similar.answer,
+          cached: true,
+          similar: true,
+          cachedAt: similar.createdAt,
+          notices: [],
+        };
+      }
+    }
+
     const flightKey = `${args.uid}|${key}`;
     const pending = this.inflight.get(flightKey);
     if (pending) return pending as Promise<RunResult>;
@@ -185,7 +214,7 @@ export class SearchService {
     try {
       for (const id of providerOrder(args.intent)) {
         const credits = id === 'tavily' && args.depth === 'advanced' ? 2 : 1;
-        const reason = await this.blockReason(id, credits, usage, args.limits, args.signal);
+        const reason = await this.blockReason(id, credits, usage, args.limits, args.signal, args.priority ?? 'explicit');
         if (reason) {
           blocked.push(reason);
           continue;
@@ -202,6 +231,8 @@ export class SearchService {
               provider: id,
               results: res.results,
               ...(res.answer ? { answer: res.answer } : {}),
+              scope: `search:${kind}`,
+              ...(args.queryVector ? { vector: args.queryVector.vector, vectorModel: args.queryVector.model } : {}),
               createdAt,
               expiresAt: new Date(this.now() + ttl * 3_600_000).toISOString(),
             });

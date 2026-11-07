@@ -70,12 +70,13 @@ service cloud.firestore {
     match /config/limits {
       allow read: if isAllowed();
       allow write: if isAdmin()
-        && request.resource.data.keys().hasOnly(['serpapi', 'tavily', 'research', 'cacheTtlHours', 'providerReserve', 'updatedAt'])
+        && request.resource.data.keys().hasOnly(['serpapi', 'tavily', 'research', 'cacheTtlHours', 'providerReserve', 'autoReserve', 'updatedAt'])
         && request.resource.data.get('serpapi', {}) is map
         && request.resource.data.get('tavily', {}) is map
         && request.resource.data.get('research', {}) is map
         && request.resource.data.get('cacheTtlHours', {}) is map
-        && request.resource.data.get('providerReserve', 0) is int;
+        && request.resource.data.get('providerReserve', 0) is int
+        && request.resource.data.get('autoReserve', 0) is int;
     }
 
     match /config/{other} {

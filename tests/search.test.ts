@@ -131,7 +131,8 @@ describe('search heuristics', () => {
 
   it('decides the trigger from toggles and the message', () => {
     expect(searchTrigger('hello', { webSearch: false, autoSearch: true })).toBeNull();
-    expect(searchTrigger('hello', { webSearch: true })).toBe('manual');
+    expect(searchTrigger('hello', { webSearch: true })).toBeNull(); // greetings never search, toggle or not
+    expect(searchTrigger('what is quantum tunnelling', { webSearch: true })).toBe('manual');
     expect(searchTrigger('latest news today?', { webSearch: false, autoSearch: false })).toBeNull();
     expect(searchTrigger('latest news today?', { webSearch: false, autoSearch: true })).toBe('auto');
     expect(searchTrigger('see https://x.com', { webSearch: false, autoSearch: true })).toBe('url');

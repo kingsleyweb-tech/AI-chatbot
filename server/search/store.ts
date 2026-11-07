@@ -3,6 +3,7 @@
  * per-provider usage counters. Firestore in production; in-memory in tests.
  */
 import { createHash } from 'node:crypto';
+import { cosine } from '../embeddings.js';
 import { fieldPath, SERVER_TIME, type Firestore, type Write } from '../firestore.js';
 import type { ExtractResult, SearchProviderId, SearchResult } from './types.js';
 
@@ -14,7 +15,15 @@ export interface CacheEntry {
   answer?: string;
   createdAt: string;
   expiresAt: string;
+  /** cache scope, e.g. "search:news" (for similarity lookups) */
+  scope?: string;
+  /** query embedding for meaning-based reuse */
+  vector?: number[];
+  vectorModel?: string;
 }
+
+/** Similarity lookups need at least this cosine AND the same distinctive words. */
+export const SIMILAR_MIN = 0.87;
 
 export type ProviderCount = Record<SearchProviderId, number>;
 export interface UsageSnapshot {
@@ -34,7 +43,46 @@ export interface SearchStore {
   putCache(key: string, entry: CacheEntry): Promise<void>;
   getUsage(): Promise<UsageSnapshot>;
   record(events: UsageEvent[]): Promise<void>;
+  /** recent cache entries, newest first (for meaning-based reuse) */
+  recentCache?(limit: number): Promise<CacheEntry[]>;
 }
+
+/** Words that say HOW a query asks, not what it is about. */
+const GENERIC = new Set(
+  'latest news new today now update updates price prices version release who what when where which how why president ceo weather forecast info information details current recent'.split(' '),
+);
+export function distinctiveTokens(normalized: string): string[] {
+  return normalized.split(' ').filter((t) => t && !GENERIC.has(t));
+}
+
+/** A fresh cached entry that answers the same question in other words, if any. */
+export function findSimilar(
+  entries: CacheEntry[],
+  scope: string,
+  normalized: string,
+  vec: { vector: number[]; model: string },
+  now: number,
+): CacheEntry | null {
+  const mine = new Set(distinctiveTokens(normalized));
+  let best: { e: CacheEntry; score: number } | null = null;
+  for (const e of entries) {
+    if (e.scope !== scope || !e.vector || e.vectorModel !== vec.model || Date.parse(e.expiresAt) <= now) continue;
+    const theirs = new Set(distinctiveTokens(e.query));
+    // the distinctive words must match exactly: Ghana vs Nigeria, React vs Vue never reuse
+    if (theirs.size !== mine.size || ![...theirs].every((t) => mine.has(t))) continue;
+    const score = cosine(vec.vector, e.vector);
+    if (score >= SIMILAR_MIN && (!best || score > best.score)) best = { e, score };
+  }
+  return best?.e ?? null;
+}
+
+/** Phrase synonyms so paraphrases share one cache key. */
+const SYNONYMS: [RegExp, string][] = [
+  [/\bartificial intelligence\b/g, 'ai'],
+  [/\bmachine learning\b/g, 'ml'],
+  [/\b(?:most recent|newest|recent|current|up to date|up-to-date)\b/g, 'latest'],
+  [/\bheadlines\b/g, 'news'],
+];
 
 const STOP = new Set(
   'a an the please pls can could would will you tell me about search for find look up google online web internet i is are do does of to on in at and or with some any give show'.split(
@@ -48,6 +96,7 @@ export function normalizeQuery(q: string): string {
     .normalize('NFKC')
     .toLowerCase()
     .replace(/['’]/g, '')
+    .replace(/^[\s\S]*$/, (s) => SYNONYMS.reduce((acc, [re, to]) => acc.replace(re, to), s))
     .replace(/[^\p{L}\p{N}+#.\s-]/gu, ' ')
     .split(/\s+/)
     .map((t) => t.replace(/^[.-]+|[.-]+$/g, ''))
@@ -56,8 +105,10 @@ export function normalizeQuery(q: string): string {
   return tokens.filter((t) => (seen.has(t) ? false : (seen.add(t), true))).join(' ');
 }
 
+/** Word order does not change the key ("ai news latest" = "latest ai news"). */
 export function cacheKey(scope: string, normalized: string): string {
-  return createHash('sha1').update(`${scope}|${normalized}`).digest('hex').slice(0, 32);
+  const canonical = normalized.split(' ').sort().join(' ');
+  return createHash('sha1').update(`${scope}|${canonical}`).digest('hex').slice(0, 32);
 }
 
 export const dayKey = (d = new Date()) => d.toISOString().slice(0, 10);
@@ -84,6 +135,13 @@ export class FirestoreSearchStore implements SearchStore {
     await this.db.set(`${this.base}/searchCache/${key}`, entry).catch((err) => {
       console.warn('[search] cache write failed', err instanceof Error ? err.message : err);
     });
+  }
+
+  async recentCache(limit: number): Promise<CacheEntry[]> {
+    const docs = await this.db
+      .list<CacheEntry>(`${this.base}/searchCache`, { orderBy: 'createdAt', direction: 'DESCENDING', limit })
+      .catch(() => []);
+    return docs.map((d) => d.data);
   }
 
   async getUsage(): Promise<UsageSnapshot> {
@@ -134,6 +192,9 @@ export class MemorySearchStore implements SearchStore {
   }
   async putCache(key: string, entry: CacheEntry) {
     this.cache.set(key, entry);
+  }
+  async recentCache(limit: number) {
+    return [...this.cache.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, limit);
   }
   async getUsage() {
     return structuredClone(this.usage);

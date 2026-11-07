@@ -63,7 +63,9 @@ export interface SearchLimits {
   serpapi: { daily: number; monthly: number };
   tavily: { daily: number; monthly: number };
   research: { maxSearches: number; maxPageReads: number };
-  cacheTtlHours: { news: number; general: number; reference: number };
+  cacheTtlHours: { live: number; news: number; general: number; reference: number };
+  /** daily credits per provider kept for explicitly requested searches */
+  autoReserve: number;
   providerReserve: number;
 }
 
@@ -78,6 +80,10 @@ export interface SearchInfo {
   cachedAt?: string;
   /** why search was used: the user asked, or the auto heuristic */
   trigger: 'manual' | 'auto' | 'url' | 'research';
+  /** the decision engine's reason code (no message text) */
+  reason?: string;
+  /** reused a cached search for a same-meaning question */
+  similar?: boolean;
   message?: string;
 }
 
@@ -156,6 +162,8 @@ export interface ChatRequestBody {
     webSearch: boolean;
     /** let the server decide whether this message needs current information */
     autoSearch?: boolean;
+    /** auto: decide per message; manual: only when asked; eager: search whenever it may help */
+    searchMode?: 'auto' | 'manual' | 'eager';
     /** multi-step research with a fixed search budget */
     deepResearch?: boolean;
     memory: boolean;

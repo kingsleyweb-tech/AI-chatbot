@@ -1,7 +1,8 @@
 export type SearchProviderId = 'serpapi' | 'tavily';
 export type SearchKind = 'web' | 'news';
 /** Why we are searching; drives provider choice and cache lifetime. */
-export type SearchIntent = 'general' | 'news' | 'research' | 'reference';
+/** live: fast-changing facts (prices, weather, scores), cached briefly */
+export type SearchIntent = 'general' | 'news' | 'live' | 'research' | 'reference';
 
 export interface SearchResult {
   title: string;

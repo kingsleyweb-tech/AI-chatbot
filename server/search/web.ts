@@ -6,7 +6,9 @@ import { loadLimits } from '../config/limits.js';
 import type { Firestore } from '../firestore.js';
 import type { ChatTurn, ResearchStep, SearchInfo, Source } from '../shared/types.js';
 import { utilityComplete } from '../utility.js';
-import { classifyIntent, extractUrls, looksLikeFollowUp, needsWebSearch, toSearchQuery } from './heuristics.js';
+import { embed } from '../embeddings.js';
+import { decideSearch, type SearchDecision, type SearchMode } from './decide.js';
+import { extractUrls, looksLikeFollowUp, toSearchQuery } from './heuristics.js';
 import { runResearch } from './research.js';
 import { searchService } from './router.js';
 import { FirestoreSearchStore } from './store.js';
@@ -23,17 +25,30 @@ export interface WebContext {
   failure: string | null;
 }
 
+export interface WebOptions {
+  webSearch: boolean;
+  autoSearch?: boolean;
+  deepResearch?: boolean;
+  searchMode?: SearchMode;
+}
+
+/** Map the options + message to the decision engine's input. autoSearch=false means manual mode. */
+export function decideFor(text: string, opts: WebOptions, hasDocuments = false): SearchDecision {
+  const mode: SearchMode = opts.searchMode ?? (opts.autoSearch === false ? 'manual' : 'auto');
+  return decideSearch(text, { webSearch: opts.webSearch, deepResearch: opts.deepResearch, mode, hasDocuments });
+}
+
 type Trigger = SearchInfo['trigger'];
 
-export function searchTrigger(
-  text: string,
-  opts: { webSearch: boolean; autoSearch?: boolean; deepResearch?: boolean },
-): Trigger | null {
-  if (opts.deepResearch) return 'research';
-  if (opts.webSearch) return 'manual';
-  if (opts.autoSearch === false) return null;
-  if (extractUrls(text).length) return 'url';
-  return needsWebSearch(text) ? 'auto' : null;
+export function searchTrigger(text: string, opts: WebOptions, hasDocuments = false): Trigger | null {
+  return toTrigger(decideFor(text, opts, hasDocuments));
+}
+
+function toTrigger(d: SearchDecision): Trigger | null {
+  if (d.action === 'none') return null;
+  if (d.action === 'research') return 'research';
+  if (d.action === 'extract') return 'url';
+  return d.explicit ? 'manual' : 'auto';
 }
 
 /** Rewrite a short follow-up into a standalone query using recent turns (free model). */
@@ -77,17 +92,22 @@ export async function gatherWebContext(args: {
   uid: string;
   turns: ChatTurn[];
   text: string;
-  options: { webSearch: boolean; autoSearch?: boolean; deepResearch?: boolean };
+  options: WebOptions;
+  hasDocuments?: boolean;
   signal?: AbortSignal;
   onStep?: (s: ResearchStep) => void;
+  /** called with every decision, including "no search" (for analytics) */
+  onDecision?: (d: SearchDecision) => void;
 }): Promise<WebContext | null> {
-  const trigger = searchTrigger(args.text, args.options);
+  const decision = decideFor(args.text, args.options, args.hasDocuments);
+  args.onDecision?.(decision);
+  const trigger = toTrigger(decision);
   if (!trigger) return null;
   const service = searchService();
   const urls = extractUrls(args.text);
   const query = trigger === 'url' ? urls.join(' ') : await standaloneQuery(args.turns, args.text);
   const mode: SearchInfo['mode'] = trigger === 'research' ? 'research' : urls.length && trigger !== 'auto' ? 'extract' : 'search';
-  const base: SearchInfo = { status: 'unavailable', mode, provider: null, query, cached: false, trigger };
+  const base: SearchInfo = { status: 'unavailable', mode, provider: null, query, cached: false, trigger, reason: decision.reason };
 
   if (!service.configured().length) {
     // auto mode stays silent; explicit requests get told
@@ -165,8 +185,20 @@ export async function gatherWebContext(args: {
   }
 
   // 3) Regular search
-  const { intent, kind } = classifyIntent(args.text);
-  const r = await service.run({ uid: args.uid, store, limits, query, intent, kind, signal: args.signal });
+  const { intent, kind } = decision;
+  // Embedding is free (Gemini) and lets a same-meaning question reuse a fresh cached search.
+  const vec = await embed([query]).catch(() => null);
+  const r = await service.run({
+    uid: args.uid,
+    store,
+    limits,
+    query,
+    intent,
+    kind,
+    signal: args.signal,
+    priority: decision.explicit ? 'explicit' : 'auto',
+    queryVector: vec?.vectors[0] ? { vector: vec.vectors[0], model: vec.model } : null,
+  });
   if (!r.ok) {
     return { sources, text: '', info: { ...base, message: r.reason }, steps: [], notices: r.notices, failure: r.reason };
   }
@@ -176,7 +208,14 @@ export async function gatherWebContext(args: {
   return {
     sources,
     text,
-    info: { ...base, status: r.results.length ? 'ok' : 'unavailable', provider: r.provider, cached: r.cached, cachedAt: r.cachedAt },
+    info: {
+      ...base,
+      status: r.results.length ? 'ok' : 'unavailable',
+      provider: r.provider,
+      cached: r.cached,
+      cachedAt: r.cachedAt,
+      ...(r.similar ? { similar: true } : {}),
+    },
     steps: [],
     notices: r.notices,
     failure: r.results.length ? null : 'no results found',

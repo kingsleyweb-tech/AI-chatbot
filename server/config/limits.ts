@@ -11,7 +11,9 @@ export const DEFAULT_LIMITS: SearchLimits = {
   serpapi: { daily: 8, monthly: 200 },
   tavily: { daily: 30, monthly: 900 },
   research: { maxSearches: 6, maxPageReads: 4 },
-  cacheTtlHours: { news: 2, general: 24, reference: 168 },
+  cacheTtlHours: { live: 1, news: 2, general: 24, reference: 168 },
+  /** the last N daily credits per provider are kept for searches the user explicitly asked for */
+  autoReserve: 2,
   /** stop using a provider when its own reported remaining quota drops to this */
   providerReserve: 5,
 };
@@ -39,10 +41,12 @@ export function normalizeLimits(raw: unknown): SearchLimits {
       maxPageReads: num(r.research?.maxPageReads, d.research.maxPageReads, 0, 20),
     },
     cacheTtlHours: {
+      live: num(r.cacheTtlHours?.live, d.cacheTtlHours.live, 0, 24),
       news: num(r.cacheTtlHours?.news, d.cacheTtlHours.news, 0, 720),
       general: num(r.cacheTtlHours?.general, d.cacheTtlHours.general, 0, 720),
       reference: num(r.cacheTtlHours?.reference, d.cacheTtlHours.reference, 0, 2160),
     },
+    autoReserve: num((raw as Record<string, unknown> | null)?.autoReserve, d.autoReserve, 0, 1000),
     providerReserve: num((raw as Record<string, unknown> | null)?.providerReserve, d.providerReserve, 0, 1000),
   };
 }

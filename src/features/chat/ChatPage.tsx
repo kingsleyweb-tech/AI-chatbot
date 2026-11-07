@@ -203,6 +203,7 @@ export default function ChatPage() {
         options: {
           webSearch: webSearch && Boolean(caps?.searchAvailable),
           autoSearch: settings.autoSearch && Boolean(caps?.searchAvailable),
+          searchMode: settings.searchMode ?? (settings.autoSearch === false ? 'manual' : 'auto'),
           deepResearch: deepResearch && Boolean(caps?.searchAvailable),
           memory: settings.memoryEnabled,
           documentIds: extraDocs ?? docIds,
@@ -214,7 +215,7 @@ export default function ChatPage() {
       // Deep Research spends search credits, so it applies to one message at a time.
       if (deepResearch) setDeepResearch(false);
     },
-    [uid, modelId, webSearch, deepResearch, caps?.searchAvailable, settings.memoryEnabled, settings.autoSearch, docIds, projectId],
+    [uid, modelId, webSearch, deepResearch, caps?.searchAvailable, settings.memoryEnabled, settings.autoSearch, settings.searchMode, docIds, projectId],
   );
 
   const send = async (text: string, images: ImageAttachment[]) => {
@@ -467,10 +468,10 @@ export default function ChatPage() {
             searchAvailable={Boolean(caps?.searchAvailable)}
             searchHint={
               webSearch
-                ? 'Web search is on for every message'
-                : settings.autoSearch
-                  ? 'Auto: searches only when a message needs current information. Tap to search every message.'
-                  : 'Search the web for every message'
+                ? 'Web search is on: informational messages are searched (greetings and similar are not)'
+                : settings.searchMode === 'manual' || settings.autoSearch === false
+                  ? 'Search is off unless you ask. Tap to search the web for your messages.'
+                  : 'Auto: searches only when a message needs current information. Tap to always search.'
             }
             deepResearch={deepResearch}
             onDeepResearch={setDeepResearch}

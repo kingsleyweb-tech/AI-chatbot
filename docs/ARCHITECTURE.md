@@ -46,20 +46,33 @@ The browser keeps live replies in a module-level store (`src/features/chat/engin
 
 All searches go through one service, `SearchService` in `router.ts`. Nothing else calls a search provider.
 
-1. **When to search** (`web.ts`, `heuristics.ts`). Search runs only when:
-   - the user turns on **Search** (every message), or
-   - **Auto** is on (the default) and the message clearly needs current information: news, prices, weather, "latest/today", a year at or after the model's knowledge, or a link, or
-   - the user turns on **Deep Research**.
+1. **When to search: the decision engine** (`decide.ts`). Every message gets a deterministic decision before any provider is called. There is no model call and no cost. In order:
+   - **Never search**, even with the Search toggle on: greetings and small talk ("Hope you're good"), arithmetic, writing and translation tasks, questions about earlier conversations or memory ("What did I tell you yesterday?"), and questions about attached documents.
+   - **Deep Research**: when the Deep Research toggle is on, or the message asks for it ("conduct a comprehensive study of ..."). Not in "Only when I ask" mode unless toggled.
+   - **Read a page**: when the message contains a link.
+   - **Search**: when the Search toggle is on, or the message says so ("search the web for ...", "look up ...").
+   - **Search automatically** (mode "Automatic", the default): only when the message needs current or verifiable facts. That covers news, prices, exchange rates, weather, scores, current office holders ("who is the president of ..."), latest versions, "latest/current/today" questions, and years at or after the model's knowledge. Programming questions such as "current directory in Python" do not count.
+   - **"Whenever it may help"** mode also searches questions about named things, except plain definitions.
+   - Everything else, including general knowledge, education and programming, is answered from the model.
 
-   Ordinary chat never searches. Short follow-ups ("what about 2025?") are rewritten into a standalone query by a free utility model.
-2. **Cache first** (`store.ts`). Queries are normalized (case, punctuation, filler words) and looked up in `users/{uid}/searchCache/{sha1}`. The cache is shared across providers. Lifetime depends on intent: news 2 h, general 24 h, reference 7 days. A cache hit costs nothing and is shown as "from cache".
+   Users choose the mode in **Settings > Web search**: Automatic, Only when I ask, or Whenever it may help. The order of preference is conversation, memory, knowledge, documents, model, then web. Each decision is counted in `usage/{day}` under `searchDecisions.<action>` and `searchDecisions.reasons.<reason>`, by code only, never message text.
+
+   Short follow-ups ("what about 2025?") are rewritten into a standalone query by a free utility model.
+2. **Cache first** (`store.ts`):
+   - Queries are normalized: case, punctuation, filler words and synonyms ("newest"/"current" → "latest", "artificial intelligence" → "ai"). The key ignores word order.
+   - Lookup is in `users/{uid}/searchCache/{sha1}`, and the cache is shared across providers.
+   - Lifetime depends on intent: live data (prices, weather) 1 h, news 2 h, general 24 h, reference 7 days.
+   - On an exact miss, a **same-meaning** fresh entry is reused. Both conditions must hold:
+     - its query embedding (free Gemini) has cosine ≥ 0.87
+     - its distinctive words are identical, so "president of Ghana" never reuses "president of Nigeria"
+   - Cache hits cost nothing and are shown as "from cache".
 3. **De-duplication and throttling.** Identical searches in flight share one request. A user can make at most one search every 3 seconds and 10 a minute.
 4. **Provider choice.** SerpAPI (Google) handles general and news questions. Tavily handles research, reference and page reading (`/extract`). The other provider is tried only when the first is over budget or fails, and a notice says so. Both are never queried for the same question.
 5. **Budgets** (`config/limits.ts`, `config/limits` in Firestore). Before any request, two checks run:
    - the app's own per-provider daily and monthly counters (`usage/{day}`, `usage/m-{yyyy-mm}`, field `search.<provider>`)
    - the provider's own reported remaining quota (SerpAPI `account.json`, Tavily `/usage`, both free to call and cached for 10 minutes)
 
-   When everything is exhausted, the user is told and the chat continues without search. A quota error marks the provider exhausted, so it isn't retried.
+   Automatic searches cannot use the last `autoReserve` (default 2) daily credits per provider; those are kept for searches the user asks for. When everything is exhausted, the user is told and the chat continues without search. There is no switch to any other paid provider. A quota error marks the provider exhausted, so it isn't retried.
 6. **Deep Research** (`research.ts`):
    1. A free model plans up to N sub-queries.
    2. Each sub-query goes through the same router within the run budget.
@@ -67,6 +80,8 @@ All searches go through one service, `SearchService` in `router.ts`. Nothing els
    4. The model writes a structured report covering summary, findings, disagreements, limitations and sources.
 
    Progress streams to the UI as `research` events.
+
+Duplicate requests for the same reply (double submit, retries) are rejected with 409 while the first is running, so a re-render or resend never triggers a second model call or search.
 
 Sources carry title, site, URL, snippet and a publication date only when the provider reported one. Each answer stores what happened (`message.search`: provider, cached or fresh, trigger, query) so the UI can show it.
 

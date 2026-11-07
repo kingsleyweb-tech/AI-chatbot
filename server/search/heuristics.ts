@@ -1,9 +1,8 @@
 /**
- * Deterministic rules for *whether* to search and *how*. No model call, no
- * credits: a search only happens when the user asks for one or the message
- * clearly needs current information.
+ * Deterministic helpers for building search queries. The decision whether to
+ * search at all lives in decide.ts.
  */
-import type { SearchIntent, SearchKind } from './types.js';
+import { classifyIntent, decideSearch, KNOWLEDGE_YEAR } from './decide.js';
 
 const URL_RE = /\bhttps?:\/\/[^\s<>"')\]]+/gi;
 
@@ -11,45 +10,15 @@ export function extractUrls(text: string): string[] {
   return [...new Set((text.match(URL_RE) ?? []).map((u) => u.replace(/[.,;:!?]+$/, '')))].slice(0, 5);
 }
 
-const EXPLICIT =
-  /\b(search|google|look\s*up|lookup|browse|find (?:me )?(?:online|on the web|sources|articles|links)|check (?:online|the web|the internet)|web results?)\b/i;
-const STRONG =
-  /\b(news|headlines?|breaking|weather|forecast|stock price|share price|exchange rate|price of|prices? (?:today|now)|how much (?:does|is) .{1,40} cost|scores?|standings|fixtures|election results?|release date|box office|trending|live updates?)\b/i;
-const RECENCY =
-  /\b(latest|current(?:ly)?|today|tonight|yesterday|tomorrow|this (?:week|month|year|morning|evening)|right now|recent(?:ly)?|up[- ]to[- ]date|as of|upcoming|just (?:announced|released|launched)|new(?:est)? version|still (?:open|available|alive|in office))\b/i;
-const QUESTION = /\?|^\s*(who|what|when|where|which|how|is|are|did|does|has|have|will|can)\b/i;
-const CODEY = /```|\b(function|const|let|var|def|class|import|return|SELECT|npm|git|directory|folder|variable|array|loop)\b|[{};]\s*$/m;
-
-/** Year at or after which we assume the model may lack knowledge. */
-export const KNOWLEDGE_YEAR = 2026;
-
 /**
- * Should this message trigger a web search on its own (auto mode)?
- * Errs on the side of NOT searching: each search costs a credit.
+ * Kept for callers/tests: true when the decision engine would search on its own
+ * (auto mode, no toggles).
  */
 export function needsWebSearch(text: string): boolean {
-  const t = text.trim();
-  if (!t || t.length > 2000) return false;
-  if (extractUrls(t).length) return true;
-  if (EXPLICIT.test(t)) return true;
-  const codey = CODEY.test(t);
-  if (STRONG.test(t) && !codey) return true;
-  const years = (t.match(/\b(20\d{2})\b/g) ?? []).map(Number);
-  const futureYear = years.some((y) => y >= KNOWLEDGE_YEAR);
-  if ((RECENCY.test(t) || futureYear) && QUESTION.test(t) && !codey) return true;
-  return false;
+  return decideSearch(text).action !== 'none';
 }
 
-export function classifyIntent(text: string): { intent: SearchIntent; kind: SearchKind } {
-  const t = text.toLowerCase();
-  if (/\b(news|headlines?|breaking|announced|today|yesterday|this week|election|scores?|live updates?)\b/.test(t))
-    return { intent: 'news', kind: 'news' };
-  if (/\b(research|in[- ]depth|compare|comparison|versus|vs\.?|analysis|studies|study|evidence|pros and cons|literature|report on)\b/.test(t))
-    return { intent: 'research', kind: 'web' };
-  if (/\b(documentation|docs|api reference|reference|specification|spec|manual|how to install|changelog|definition of)\b/.test(t))
-    return { intent: 'reference', kind: 'web' };
-  return { intent: 'general', kind: 'web' };
-}
+export { classifyIntent, KNOWLEDGE_YEAR };
 
 const FILLER =
   /^(?:(?:hey|hi|hello|ok|okay|so|please|pls|can you|could you|would you|will you|i want you to|i need you to|help me)[\s,]+)*(?:(?:search|google|look\s*up|find|check)(?: (?:the )?(?:web|internet|online))?(?: for)?[\s,:]+)?/i;

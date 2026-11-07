@@ -79,6 +79,7 @@ export const chatRequestSchema = z.object({
   options: z.object({
     webSearch: z.boolean(),
     autoSearch: z.boolean().optional(),
+    searchMode: z.enum(['auto', 'manual', 'eager']).optional(),
     deepResearch: z.boolean().optional(),
     memory: z.boolean(),
     approvedPaidModel: z.string().max(200).nullable().optional(),
@@ -124,6 +125,9 @@ function capabilityNotes(
   }
   return notes;
 }
+
+/** In-flight replies on this server instance (idempotency guard). */
+const activeRequests = new Set<string>();
 
 export function friendlyError(err: unknown): Extract<StreamEvent, { type: 'error' }> {
   if (err instanceof ProviderError) {
@@ -176,6 +180,10 @@ export async function runChat(
   const convPath = `${base}/conversations/${body.conversationId}`;
   const lastUser = [...body.messages].reverse().find((m) => m.role === 'user');
   if (!lastUser) throw new HttpError(400, 'bad_request', 'No user message to answer.');
+  // Idempotency: a repeated request for the same reply (double submit, retry storm)
+  // must not run the model or a search twice.
+  const requestKey = `${uid}|${body.assistantMessageId}`;
+  if (activeRequests.has(requestKey)) throw new HttpError(409, 'duplicate_request', 'This reply is already being generated.');
 
   // Load settings + conversation + catalog + attached document names in parallel.
   const [userDoc, convDoc, catalog, docMetas] = await Promise.all([
@@ -212,6 +220,7 @@ export async function runChat(
     }
   };
 
+  activeRequests.add(requestKey);
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       controllerRef = controller;
@@ -229,6 +238,12 @@ export async function runChat(
         let researchSteps: ResearchStep[] = [];
         let routeInfo: RouteInfo | null = null;
         let approval: ApprovalRequest | null = null;
+        /** analytics counters for usage/{day} (codes only, never message text) */
+        const counters: Record<string, number> = {};
+        const count = (path: string[], n = 1) => {
+          const k = fieldPath(...path);
+          counters[k] = (counters[k] ?? 0) + n;
+        };
         const notice = (message: string, model?: string) => {
           notices.push(message);
           send({ type: 'notice', message, ...(model ? { model } : {}) });
@@ -340,8 +355,13 @@ export async function runChat(
               turns: body.messages,
               text: lastUser.content,
               options: body.options,
+              hasDocuments: body.options.documentIds.length > 0,
               signal,
               onStep: (step) => send({ type: 'research', step }),
+              onDecision: (d) => {
+                count(['searchDecisions', d.action]);
+                count(['searchDecisions', 'reasons', d.reason]);
+              },
             }).catch((err) => {
               if (signal.aborted) throw err;
               console.warn('[chat] web search failed', err instanceof Error ? err.message : err);
@@ -431,6 +451,10 @@ export async function runChat(
             } catch (err) {
               if (signal.aborted) throw err;
               lastErr = err;
+              if (err instanceof ProviderError) {
+                count(['providers', providerFor(modelId).id, 'failed']);
+                if (err.code === 'rate_limited' || err.code === 'daily_limit') count(['providers', providerFor(modelId).id, 'rateLimited']);
+              }
               if (!(err instanceof ProviderError) || content) break;
               // The OpenRouter free daily cap blocks every free OpenRouter model, so skip
               // straight to a model from another provider (no wasted requests).
@@ -441,6 +465,8 @@ export async function runChat(
                     ? i + 1
                     : -1;
               if (next === -1) break;
+              count(['routing', 'fallbacks']);
+              if (providerFor(chain[next]).id !== providerFor(modelId).id) count(['routing', 'providerSwitches']);
               notice(`${nameOf(modelId)}: ${err.message} Trying ${nameOf(chain[next])}.`, chain[next]);
               i = next - 1;
             }
@@ -469,6 +495,7 @@ export async function runChat(
           }
         }
 
+        activeRequests.delete(requestKey);
         // ---- Persist the assistant message (even if the client disconnected) ----
         const msgPath = `${convPath}/messages/${body.assistantMessageId}`;
         const writes: Write[] = [
@@ -505,6 +532,11 @@ export async function runChat(
             data: { updatedAt: SERVER_TIME, lastModel: usedModel },
           },
         ];
+        if (routeInfo) count(['routing', 'switched']);
+        if (Object.keys(counters).length) {
+          const day = new Date().toISOString().slice(0, 10);
+          writes.push({ op: 'increment', path: `${base}/usage/${day}`, data: { date: day, updatedAt: SERVER_TIME }, increments: counters });
+        }
         if (usage) {
           const day = new Date().toISOString().slice(0, 10);
           const modelKey = usedModel.replace(/[^A-Za-z0-9_]/g, '_');

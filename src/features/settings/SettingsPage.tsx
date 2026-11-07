@@ -288,17 +288,21 @@ function ModelsSection() {
         </span>
       </Row>
       <Row
-        title="Search automatically when needed"
-        description="Searches only when a message clearly asks for current information (news, prices, “latest”, a link). Uses search credits; limits apply."
+        title="When to search the web"
+        description="Automatic searches only when a message needs current information (news, prices, current office holders, latest versions, a link). Greetings, writing, maths and questions about your documents or earlier chats never search."
       >
-        <Switch
-          label="Auto search"
-          checked={settings.autoSearch}
-          disabled={!caps?.searchAvailable}
-          onChange={(v) => update({ autoSearch: v })}
+        <Select
+          className="sm:w-56"
+          value={settings.searchMode ?? (settings.autoSearch === false ? 'manual' : 'auto')}
+          onChange={(v) => update({ searchMode: v as UserSettings['searchMode'], autoSearch: v !== 'manual' })}
+          options={[
+            { value: 'auto', label: 'Automatic (recommended)' },
+            { value: 'manual', label: 'Only when I ask' },
+            { value: 'eager', label: 'Whenever it may help' },
+          ]}
         />
       </Row>
-      <Row title="Search every message by default" description="Turns the Search toggle on for new chats. Uses a search credit per message unless cached.">
+      <Row title="Search toggle on by default" description="Turns the Search toggle on for new chats. Each informational message then uses a search unless cached (greetings and similar never do).">
         <Switch
           label="Search by default"
           checked={settings.webSearchDefault}

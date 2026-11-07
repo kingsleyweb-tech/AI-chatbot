@@ -20,6 +20,8 @@ export interface UserSettings {
   webSearchDefault: boolean;
   /** search automatically when a message clearly needs current information */
   autoSearch: boolean;
+  /** auto (default): search only when needed; manual: only when asked; eager: whenever it may help */
+  searchMode: 'auto' | 'manual' | 'eager';
   sendOnEnter: boolean;
   voiceName: string | null;
 }
@@ -37,6 +39,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   memoryEnabled: true,
   webSearchDefault: false,
   autoSearch: true,
+  searchMode: 'auto',
   sendOnEnter: true,
   voiceName: null,
 };
