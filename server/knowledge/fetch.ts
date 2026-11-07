@@ -70,7 +70,7 @@ export async function fetchPage(raw: string, opts: { signal?: AbortSignal; fetch
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     res = await doFetch(url, {
       redirect: 'manual',
-      headers: { 'user-agent': 'TesseraKnowledgeBot/1.0 (+personal assistant; fetches pages a user added)', accept: 'text/html,text/plain;q=0.9' },
+      headers: { 'user-agent': 'AtlasAIKnowledgeBot/1.0 (+personal assistant; fetches pages a user added)', accept: 'text/html,text/plain;q=0.9' },
       signal: opts.signal ?? AbortSignal.timeout(15_000),
     }).catch((err) => {
       throw new HttpError(502, 'fetch_failed', `Could not reach the page (${err instanceof Error ? err.message : 'network error'}).`);

@@ -44,6 +44,11 @@ export function dateGroup(ts: Timestamp | null | undefined): string {
   return d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
 }
 
+/** Newest first by updatedAt (client-side sort avoids needing a composite index). */
+export function byUpdatedDesc(a: { updatedAt?: Timestamp | null }, b: { updatedAt?: Timestamp | null }): number {
+  return (toDate(b.updatedAt)?.getTime() ?? 0) - (toDate(a.updatedAt)?.getTime() ?? 0);
+}
+
 export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;

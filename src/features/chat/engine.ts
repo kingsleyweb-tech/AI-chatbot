@@ -19,7 +19,7 @@ export interface LiveReply {
   approval?: ApprovalRequest;
   status: 'connecting' | 'streaming' | 'done' | 'stopped' | 'error';
   error?: { code: string; message: string; suggestion?: string; retryable: boolean };
-  context?: { memories: number; documents: number; conversations: number };
+  context?: { memories: number; documents: number; conversations: number; knowledge: number };
   startedAt: number;
 }
 
@@ -139,7 +139,7 @@ export async function generate(args: {
         reply.researchSteps = [...reply.researchSteps, e.step];
         break;
       case 'context':
-        reply.context = { memories: e.memories, documents: e.documents, conversations: e.conversations };
+        reply.context = { memories: e.memories, documents: e.documents, conversations: e.conversations, knowledge: e.knowledge ?? 0 };
         break;
       case 'reasoning':
         reply.reasoning += e.text;

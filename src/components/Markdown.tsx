@@ -15,13 +15,15 @@ export function linkCitations(md: string, sources: Source[] | undefined): string
   if (!sources?.length) return md;
   const web = new Map(sources.filter((s) => s.kind === 'web').map((s) => [String(s.index), s.url]));
   const docs = new Set(sources.filter((s) => s.kind === 'document').map((s) => `D${s.index}`));
+  const kb = new Map(sources.filter((s) => s.kind === 'knowledge').map((s) => [`K${s.index}`, s.url]));
   return md
     .split(/(```[\s\S]*?(?:```|$)|`[^`\n]*`)/g)
     .map((part, i) => {
       if (i % 2 === 1) return part; // code
-      return part.replace(/\[(D?\d{1,2})\](?!\(|:)/g, (m, key: string) => {
+      return part.replace(/\[([DK]?\d{1,2})\](?!\(|:)/g, (m, key: string) => {
         if (web.has(key)) return `[${key}](cite:${encodeURIComponent(web.get(key)!)})`;
         if (docs.has(key)) return `[${key}](cite:doc)`;
+        if (kb.has(key)) return `[${key}](cite:${kb.get(key) ? encodeURIComponent(kb.get(key)!) : 'doc'})`;
         return m;
       });
     })

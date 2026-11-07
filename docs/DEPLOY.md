@@ -35,7 +35,7 @@ Email/password sign-in works without this.
 1. Open the deployed URL in **Safari**. Other iOS browsers can't install web apps on every iOS version.
 2. Sign in.
 3. Tap **Share**, then **Add to Home Screen**, then **Add**.
-4. Launch Tessera from the Home Screen. It opens full screen without browser chrome, keeps you signed in, and shows cached chats when offline.
+4. Launch Atlas AI from the Home Screen. It opens full screen without browser chrome, keeps you signed in, and shows cached chats when offline.
 
 Updates arrive automatically. When a new version is deployed, the service worker picks it up on the next launch.
 
@@ -51,7 +51,7 @@ In Vercel **Deployments**, choose a previous deployment and select **Promote to 
   - SerpAPI free plan: 250 searches/month.
   - Tavily Researcher plan: 1,000 credits/month.
 
-  Tessera enforces its own lower limits and stops before either plan runs out:
+  Atlas AI enforces its own lower limits and stops before either plan runs out:
   - SerpAPI 8/day and 200/month
   - Tavily 30/day and 900/month
   - Deep Research at most 6 searches and 4 page reads per run

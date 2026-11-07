@@ -7,7 +7,7 @@ import { Markdown } from '@/components/Markdown';
 import { paths, updateConversation } from '@/lib/db';
 import { useQuery } from '@/lib/hooks';
 import type { Conversation, SavedResponse } from '@/lib/types';
-import { cn, copyText, modelShortName, relativeTime } from '@/lib/utils';
+import { byUpdatedDesc, cn, copyText, modelShortName, relativeTime } from '@/lib/utils';
 import { useUid } from '@/state/auth';
 import { useToast } from '@/state/toast';
 import { Page } from '../shell/Page';
@@ -63,7 +63,7 @@ export default function SavedPage() {
   const [tab, setTab] = useState<Tab>('responses');
   const responses = useQuery<SavedResponse>(query(paths.saved(uid), orderBy('createdAt', 'desc'), limit(200)), [uid]);
   const chats = useQuery<Conversation>(
-    tab === 'chats' ? query(paths.conversations(uid), where('saved', '==', true), orderBy('updatedAt', 'desc'), limit(200)) : null,
+    tab === 'chats' ? query(paths.conversations(uid), where('saved', '==', true), limit(300)) : null,
     [uid, tab],
   );
 
@@ -113,7 +113,7 @@ export default function SavedPage() {
         </EmptyState>
       ) : (
         <ul className="divide-y divide-border rounded-xl border border-border">
-          {chats.data.map((c) => (
+          {[...chats.data].sort(byUpdatedDesc).map((c) => (
             <li key={c.id} className="flex items-center gap-2 pr-2">
               <Link to={`/c/${c.id}`} className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 hover:bg-surface">
                 <div className="min-w-0 flex-1">

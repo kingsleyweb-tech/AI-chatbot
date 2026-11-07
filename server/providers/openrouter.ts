@@ -139,7 +139,7 @@ export class OpenRouterProvider implements ChatProvider {
       authorization: `Bearer ${key}`,
       'content-type': 'application/json',
       'http-referer': env().appUrl,
-      'x-title': 'Tessera',
+      'x-title': 'Atlas AI',
     };
   }
 

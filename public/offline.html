@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>Tessera · Offline</title>
+    <title>Atlas AI · Offline</title>
     <style>
       :root { color-scheme: light dark; --bg:#fff; --fg:#18181b; --muted:#71717a; --accent:#0f766e; }
       @media (prefers-color-scheme: dark) { :root { --bg:#111213; --fg:#f4f4f5; --muted:#a1a1aa; --accent:#2dd4bf; } }
@@ -16,14 +16,13 @@
   </head>
   <body>
     <main>
-      <svg width="40" height="40" viewBox="0 0 32 32" aria-hidden="true">
-        <rect x="3" y="3" width="12" height="12" rx="3.2" fill="currentColor"/>
-        <rect x="17" y="3" width="12" height="12" rx="3.2" fill="currentColor" opacity=".35"/>
-        <rect x="3" y="17" width="12" height="12" rx="3.2" fill="currentColor" opacity=".35"/>
-        <rect x="18.5" y="18.5" width="11" height="11" rx="3" fill="var(--accent)"/>
+      <svg width="44" height="44" viewBox="0 0 32 32" aria-hidden="true">
+        <rect x="1" y="1" width="30" height="30" rx="8.5" fill="var(--accent)"/>
+        <path d="M9.2 24 16 8.2 22.8 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M6.6 19.4c5.2-3.1 13.6-3.1 18.8 0" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" opacity=".75"/>
       </svg>
       <h1>You're offline</h1>
-      <p>Tessera needs a connection to load. Reconnect and try again.</p>
+      <p>Atlas AI needs a connection to load. Reconnect and try again.</p>
       <button onclick="location.reload()">Try again</button>
     </main>
   </body>

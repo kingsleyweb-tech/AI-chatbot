@@ -26,7 +26,7 @@ Copy `.env.example` to `.env.local`. It is gitignored, so never commit it.
 | Variable | Where it's used | Secret? | Notes |
 | --- | --- | --- | --- |
 | `OPENROUTER_API_KEY` | server | **yes** | Required. Free-tier keys work with `:free` models only. |
-| `GEMINI_API_KEY` | server | **yes** | Recommended. Google AI Studio key. Gemini is the primary provider: it becomes the default model (`gemini:gemini-3.5-flash`), with Gemini embeddings and Flash-Lite for background tasks. Without it, Tessera runs on OpenRouter alone. Each Gemini model has its own free-tier quota, separate from OpenRouter's. |
+| `GEMINI_API_KEY` | server | **yes** | Recommended. Google AI Studio key. Gemini is the primary provider: it becomes the default model (`gemini:gemini-3.5-flash`), with Gemini embeddings and Flash-Lite for background tasks. Without it, Atlas AI runs on OpenRouter alone. Each Gemini model has its own free-tier quota, separate from OpenRouter's. |
 | `GEMINI_BILLING` | server | no | Optional. `paid` if the Google project has billing; then Gemini models are treated as paid and need approval. Default: free tier. |
 | `SERPAPI_API_KEY` | server | **yes** | Optional. Google results via SerpAPI: general and news searches. |
 | `TAVILY_API_KEY` | server | **yes** | Optional. Research searches, page reading, Deep Research. |
@@ -49,7 +49,7 @@ Index builds can take a few minutes. Until they finish, the Project page and the
 
 ## 4. Access control
 
-Tessera is private. A user can use it only if their **email is verified** and it is either:
+Atlas AI is private. A user can use it only if their **email is verified** and it is either:
 
 - a bootstrap admin, hard-coded in `firestore.rules` (`isBootstrapAdmin`), in `src/state/auth.tsx` (`BOOTSTRAP_ADMINS`), and in the `ADMIN_EMAILS` default; or
 - listed in the Firestore document `config/access` (`allowedEmails` or `adminEmails`).

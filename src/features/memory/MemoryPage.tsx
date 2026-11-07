@@ -116,7 +116,7 @@ export default function MemoryPage() {
     >
       <PageHeader
         title="Memory"
-        description="Things Tessera has learned about you across conversations. They are added to future chats when relevant."
+        description="Things Atlas AI has learned about you across conversations. They are added to future chats when relevant."
         actions={
           <Button variant="primary" icon={<Plus className="size-4" />} onClick={() => openEditor(null)} className="hidden lg:inline-flex">
             Add memory
@@ -130,7 +130,7 @@ export default function MemoryPage() {
           <div className="text-sm font-medium">Use memory</div>
           <div className="text-xs text-muted">
             {settings.memoryEnabled
-              ? 'Tessera saves useful details automatically and recalls them when relevant.'
+              ? 'Atlas AI saves useful details automatically and recalls them when relevant.'
               : 'Memory is off. Nothing new is saved and saved memories are not used.'}
           </div>
         </div>
@@ -164,7 +164,7 @@ export default function MemoryPage() {
         </div>
       ) : !data.length ? (
         <EmptyState icon={<Brain className="size-5" />} title="No memories yet">
-          As you chat, Tessera notes lasting details such as preferences, projects and decisions. You can also add one yourself, or say “remember that…” in a chat.
+          As you chat, Atlas AI notes lasting details such as preferences, projects and decisions. You can also add one yourself, or say “remember that…” in a chat.
         </EmptyState>
       ) : !filtered.length ? (
         <p className="py-12 text-center text-sm text-muted">No memories match.</p>
@@ -235,7 +235,7 @@ export default function MemoryPage() {
         open={clearOpen}
         onClose={() => setClearOpen(false)}
         title="Delete all memories?"
-        message="This permanently removes everything Tessera has remembered about you. Conversations are not affected."
+        message="This permanently removes everything Atlas AI has remembered about you. Conversations are not affected."
         confirmLabel="Delete all"
         onConfirm={async () => {
           await deleteAllMemories(uid);

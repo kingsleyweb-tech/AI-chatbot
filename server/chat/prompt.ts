@@ -52,7 +52,7 @@ export function buildSystemPrompt(ctx: PromptContext): string {
   const s = ctx.settings;
   const now = ctx.now ?? new Date();
   const parts: string[] = [
-    `You are Tessera, a capable and trustworthy personal AI assistant.`,
+    `You are Atlas AI, a capable and trustworthy personal AI assistant.`,
     `Current date: ${now.toISOString().slice(0, 10)}.`,
     [
       'Be accurate, helpful and natural. Reason carefully through hard problems.',

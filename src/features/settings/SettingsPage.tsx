@@ -188,7 +188,7 @@ function PersonalizationSection() {
         <Textarea id="about" rows={4} maxLength={4000} value={about.draft} onChange={(e) => about.setDraft(e.target.value)} onBlur={about.commit} />
       </div>
       <div className="py-4">
-        <Label htmlFor="custom" hint="How Tessera should respond: format, things to always or never do.">
+        <Label htmlFor="custom" hint="How Atlas AI should respond: format, things to always or never do.">
           Custom instructions
         </Label>
         <Textarea id="custom" rows={5} maxLength={8000} value={custom.draft} onChange={(e) => custom.setDraft(e.target.value)} onBlur={custom.commit} />
@@ -264,7 +264,7 @@ function ModelsSection() {
           <ModelPicker value={def} onChange={(id) => update({ defaultModel: id })} align="end" />
         </div>
       </Row>
-      <Row title="Fallbacks" description="If the chosen model is busy or unavailable, Tessera tries these in order and tells you which one answered.">
+      <Row title="Fallbacks" description="If the chosen model is busy or unavailable, Atlas AI tries these in order and tells you which one answered.">
         <ol className="space-y-0.5 text-sm text-muted">
           {(catalog?.fallbackModels ?? []).map((id, i) => (
             <li key={id}>
@@ -349,7 +349,7 @@ function AdminAiRows() {
   return (
     <>
       <h3 className="mt-6 text-xs font-medium uppercase tracking-wide text-muted">Admin: AI routing (all users)</h3>
-      <Row title="Preferred provider" description="Tried first whenever Tessera picks a model automatically. A model a user chose is always kept when it can answer.">
+      <Row title="Preferred provider" description="Tried first whenever Atlas AI picks a model automatically. A model a user chose is always kept when it can answer.">
         <Select
           className="sm:w-48"
           value={current.preferredProvider}
@@ -388,7 +388,7 @@ function MemorySection() {
       <Row title="Use memory" description="Save lasting details from chats and recall them later. Turning this off stops both saving and recall.">
         <Switch label="Use memory" checked={settings.memoryEnabled} onChange={(v) => update({ memoryEnabled: v })} />
       </Row>
-      <Row title="Manage memories" description="Review, edit or delete what Tessera remembers.">
+      <Row title="Manage memories" description="Review, edit or delete what Atlas AI remembers.">
         <Link to="/memory" className="text-sm font-medium text-accent hover:underline">
           Open Memory
         </Link>
@@ -609,7 +609,7 @@ function UsageBreakdown({ data }: { data: UsageDay[] }) {
             </>
           )}
           <p className="mt-2 text-xs text-subtle">
-            Deep Research runs: {t.decisions.research ?? 0}. Credits are counted by Tessera; the provider dashboards show the account totals.
+            Deep Research runs: {t.decisions.research ?? 0}. Credits are counted by Atlas AI; the provider dashboards show the account totals.
           </p>
         </div>
       )}
@@ -715,7 +715,7 @@ function AccessSection() {
   return (
     <Section title="Access">
       <p className="py-4 text-sm text-muted">
-        Tessera is private. Only verified emails on these lists can sign in and use it. Changes apply within a few minutes.
+        Atlas AI is private. Only verified emails on these lists can sign in and use it. Changes apply within a few minutes.
       </p>
       <Row
         title="Show the registration page"
@@ -766,7 +766,7 @@ function AboutSection() {
   const installed = isStandalone();
   return (
     <Section title="About">
-      <Row title="Tessera" description="A private AI assistant.">
+      <Row title="Atlas AI" description="A private AI assistant.">
         <span className="text-sm text-muted">Version {__APP_VERSION__}</span>
       </Row>
       <Row title="Installed as app" description={installed ? 'Running from the Home Screen.' : isIOS() ? 'In Safari, tap Share, then “Add to Home Screen”.' : 'Use your browser’s Install option.'}>

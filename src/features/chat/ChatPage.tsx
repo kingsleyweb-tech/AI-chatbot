@@ -481,11 +481,11 @@ export default function ChatPage() {
             onPickFromLibrary={() => setLibraryOpen(true)}
             sendOnEnter={settings.sendOnEnter}
             autoFocus={!conversationId}
-            placeholder={project ? `Message Tessera in ${project.name}` : undefined}
+            placeholder={project ? `Message Atlas AI in ${project.name}` : undefined}
           />
         )}
         <p className="mx-auto mt-1.5 hidden max-w-3xl px-4 text-center text-[11px] text-subtle sm:block">
-          Tessera can make mistakes. Verify important information.
+          Atlas AI can make mistakes. Verify important information.
         </p>
       </div>
 

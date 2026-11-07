@@ -1,4 +1,4 @@
-# Tessera
+# Atlas AI
 
 A private, single-owner AI assistant: streaming chat across multiple models, long-term memory, document Q&A with citations, cost-controlled web search (SerpAPI + Tavily) and Deep Research, projects, and an installable iPhone-friendly PWA.
 

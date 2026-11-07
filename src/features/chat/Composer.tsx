@@ -213,7 +213,7 @@ export function Composer(props: ComposerProps) {
           onKeyDown={onKeyDown}
           onPaste={onPaste}
           rows={1}
-          placeholder={dictation.listening ? 'Listening…' : props.placeholder ?? 'Message Tessera'}
+          placeholder={dictation.listening ? 'Listening…' : props.placeholder ?? 'Message Atlas AI'}
           aria-label="Message"
           enterKeyHint={props.sendOnEnter ? 'send' : 'enter'}
           className="block max-h-60 min-h-[52px] w-full resize-none bg-transparent px-4 pb-1 pt-3.5 text-[15px] leading-6 outline-none placeholder:text-subtle"

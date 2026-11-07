@@ -1,4 +1,4 @@
-import { limit, orderBy, query, where } from 'firebase/firestore';
+import { limit, query, where } from 'firebase/firestore';
 import { MessageSquare, MoreHorizontal, Pencil, SquarePen, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
@@ -6,7 +6,7 @@ import { Button, ConfirmDialog, EmptyState, IconButton, Menu, Spinner } from '@/
 import { deleteProject, paths } from '@/lib/db';
 import { useDocument, useQuery } from '@/lib/hooks';
 import type { Conversation, Project } from '@/lib/types';
-import { relativeTime } from '@/lib/utils';
+import { byUpdatedDesc, relativeTime } from '@/lib/utils';
 import { useUid } from '@/state/auth';
 import { useToast } from '@/state/toast';
 import { Page } from '../shell/Page';
@@ -19,7 +19,7 @@ export default function ProjectPage() {
   const navigate = useNavigate();
   const { data: project, loading, exists } = useDocument<Project>(paths.project(uid, projectId), [uid, projectId]);
   const chats = useQuery<Conversation>(
-    query(paths.conversations(uid), where('projectId', '==', projectId), orderBy('updatedAt', 'desc'), limit(200)),
+    query(paths.conversations(uid), where('projectId', '==', projectId), limit(300)),
     [uid, projectId],
   );
   const [editOpen, setEditOpen] = useState(false);
@@ -100,7 +100,7 @@ export default function ProjectPage() {
         </EmptyState>
       ) : (
         <ul className="divide-y divide-border rounded-xl border border-border">
-          {chats.data.map((c) => (
+          {[...chats.data].sort(byUpdatedDesc).map((c) => (
             <li key={c.id}>
               <Link to={`/c/${c.id}`} className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-surface">
                 <div className="min-w-0 flex-1">

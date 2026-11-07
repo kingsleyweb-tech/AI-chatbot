@@ -7,6 +7,7 @@ import {
   CircleDollarSign,
   Copy,
   FileText,
+  Library,
   Globe,
   Languages,
   ListCollapse,
@@ -23,7 +24,7 @@ import {
   Volume2,
   VolumeX,
 } from 'lucide-react';
-import { memo, useState } from 'react';
+import { lazy, memo, Suspense, useState } from 'react';
 import type { ApprovalRequest, QuickAction, ResearchStep, RouteInfo, SearchInfo, Source } from '@shared/types';
 import { LogoMark } from '@/components/Logo';
 import { Markdown } from '@/components/Markdown';
@@ -35,10 +36,14 @@ import { useSettings } from '@/state/settings';
 import { useToast } from '@/state/toast';
 import type { LiveReply } from './engine';
 
+const SaveToKnowledgeDialog = lazy(() => import('../knowledge/SaveToKnowledge').then((m) => ({ default: m.SaveToKnowledgeDialog })));
+
 function Sources({ sources }: { sources: Source[] }) {
   const [open, setOpen] = useState(false);
   const web = sources.filter((s) => s.kind === 'web');
   const docs = sources.filter((s) => s.kind === 'document');
+  const kb = sources.filter((s) => s.kind === 'knowledge');
+  const [saving, setSaving] = useState(false);
   const shown = open ? web : web.slice(0, 4);
   return (
     <div className="mt-3 space-y-2">
@@ -70,8 +75,44 @@ function Sources({ sources }: { sources: Source[] }) {
                 {open ? 'Show less' : `+${web.length - 4} more`}
               </button>
             )}
+            <button
+              onClick={() => setSaving(true)}
+              className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted hover:bg-surface-2 hover:text-fg"
+              title="Save these pages to your knowledge base"
+            >
+              <Library className="size-3.5" />
+              Save to knowledge base
+            </button>
           </div>
+          {saving && (
+            <Suspense fallback={null}>
+              <SaveToKnowledgeDialog open={saving} onClose={() => setSaving(false)} sources={web} />
+            </Suspense>
+          )}
         </div>
+      )}
+      {kb.length > 0 && (
+        <details className="group text-xs">
+          <summary className="flex cursor-pointer list-none items-center gap-1 text-muted hover:text-fg">
+            <Library className="size-3.5" />
+            {kb.length} knowledge base excerpt{kb.length > 1 ? 's' : ''} used
+            <ChevronDown className="size-3 transition-transform group-open:rotate-180" />
+          </summary>
+          <ul className="mt-1.5 space-y-1 pl-1">
+            {kb.map((s) => (
+              <li key={s.index} className="text-muted">
+                <span className="font-medium text-fg">K{s.index}</span> {s.title}
+                <span className="text-subtle"> · {s.site}</span>
+                {s.indexedAt && <span className="text-subtle"> · indexed {s.indexedAt.slice(0, 10)}</span>}
+                {s.url && (
+                  <a href={s.url} target="_blank" rel="noopener noreferrer" className="ml-1 text-accent hover:underline">
+                    {domainOf(s.url)}
+                  </a>
+                )}
+              </li>
+            ))}
+          </ul>
+        </details>
       )}
       {docs.length > 0 && (
         <details className="group text-xs">
@@ -94,6 +135,23 @@ function Sources({ sources }: { sources: Source[] }) {
 }
 
 const PROVIDER: Record<string, string> = { serpapi: 'SerpAPI', tavily: 'Tavily' };
+
+/** Where the answer's information came from (source transparency). */
+function ContextLine({ used }: { used: { memories: number; documents: number; conversations: number; knowledge?: number; web?: number } | null }) {
+  if (!used) return null;
+  const parts = [
+    used.knowledge ? `knowledge base (${used.knowledge})` : '',
+    used.documents ? `documents (${used.documents})` : '',
+    used.web ? `web (${used.web})` : '',
+    used.memories ? `${used.memories} memor${used.memories === 1 ? 'y' : 'ies'}` : '',
+    used.conversations ? `${used.conversations} past chat${used.conversations > 1 ? 's' : ''}` : '',
+  ].filter(Boolean);
+  return (
+    <span className="ml-1.5 text-[11px] text-subtle" title="Sources used for this answer">
+      · {parts.length ? `used ${parts.join(', ')}` : 'model knowledge only'}
+    </span>
+  );
+}
 
 function SearchStatus({ info, steps, live }: { info?: SearchInfo | null; steps: ResearchStep[]; live: boolean }) {
   const [open, setOpen] = useState(false);
@@ -202,7 +260,7 @@ function ApprovalCard({
           </p>
           {approval.creditsNeeded && (
             <p className="text-muted">
-              The OpenRouter account has no credits, so this model cannot run until credits are added. Tessera never buys credits for you.
+              The OpenRouter account has no credits, so this model cannot run until credits are added. Atlas AI never buys credits for you.
             </p>
           )}
         </div>
@@ -476,12 +534,7 @@ export const AssistantMessage = memo(function AssistantMessage({
               />
             )}
             {model && <span className="ml-1.5 truncate text-[11px] text-subtle">{modelShortName(model)}</span>}
-            {live?.context && (live.context.memories > 0 || live.context.conversations > 0) && (
-              <span className="ml-1.5 text-[11px] text-subtle" title="Context used for this answer">
-                · used {live.context.memories} memor{live.context.memories === 1 ? 'y' : 'ies'}
-                {live.context.conversations ? `, ${live.context.conversations} past chat${live.context.conversations > 1 ? 's' : ''}` : ''}
-              </span>
-            )}
+            <ContextLine used={m.contextUsed ?? (live?.context ? { ...live.context, web: live.sources.filter((x) => x.kind === 'web').length } : null)} />
           </div>
         )}
       </div>

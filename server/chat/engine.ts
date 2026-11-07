@@ -139,7 +139,7 @@ export function friendlyError(err: unknown): Extract<StreamEvent, { type: 'error
       err.code === 'insufficient_credits'
         ? 'Choose a free model, or add credits to your OpenRouter account.'
         : err.code === 'daily_limit'
-          ? 'Try again after the reset, or add OpenRouter credits (purchasing at least $10 raises the free-model limit). Tessera never buys credits for you.'
+          ? 'Try again after the reset, or add OpenRouter credits (purchasing at least $10 raises the free-model limit). Atlas AI never buys credits for you.'
           : err.code === 'rate_limited'
             ? 'Wait a moment and retry, or switch to another model.'
             : err.code === 'unsupported_input'

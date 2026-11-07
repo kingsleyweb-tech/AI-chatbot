@@ -36,7 +36,7 @@ The browser keeps live replies in a module-level store (`src/features/chat/engin
 ## Providers and model routing (`server/providers`, `server/router`)
 
 - **Providers.** Google Gemini (`gemini:<model>`, AI Studio key) is the **primary** provider. OpenRouter (default prefix) is the **secondary**. Both implement one `ChatProvider` interface and are registered in `server/providers/registry.ts`. One catalog, one router and one conversation engine serve both, so history, memory, documents and settings are shared.
-- **Default model.** `gemini:gemini-3.5-flash` when `GEMINI_API_KEY` is set. An admin can set another app default in `config/ai`, and a user's own default or per-chat choice always wins. Tessera never changes a user's chosen model.
+- **Default model.** `gemini:gemini-3.5-flash` when `GEMINI_API_KEY` is set. An admin can set another app default in `config/ai`, and a user's own default or per-chat choice always wins. Atlas AI never changes a user's chosen model.
 - **Routing** (`server/router/route.ts`):
   - `detectTask` reads the request without a model call: images, document types, intent and a token estimate.
   - `routeModel` keeps the selected model when it fits. Otherwise it uses the best free model for the task, for that reply only. Ranking: preferred provider first (`config/ai.preferredProvider`, default Gemini), then the task preference list, then featured models, then context size.

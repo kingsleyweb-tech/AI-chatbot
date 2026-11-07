@@ -139,7 +139,7 @@ function Login() {
   return (
     <Shell footer="Private assistant · access by invitation">
       <h1 className="mb-1 text-center text-xl font-semibold tracking-tight">Welcome back</h1>
-      <p className="mb-7 text-center text-sm text-muted">Sign in to continue to Tessera.</p>
+      <p className="mb-7 text-center text-sm text-muted">Sign in to continue to Atlas AI.</p>
       <div className="space-y-4">
         <GoogleButton onError={setError} />
         <div className="flex items-center gap-3 text-xs text-subtle">
@@ -201,7 +201,7 @@ function Register() {
         <div className="rounded-2xl border border-border p-6 text-center">
           <h1 className="text-lg font-semibold">Registration is closed</h1>
           <p className="mt-2 text-sm text-muted">
-            Tessera is invitation-only. Ask the administrator to approve your email, or sign in with an approved Google account.
+            Atlas AI is invitation-only. Ask the administrator to approve your email, or sign in with an approved Google account.
           </p>
           <Link to="/login" className="mt-5 inline-block text-sm font-medium text-accent hover:underline">
             Back to sign in

@@ -125,9 +125,12 @@ body {
 
 ::selection { background: var(--accent-soft); }
 
-:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+/* In the base layer so utilities such as outline-none (the composer) win. */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
 }
 
 /* iOS zooms into inputs below 16px; keep form controls at 16px on touch devices. */

@@ -18,10 +18,10 @@ function download(content: string, filename: string, type: string) {
 }
 
 export function toMarkdown(conv: Conversation, messages: Message[]): string {
-  const lines = [`# ${conv.title}`, '', `_Exported from Tessera on ${new Date().toLocaleString()}_`, ''];
+  const lines = [`# ${conv.title}`, '', `_Exported from Atlas AI on ${new Date().toLocaleString()}_`, ''];
   for (const m of messages) {
     const when = toDate(m.createdAt)?.toLocaleString() ?? '';
-    lines.push(m.role === 'user' ? `## You · ${when}` : `## Tessera${m.model ? ` (${modelShortName(m.model)})` : ''} · ${when}`);
+    lines.push(m.role === 'user' ? `## You · ${when}` : `## Atlas AI${m.model ? ` (${modelShortName(m.model)})` : ''} · ${when}`);
     lines.push('');
     lines.push(m.content || (m.error ? `_Error: ${m.error.message}_` : ''));
     const att = m.attachments?.map((a) => a.name).join(', ');
@@ -38,7 +38,7 @@ export function toMarkdown(conv: Conversation, messages: Message[]): string {
 export function toPlainText(conv: Conversation, messages: Message[]): string {
   const out = [conv.title, '='.repeat(Math.min(conv.title.length, 60)), ''];
   for (const m of messages) {
-    out.push(m.role === 'user' ? 'You:' : 'Tessera:');
+    out.push(m.role === 'user' ? 'You:' : 'Atlas AI:');
     out.push(m.content);
     if (m.sources?.length) out.push('Sources:', ...m.sources.map((s) => `  [${s.index}] ${s.title} ${s.url}`));
     out.push('');
@@ -67,7 +67,7 @@ export async function exportPdf(conv: Conversation, messages: Message[]) {
   const body = messages
     .map((m) => {
       const html = renderToStaticMarkup(createElement(StaticMarkdown, { content: m.content }));
-      const who = m.role === 'user' ? 'You' : `Tessera${m.model ? ` · ${modelShortName(m.model)}` : ''}`;
+      const who = m.role === 'user' ? 'You' : `Atlas AI${m.model ? ` · ${modelShortName(m.model)}` : ''}`;
       const sources = m.sources?.length
         ? `<div class="src"><b>Sources</b><ol>${m.sources
             .map((s) => `<li>${escapeHtml(s.title)}${s.url ? ` &mdash; <a href="${escapeHtml(s.url)}">${escapeHtml(s.url)}</a>` : ''}</li>`)
@@ -89,7 +89,7 @@ pre{background:#f5f5f4;padding:10px;border-radius:6px;white-space:pre-wrap;word-
 code{font-family:ui-monospace,Menlo,Consolas,monospace}
 table{border-collapse:collapse} th,td{border:1px solid #ddd;padding:4px 8px}
 .src{font-size:12px;color:#555;margin-top:8px} a{color:#0f766e}
-</style></head><body><h1 class="t">${escapeHtml(conv.title)}</h1><div class="meta">Exported from Tessera &middot; ${new Date().toLocaleString()}</div>${body}</body></html>`;
+</style></head><body><h1 class="t">${escapeHtml(conv.title)}</h1><div class="meta">Exported from Atlas AI &middot; ${new Date().toLocaleString()}</div>${body}</body></html>`;
 
   const iframe = document.createElement('iframe');
   iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0';

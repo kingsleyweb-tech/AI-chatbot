@@ -83,8 +83,53 @@ export interface Message {
   usage?: UsageInfo | null;
   reasoning?: string | null;
   error?: { code: string; message: string; suggestion?: string | null } | null;
+  /** which context sources the server used for this reply */
+  contextUsed?: ContextUsed | null;
   createdAt?: Timestamp | null;
   editedAt?: Timestamp | null;
+}
+
+export interface ContextUsed {
+  memories: number;
+  documents: number;
+  conversations: number;
+  knowledge: number;
+  web: number;
+}
+
+export type KbScope = 'personal' | 'shared';
+
+export interface KbCollection {
+  id: string;
+  name: string;
+  description?: string;
+  createdAt?: Timestamp | null;
+}
+
+export interface KbSourceMeta {
+  id: string;
+  collectionId: string;
+  title: string;
+  type: 'file' | 'url' | 'note';
+  fileName?: string;
+  mime?: string;
+  size?: number;
+  url?: string;
+  status: 'processing' | 'ready' | 'failed';
+  error?: string | null;
+  warning?: string | null;
+  chunkCount?: number;
+  charCount?: number;
+  embeddingModel?: string | null;
+  confidential?: boolean;
+  aiAllowed?: boolean;
+  addedFrom?: 'upload' | 'manual' | 'web_search';
+  refreshDays?: number | null;
+  indexedAt?: string;
+  refreshedAt?: string;
+  /** manual entries keep their text so they can be edited */
+  noteText?: string;
+  createdAt?: Timestamp | null;
 }
 
 export interface Memory {
@@ -146,4 +191,5 @@ export interface UsageDay {
   search?: Record<string, { requests?: number; cached?: number; failed?: number; credits?: number }>;
   /** decision engine outcomes: none/search/extract/research counts, plus reasons */
   searchDecisions?: Record<string, number | Record<string, number> | undefined> & { reasons?: Record<string, number> };
+  knowledge?: { retrievals?: number; used?: number; hits?: number };
 }

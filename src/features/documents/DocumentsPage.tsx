@@ -52,7 +52,7 @@ export default function DocumentsPage() {
     >
       <PageHeader
         title="Documents"
-        description="Files you upload are read, split into sections and indexed so Tessera can answer questions about them with citations."
+        description="Files you upload are read, split into sections and indexed so Atlas AI can answer questions about them with citations."
         actions={<div className="hidden lg:block">{uploadButton}</div>}
       />
 

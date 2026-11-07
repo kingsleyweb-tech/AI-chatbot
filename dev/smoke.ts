@@ -12,7 +12,7 @@ for (const model of chain) {
     let text = '';
     let first = 0;
     let reasoning = '';
-    for await (const c of providerFor(model).stream({ model, messages: [{ role: 'user', content: 'Reply with exactly: Tessera online.' }], maxTokens: 8192 })) {
+    for await (const c of providerFor(model).stream({ model, messages: [{ role: 'user', content: 'Reply with exactly: Atlas AI online.' }], maxTokens: 8192 })) {
       if (c.type === 'reasoning') reasoning += c.text;
       if (c.type === 'delta') { if (!first) first = Date.now() - started; text += c.text; }
       if (c.type === 'usage') console.log('usage:', c.usage);
