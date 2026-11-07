@@ -1,0 +1,117 @@
+rules_version = '2';
+
+// Tessera Firestore security rules.
+//
+// Access model:
+// - Only users with a VERIFIED email that is a bootstrap admin or listed in
+//   config/access.allowedEmails can read/write any data.
+// - Every user-owned record lives under users/{uid}/... and is only
+//   accessible to that uid. Admins cannot read other users' data.
+// - The backend talks to Firestore with the caller's own ID token, so these
+//   rules also govern every server-side read/write.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+    function verified() {
+      return signedIn() && request.auth.token.email_verified == true;
+    }
+    function email() {
+      return request.auth.token.email.lower();
+    }
+    function accessPath() {
+      return /databases/$(database)/documents/config/access;
+    }
+    function accessDoc() {
+      return get(accessPath()).data;
+    }
+    // Keep in sync with ADMIN_EMAILS on the server.
+    function isBootstrapAdmin() {
+      return verified() && email() in ['kingsleyanaab604@gmail.com'];
+    }
+    function isAdmin() {
+      return isBootstrapAdmin()
+        || (verified() && exists(accessPath()) && email() in accessDoc().get('adminEmails', []));
+    }
+    function isAllowed() {
+      return isAdmin()
+        || (verified() && exists(accessPath()) && email() in accessDoc().get('allowedEmails', []));
+    }
+    function isOwner(uid) {
+      return isAllowed() && request.auth.uid == uid;
+    }
+    function smallString(v, max) {
+      return v is string && v.size() <= max;
+    }
+
+    // Public flags the sign-in screen needs before authentication.
+    match /config/public {
+      allow read: if true;
+      allow write: if isAdmin()
+        && request.resource.data.keys().hasOnly(['registrationOpen', 'updatedAt'])
+        && request.resource.data.registrationOpen is bool;
+    }
+
+    // Allowlist. Readable by approved users (so the client can show status),
+    // writable only by admins.
+    match /config/access {
+      allow read: if isAllowed();
+      allow write: if isAdmin()
+        && request.resource.data.keys().hasOnly(['allowedEmails', 'adminEmails', 'updatedAt'])
+        && request.resource.data.allowedEmails is list
+        && request.resource.data.allowedEmails.size() <= 200
+        && request.resource.data.get('adminEmails', []) is list;
+    }
+
+    match /config/{other} {
+      allow read, write: if false;
+    }
+
+    match /users/{uid} {
+      allow read, delete: if isOwner(uid);
+      allow create, update: if isOwner(uid);
+
+      match /conversations/{cid} {
+        allow read, delete: if isOwner(uid);
+        allow create, update: if isOwner(uid)
+          && (!('title' in request.resource.data) || smallString(request.resource.data.title, 200));
+
+        match /messages/{mid} {
+          allow read, delete: if isOwner(uid);
+          allow create, update: if isOwner(uid)
+            && request.resource.data.role in ['user', 'assistant']
+            && smallString(request.resource.data.content, 400000);
+        }
+      }
+
+      match /memories/{id} {
+        allow read, delete: if isOwner(uid);
+        allow create, update: if isOwner(uid)
+          && smallString(request.resource.data.text, 1000);
+      }
+
+      match /documents/{docId} {
+        allow read, delete: if isOwner(uid);
+        allow create, update: if isOwner(uid)
+          && smallString(request.resource.data.name, 300);
+
+        match /chunks/{chunkId} {
+          allow read, write: if isOwner(uid);
+        }
+      }
+
+      // projects, savedResponses, usage, memoryVectors, convVectors, ...
+      match /{collection}/{docId} {
+        allow read, write: if isOwner(uid)
+          && collection in ['projects', 'savedResponses', 'usage', 'memoryVectors', 'convVectors'];
+      }
+    }
+
+    // Deny everything else.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
