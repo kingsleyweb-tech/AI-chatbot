@@ -2,6 +2,9 @@ import { z } from 'zod';
 import type { Ctx } from '../access.js';
 import { modelConfig } from '../config/models.js';
 import { retrieveDocuments } from '../docs/documents.js';
+import { retrieveKnowledge, type KnowledgeContext } from '../knowledge/retrieve.js';
+import { isTrivial } from '../search/decide.js';
+import { looksLikeFollowUp } from '../search/heuristics.js';
 import { embed } from '../embeddings.js';
 import { fieldPath, SERVER_TIME, type Write } from '../firestore.js';
 import { HttpError, sseEncode, sseHeaders } from '../http.js';
@@ -240,6 +243,7 @@ export async function runChat(
         let researchSteps: ResearchStep[] = [];
         let routeInfo: RouteInfo | null = null;
         let approval: ApprovalRequest | null = null;
+        let contextUsed: { memories: number; documents: number; conversations: number; knowledge: number; web: number } | null = null;
         /** analytics counters for usage/{day} (codes only, never message text) */
         const counters: Record<string, number> = {};
         const count = (path: string[], n = 1) => {
@@ -317,6 +321,31 @@ export async function runChat(
           const contextWindow = firstModel?.contextLength || 32_000;
           const budget = Math.min(Math.floor(contextWindow * 0.6), 100_000);
 
+          // Knowledge base first: it is cheap (a few index reads) and its result decides
+          // whether a "do you know <company>" question still needs the web.
+          // Greetings and arithmetic never touch any knowledge source.
+          let knowledge: KnowledgeContext | null = null;
+          if (!isTrivial(lastUser.content)) {
+            const previous = body.messages.filter((m) => m.role === 'user').slice(-2, -1)[0]?.content ?? '';
+            // short follow-ups ("what services do they offer?") are searched with the previous question
+            const kbText = previous && looksLikeFollowUp(lastUser.content) ? `${previous.slice(0, 600)}\n${queryText}` : queryText;
+            knowledge = await retrieveKnowledge({
+              db,
+              uid,
+              query: kbText === queryText ? query : { text: kbText },
+              budgetTokens: Math.floor(budget * 0.35),
+              sourceOffset: 0,
+            }).catch((err) => {
+              console.warn('[chat] knowledge retrieval failed', err instanceof Error ? err.message : err);
+              return null;
+            });
+            if (knowledge) {
+              count(['knowledge', 'retrievals']);
+              if (knowledge.sources.length) count(['knowledge', 'used']);
+              if (knowledge.hit) count(['knowledge', 'hits']);
+            }
+          }
+
           const [memories, related, project, docs, web] = await Promise.all([
             memoryOn
               ? loadMemories(db, uid)
@@ -360,6 +389,7 @@ export async function runChat(
               text: lastUser.content,
               options: body.options,
               hasDocuments: body.options.documentIds.length > 0,
+              knowledgeHit: Boolean(knowledge?.hit),
               signal,
               onStep: (step) => send({ type: 'research', step }),
               onDecision: (d) => {
@@ -382,12 +412,21 @@ export async function runChat(
             if (web.failure) notice(web.info.message ?? `Web search: ${web.failure}`);
           }
           if (docs?.sources.length) sources.push(...docs.sources);
+          if (knowledge?.sources.length) sources.push(...knowledge.sources);
           if (sources.length) send({ type: 'sources', sources });
+          contextUsed = {
+            memories: memories.length,
+            documents: docs?.sources.length ?? 0,
+            conversations: related.length,
+            knowledge: knowledge?.sources.length ?? 0,
+            web: web?.sources.length ?? 0,
+          };
           send({
             type: 'context',
             memories: memories.length,
             documents: docs?.sources.length ?? 0,
             conversations: related.length,
+            knowledge: knowledge?.sources.length ?? 0,
           });
 
           const system = buildSystemPrompt({
@@ -398,6 +437,7 @@ export async function runChat(
             relatedConversations: related,
             documents: docs?.text || undefined,
             failedDocuments: docs?.failed,
+            knowledge: knowledge?.text || undefined,
             webResults: web?.text || undefined,
             webSearchFailed: web?.failure ?? null,
             capabilityNotes: capabilityNotes(
@@ -516,6 +556,7 @@ export async function runChat(
               route: routeInfo,
               approval,
               search: searchInfo,
+              contextUsed,
               researchSteps: researchSteps.slice(0, 20),
               usage,
               error: errorEvent

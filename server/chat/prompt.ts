@@ -21,6 +21,8 @@ export interface PromptContext {
   relatedConversations?: { title: string; summary: string }[];
   documents?: string;
   failedDocuments?: string[];
+  /** knowledge base excerpts ([K1] ...) */
+  knowledge?: string;
   webResults?: string;
   webSearchFailed?: string | null;
   /** honest capability statements for this request */
@@ -57,6 +59,9 @@ export function buildSystemPrompt(ctx: PromptContext): string {
       'Format responses in Markdown: headings for long answers, lists, tables where useful, fenced code blocks with a language tag.',
       'Write math with LaTeX using $...$ inline and $$...$$ for display.',
       'If you are unsure or do not know, say so plainly. Never invent facts, citations, links, or memories.',
+      'For questions about a specific company, organization, person or product: use the knowledge base and web results below when present. ' +
+        'If neither covers it, say clearly that you could not verify information about it, do not guess its history, services or activities, and suggest turning on web search or adding a source to the Knowledge Base. ' +
+        'Never say you searched or looked something up unless web results or knowledge base excerpts are included below.',
       'Your knowledge has a cutoff; for recent events say you may be out of date unless web results are provided.',
     ].join(' '),
   ];
@@ -95,6 +100,14 @@ export function buildSystemPrompt(ctx: PromptContext): string {
     parts.push(
       `## Attached document excerpts\nAnswer questions about the documents using these excerpts. Cite them inline like [D1]. ` +
         `If the excerpts don't contain the answer, say so rather than guessing.\n\n${ctx.documents}`,
+    );
+  }
+  if (ctx.knowledge) {
+    parts.push(
+      `## Knowledge base excerpts\nRetrieved from the user's knowledge base for this message (collection › source, location). ` +
+        `Prefer them over your background knowledge for these subjects and cite them inline like [K1]. ` +
+        `Keep what the sources state separate from your own inferences, and label inferences as such. ` +
+        `An excerpt may be outdated; mention its indexed date when timing matters. If the excerpts don't answer the question, say so.\n\n${ctx.knowledge}`,
     );
   }
   if (ctx.failedDocuments?.length) {

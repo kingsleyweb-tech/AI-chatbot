@@ -121,6 +121,28 @@ const fastOpts = { minGapMs: 0, perMinute: 1000, reportedTtlMs: 60_000 };
 const base = { uid: 'u1', limits: DEFAULT_LIMITS };
 const vec = (v: number[]) => ({ vector: v, model: 'gemini:gemini-embedding-001' });
 
+describe('company and organization questions', () => {
+  it('looks up an unfamiliar company on the web instead of guessing', () => {
+    for (const t of ['Do you know Soko Aerial?', 'do you know soko aerial', 'Have you heard of Zipline?', 'What services does Soko Aerial Ltd offer?']) {
+      const d = decideSearch(t, {});
+      expect(d.action, t).toBe('search');
+      expect(d.reason, t).toBe('entity_lookup');
+    }
+  });
+
+  it('answers from the knowledge base when it already covers the company', () => {
+    for (const t of ['Do you know Soko Aerial?', 'What services does Soko Aerial Ltd offer?']) {
+      const d = decideSearch(t, { knowledgeHit: true });
+      expect(d.action, t).toBe('none');
+      expect(d.reason, t).toBe('knowledge_base');
+    }
+  });
+
+  it('does not treat ordinary questions as company lookups', () => {
+    for (const t of ['Do you know how to cook rice?', 'What is Machine Learning?', 'What is Java?', 'Do you know what a closure is?']) none(t);
+  });
+});
+
 describe('search credit protection', () => {
   it('maps paraphrases and word order to one cache key', () => {
     expect(normalizeQuery('latest artificial intelligence news')).toBe(normalizeQuery('newest AI news'));

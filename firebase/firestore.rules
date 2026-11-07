@@ -93,6 +93,25 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Shared knowledge collections: every approved user can read (so retrieval
+    // can use them); only admins can add, change or delete.
+    match /kb/shared/kbCollections/{cid} {
+      allow read: if isAllowed();
+      allow delete: if isAdmin();
+      allow create, update: if isAdmin() && smallString(request.resource.data.name, 100);
+    }
+    match /kb/shared/kbSources/{sid} {
+      allow read: if isAllowed();
+      allow delete: if isAdmin();
+      allow create, update: if isAdmin()
+        && smallString(request.resource.data.title, 300)
+        && smallString(request.resource.data.collectionId, 128);
+      match /{sub}/{subId} {
+        allow read: if isAllowed() && sub in ['chunks', 'index'];
+        allow write: if isAdmin() && sub in ['chunks', 'index'];
+      }
+    }
+
     match /users/{uid} {
       allow read, delete: if isOwner(uid);
       allow create, update: if isOwner(uid);
@@ -124,6 +143,21 @@ service cloud.firestore {
         // extracted chunks, embedded slide images, cached summaries, table rows
         match /{sub}/{subId} {
           allow read, write: if isOwner(uid) && sub in ['chunks', 'images', 'summaries', 'tables'];
+        }
+      }
+
+      // Knowledge base (personal): collections, sources, and per-source chunks and index.
+      match /kbCollections/{cid} {
+        allow read, delete: if isOwner(uid);
+        allow create, update: if isOwner(uid) && smallString(request.resource.data.name, 100);
+      }
+      match /kbSources/{sid} {
+        allow read, delete: if isOwner(uid);
+        allow create, update: if isOwner(uid)
+          && smallString(request.resource.data.title, 300)
+          && smallString(request.resource.data.collectionId, 128);
+        match /{sub}/{subId} {
+          allow read, write: if isOwner(uid) && sub in ['chunks', 'index'];
         }
       }
 

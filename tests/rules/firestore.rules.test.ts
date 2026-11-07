@@ -144,6 +144,39 @@ describe('config documents', () => {
   });
 });
 
+describe('knowledge base', () => {
+  it('keeps personal knowledge private to its owner (scenario 12)', async () => {
+    ok(await write(ALLOWED, 'users/alice/kbCollections/c1', { name: 'Companies and Organizations' }));
+    ok(await write(ALLOWED, 'users/alice/kbSources/s1', { collectionId: 'c1', title: 'Soko Aerial notes', type: 'note', status: 'ready' }));
+    ok(await write(ALLOWED, 'users/alice/kbSources/s1/chunks/0000', { index: 0, ref: 'Text', text: 'x' }));
+    ok(await write(ALLOWED, 'users/alice/kbSources/s1/index/s0', { shard: 0, start: 0, terms: ['soko'] }));
+    ok(await read(ALLOWED, 'users/alice/kbSources/s1/chunks/0000'));
+    for (const p of ['users/alice/kbCollections/c1', 'users/alice/kbSources/s1', 'users/alice/kbSources/s1/chunks/0000', 'users/alice/kbSources/s1/index/s0']) {
+      denied(await read(BOB, p));
+      denied(await read(ADMIN, p));
+      denied(await write(BOB, p, { title: 'hijack' }));
+    }
+    denied(await call(BOB, 'GET', 'users/alice/kbSources'));
+    denied(await write(ALLOWED, 'users/alice/kbSources/s1/other/1', { a: 1 }));
+    denied(await write(ALLOWED, 'users/alice/kbCollections/c2', { name: 'x'.repeat(101) }));
+  });
+
+  it('lets approved users read shared knowledge but only admins change it', async () => {
+    ok(await write(ADMIN, 'kb/shared/kbCollections/g', { name: 'General Knowledge' }));
+    ok(await write(ADMIN, 'kb/shared/kbSources/s1', { collectionId: 'g', title: 'Handbook', type: 'note', status: 'ready' }));
+    ok(await write(ADMIN, 'kb/shared/kbSources/s1/chunks/0000', { index: 0, ref: 'Text', text: 'x' }));
+    ok(await read(ALLOWED, 'kb/shared/kbSources/s1'));
+    ok(await read(BOB, 'kb/shared/kbSources/s1/chunks/0000'));
+    denied(await read(STRANGER, 'kb/shared/kbSources/s1'));
+    denied(await read(null, 'kb/shared/kbCollections/g'));
+    denied(await write(ALLOWED, 'kb/shared/kbCollections/g2', { name: 'Mine' }));
+    denied(await write(ALLOWED, 'kb/shared/kbSources/s1', { collectionId: 'g', title: 'Edited', type: 'note', status: 'ready' }));
+    denied(await write(ALLOWED, 'kb/shared/kbSources/s1/chunks/0001', { index: 1, ref: 'Text', text: 'y' }));
+    denied(await del(ALLOWED, 'kb/shared/kbSources/s1'));
+    ok(await del(ADMIN, 'kb/shared/kbSources/s1'));
+  });
+});
+
 describe('search limits, cache and document subcollections', () => {
   const limits = {
     serpapi: { daily: 8, monthly: 200 },

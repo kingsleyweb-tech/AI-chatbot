@@ -33,9 +33,9 @@ export interface WebOptions {
 }
 
 /** Map the options + message to the decision engine's input. autoSearch=false means manual mode. */
-export function decideFor(text: string, opts: WebOptions, hasDocuments = false): SearchDecision {
+export function decideFor(text: string, opts: WebOptions, hasDocuments = false, knowledgeHit = false): SearchDecision {
   const mode: SearchMode = opts.searchMode ?? (opts.autoSearch === false ? 'manual' : 'auto');
-  return decideSearch(text, { webSearch: opts.webSearch, deepResearch: opts.deepResearch, mode, hasDocuments });
+  return decideSearch(text, { webSearch: opts.webSearch, deepResearch: opts.deepResearch, mode, hasDocuments, knowledgeHit });
 }
 
 type Trigger = SearchInfo['trigger'];
@@ -94,12 +94,14 @@ export async function gatherWebContext(args: {
   text: string;
   options: WebOptions;
   hasDocuments?: boolean;
+  /** the knowledge base already answers this (skips entity look-ups) */
+  knowledgeHit?: boolean;
   signal?: AbortSignal;
   onStep?: (s: ResearchStep) => void;
   /** called with every decision, including "no search" (for analytics) */
   onDecision?: (d: SearchDecision) => void;
 }): Promise<WebContext | null> {
-  const decision = decideFor(args.text, args.options, args.hasDocuments);
+  const decision = decideFor(args.text, args.options, args.hasDocuments, args.knowledgeHit);
   args.onDecision?.(decision);
   const trigger = toTrigger(decision);
   if (!trigger) return null;

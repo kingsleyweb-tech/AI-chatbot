@@ -27,12 +27,14 @@ export type DecisionReason =
   | 'document'
   | 'model_knowledge'
   | 'mode_manual'
+  | 'knowledge_base'
   // search
   | 'toggle'
   | 'explicit_request'
   | 'url'
   | 'current_info'
   | 'eager'
+  | 'entity_lookup'
   // deep research
   | 'research_toggle'
   | 'research_request';
@@ -54,6 +56,8 @@ export interface DecisionInput {
   mode?: SearchMode;
   /** documents are attached to this conversation */
   hasDocuments?: boolean;
+  /** the knowledge base already has a strong match for this message */
+  knowledgeHit?: boolean;
 }
 
 const words = (t: string) => t.trim().split(/\s+/).filter(Boolean).length;
@@ -90,6 +94,12 @@ const QUESTION = /\?|^\s*(who|what|when|where|which|how|is|are|did|does|has|have
 const PROG = /\b(python|javascript|typescript|java|kotlin|swift|rust|golang|c\+\+|c#|php|ruby|sql|bash|shell|linux|terminal|regex|css|html|directory|folder|variable|array|string|loop|script|code|program)\b/i;
 const CODEY = /```|\b(function|const|let|var|def|class|import|return|SELECT|npm|pip|git|stack ?trace|exception|error:|compile|syntax)\b|[{};]\s*$/m;
 
+// Questions about a specific organization or named thing the model may not know.
+const FAMILIAR =
+  /\b(?:do you know|have you heard|are you familiar with|know anything|what do you know)\s+(?:about\s+|of\s+)?(?!how\b|what\b|why\b|when\b|where\b|who\b|which\b|if\b|whether\b|that\b|the answer\b|anything\b|any\b|me\b|my\b|your?\b|it\b|this\b)(?:the\s+)?[\w&'.-]+(?:\s+[\w&'.-]+){0,4}\s*[?.!]*$/i;
+const ORG_CUE =
+  /\b(company|companies|organi[sz]ation|startup|start-up|firm|agency|business|brand|ltd|limited|inc|llc|plc|group|enterprise|ngo|foundation|institute|ministry|authority)\b/i;
+
 /** Year at or after which the model may lack knowledge. */
 export const KNOWLEDGE_YEAR = 2026;
 
@@ -114,6 +124,14 @@ function neverSearch(t: string, hasDocuments: boolean): DecisionReason | null {
   if (hasDocuments && DOC_REF.test(t)) return 'document';
   if (WRITING.test(t) && !RECENCY.test(t) && !NEWS.test(t)) return 'writing';
   return null;
+}
+
+/** Greetings, small talk, arithmetic and empty messages: no retrieval of any kind. */
+export function isTrivial(text: string): boolean {
+  const t = text.trim();
+  if (!t) return true;
+  const r = neverSearch(t, false);
+  return r === 'smalltalk' || r === 'math';
 }
 
 export function decideSearch(text: string, input: DecisionInput = {}): SearchDecision {
@@ -151,6 +169,9 @@ export function decideSearch(text: string, input: DecisionInput = {}): SearchDec
   }
   // eager: questions about named things may search; plain definitions ("What is Java?") still do not
   const definition = /^(?:what (?:is|are)|explain|define|describe)\s+(?:an?\s+|the\s+)?[\w+#.-]+\s*[?.!]*$/i.test(t);
+  // "Do you know Soko Aerial?": look it up, unless the knowledge base already covers it
+  const entity = !codey && (FAMILIAR.test(t) || (ORG_CUE.test(t) && /\b[A-Z][\w&'.-]+(?:\s+[A-Z][\w&'.-]+)+|\b[A-Z]{2,}/.test(t.replace(/^\W*\w+/, '')) && (QUESTION.test(t) || /^(?:please\s+)?(?:tell me|explain|describe|give me|info|information|details)\b/i.test(t))));
+  if (entity) return input.knowledgeHit ? none('knowledge_base') : search('entity_lookup', false);
   if (mode === 'eager' && !codey && !definition && QUESTION.test(t) && /\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b/.test(t.slice(1))) return search('eager', false);
   return none('model_knowledge');
 }

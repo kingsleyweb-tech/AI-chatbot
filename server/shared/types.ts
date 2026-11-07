@@ -129,7 +129,9 @@ export interface Source {
   title: string;
   url: string;
   snippet?: string;
-  kind: 'web' | 'document';
+  kind: 'web' | 'document' | 'knowledge';
+  /** knowledge base: when the source was last indexed */
+  indexedAt?: string;
   /** publisher / site name (web) */
   site?: string;
   /** only when the provider reported it */
@@ -200,7 +202,7 @@ export type StreamEvent =
   | { type: 'route'; info: RouteInfo }
   | { type: 'approval_required'; approval: ApprovalRequest }
   | { type: 'research'; step: ResearchStep }
-  | { type: 'context'; memories: number; documents: number; conversations: number }
+  | { type: 'context'; memories: number; documents: number; conversations: number; knowledge?: number }
   | { type: 'reasoning'; text: string }
   | { type: 'delta'; text: string }
   | { type: 'usage'; usage: UsageInfo }
