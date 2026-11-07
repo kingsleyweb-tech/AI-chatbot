@@ -23,6 +23,8 @@ export interface PromptContext {
   failedDocuments?: string[];
   webResults?: string;
   webSearchFailed?: string | null;
+  /** structure the answer as a research report */
+  deepResearch?: boolean;
   now?: Date;
 }
 
@@ -99,12 +101,23 @@ export function buildSystemPrompt(ctx: PromptContext): string {
   }
   if (ctx.webResults) {
     parts.push(
-      `## Web search results\nUse these for current information. Cite sources inline with their number, like [1]. ` +
-        `Clearly distinguish information from these sources from your own background knowledge. ` +
-        `If the results don't answer the question, say so. Only cite the numbers listed here.\n\n${ctx.webResults}`,
+      `## Web search results\nThese were retrieved just now for this message. Use them for current information and cite them inline with their number, like [1]. ` +
+        `Clearly distinguish what the sources say from your own background knowledge. ` +
+        `Only cite numbers listed here; never invent sources, URLs, quotes or publication dates. Mention a date only if it is listed with the source. ` +
+        `If the results don't answer the question, say so.\n\n${ctx.webResults}`,
     );
+    if (ctx.deepResearch) {
+      parts.push(
+        `## Deep research report\nWrite a structured research report from the sources above: ` +
+          `1) a short **Summary**; 2) **Key findings** with inline citations; 3) **Where sources disagree or are uncertain** (say "none found" if they agree); ` +
+          `4) **Limitations** (what the sources did not cover); 5) **Sources** as a numbered list of the cited links. ` +
+          `Base findings only on the sources; mark any inference as your interpretation.`,
+      );
+    }
   } else if (ctx.webSearchFailed) {
-    parts.push(`Note: a web search was requested but failed (${ctx.webSearchFailed}). Tell the user you couldn't search, and answer from your own knowledge with that caveat.`);
+    parts.push(
+      `Note: web search could not be used for this message (${ctx.webSearchFailed}). If the question needs current information, say briefly that you couldn't search the web, then answer from your own knowledge with that caveat.`,
+    );
   }
   return parts.join('\n\n');
 }

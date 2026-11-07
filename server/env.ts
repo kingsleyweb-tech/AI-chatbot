@@ -14,6 +14,7 @@ export function env() {
   return {
     openRouterKey: e.OPENROUTER_API_KEY ?? '',
     tavilyKey: e.TAVILY_API_KEY ?? '',
+    serpApiKey: e.SERPAPI_API_KEY ?? '',
     appUrl: e.APP_URL ?? 'http://localhost:5173',
     projectId: e.FIREBASE_PROJECT_ID ?? e.VITE_FIREBASE_PROJECT_ID ?? '',
     adminEmails: (list(e.ADMIN_EMAILS) ?? [DEFAULT_ADMIN]).map((s) => s.toLowerCase()),

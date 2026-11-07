@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import type { ChatRequestBody, ChatTurn, Source, StreamEvent } from '@shared/types';
+import type { ChatRequestBody, ChatTurn, ResearchStep, SearchInfo, Source, StreamEvent } from '@shared/types';
 import { ApiError, streamChat } from '@/lib/api';
 import { savePartialAssistant } from '@/lib/db';
 import type { Message } from '@/lib/types';
@@ -13,6 +13,8 @@ export interface LiveReply {
   sources: Source[];
   model: string;
   notices: string[];
+  search?: SearchInfo;
+  researchSteps: ResearchStep[];
   status: 'connecting' | 'streaming' | 'done' | 'stopped' | 'error';
   error?: { code: string; message: string; suggestion?: string; retryable: boolean };
   context?: { memories: number; documents: number; conversations: number };
@@ -102,6 +104,7 @@ export async function generate(args: {
     sources: [],
     model: args.model,
     notices: [],
+    researchSteps: [],
     status: 'connecting',
     startedAt: Date.now(),
   };
@@ -120,6 +123,12 @@ export async function generate(args: {
         break;
       case 'sources':
         reply.sources = e.sources;
+        break;
+      case 'search':
+        reply.search = e.info;
+        break;
+      case 'research':
+        reply.researchSteps = [...reply.researchSteps, e.step];
         break;
       case 'context':
         reply.context = { memories: e.memories, documents: e.documents, conversations: e.conversations };

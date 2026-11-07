@@ -143,3 +143,37 @@ describe('config documents', () => {
     denied(await read(ADMIN, 'config/other'));
   });
 });
+
+describe('search limits, cache and document subcollections', () => {
+  const limits = {
+    serpapi: { daily: 8, monthly: 200 },
+    tavily: { daily: 30, monthly: 900 },
+    research: { maxSearches: 6, maxPageReads: 4 },
+    cacheTtlHours: { news: 2, general: 24, reference: 168 },
+    providerReserve: 5,
+  };
+
+  it('lets approved users read the limits but only admins change them', async () => {
+    ok(await write(OWNER, 'config/limits', limits));
+    ok(await read(ALLOWED, 'config/limits'));
+    denied(await read(STRANGER, 'config/limits'));
+    denied(await write(ALLOWED, 'config/limits', limits));
+    ok(await write(ADMIN, 'config/limits', { ...limits, serpapi: { daily: 5, monthly: 100 } }));
+    denied(await write(ADMIN, 'config/limits', { ...limits, apiKey: 'x' }));
+    denied(await write(ADMIN, 'config/limits', { ...limits, providerReserve: 'lots' }));
+  });
+
+  it('keeps the search cache private to its owner', async () => {
+    ok(await write(ALLOWED, 'users/alice/searchCache/k1', { query: 'q', provider: 'serpapi', results: [] }));
+    ok(await read(ALLOWED, 'users/alice/searchCache/k1'));
+    denied(await read(BOB, 'users/alice/searchCache/k1'));
+  });
+
+  it('allows only known document subcollections', async () => {
+    ok(await write(ALLOWED, 'users/alice/documents/d1', { name: 'deck.pptx' }));
+    ok(await write(ALLOWED, 'users/alice/documents/d1/images/1', { ref: 'Slide 2' }));
+    ok(await write(ALLOWED, 'users/alice/documents/d1/summaries/s0', { text: 'x' }));
+    denied(await write(ALLOWED, 'users/alice/documents/d1/other/1', { a: 1 }));
+    denied(await read(BOB, 'users/alice/documents/d1/images/1'));
+  });
+});

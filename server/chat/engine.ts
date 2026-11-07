@@ -9,8 +9,8 @@ import { extractAndStoreMemories, formatMemories, loadMemories, selectRelevant }
 import { generateTitle, relatedConversations, updateConversationSummary } from '../memory/conversations.js';
 import { fallbackChain, getCatalog, providerFor } from '../providers/registry.js';
 import { ProviderError } from '../providers/types.js';
-import { searchProvider } from '../search/tavily.js';
-import type { ChatRequestBody, ModelInfo, Source, StreamEvent, UsageInfo } from '../shared/types.js';
+import { gatherWebContext } from '../search/web.js';
+import type { ChatRequestBody, ModelInfo, ResearchStep, SearchInfo, Source, StreamEvent, UsageInfo } from '../shared/types.js';
 import { buildSystemPrompt, toProviderMessages, type UserSettings } from './prompt.js';
 
 const attachmentSchema = z.discriminatedUnion('kind', [
@@ -46,6 +46,8 @@ export const chatRequestSchema = z.object({
     .max(80),
   options: z.object({
     webSearch: z.boolean(),
+    autoSearch: z.boolean().optional(),
+    deepResearch: z.boolean().optional(),
     memory: z.boolean(),
     documentIds: z.array(z.string().max(128)).max(10),
     projectId: z.string().max(128).nullable().optional(),
@@ -135,6 +137,13 @@ export async function runChat(
         let errorEvent: Extract<StreamEvent, { type: 'error' }> | null = null;
         let finishReason: string | null = null;
         const sources: Source[] = [];
+        const notices: string[] = [];
+        let searchInfo: SearchInfo | null = null;
+        let researchSteps: ResearchStep[] = [];
+        const notice = (message: string, model?: string) => {
+          notices.push(message);
+          send({ type: 'notice', message, ...(model ? { model } : {}) });
+        };
 
         try {
           // keep-alive comment so proxies flush headers immediately
@@ -153,7 +162,7 @@ export async function runChat(
             );
           }
           const req = skipped.find((s) => s.id === body.model);
-          if (req) send({ type: 'notice', message: `${body.model} ${req.reason}; using ${chain[0]} instead.`, model: chain[0] });
+          if (req) notice(`${body.model} ${req.reason}; using ${chain[0]} instead.`, chain[0]);
 
           // ---- Context assembly (in parallel) ----
           const queryText = lastUser.content.slice(0, 2000);
@@ -184,28 +193,28 @@ export async function runChat(
                   return { text: '', sources: [] as Source[], failed: ['attached documents (retrieval error)'] };
                 })
               : Promise.resolve(null),
-            body.options.webSearch
-              ? (async () => {
-                  const sp = searchProvider();
-                  if (!sp.isConfigured()) return { error: 'web search is not configured on the server' };
-                  try {
-                    const results = await sp.search(queryText, { maxResults: 6, signal });
-                    return { results };
-                  } catch (err) {
-                    return { error: err instanceof Error ? err.message : 'search failed' };
-                  }
-                })()
-              : Promise.resolve(null),
+            gatherWebContext({
+              db,
+              uid,
+              turns: body.messages,
+              text: lastUser.content,
+              options: body.options,
+              signal,
+              onStep: (step) => send({ type: 'research', step }),
+            }).catch((err) => {
+              if (signal.aborted) throw err;
+              console.warn('[chat] web search failed', err instanceof Error ? err.message : err);
+              return null;
+            }),
           ]);
 
-          let webText = '';
-          if (web && 'results' in web && web.results?.length) {
-            web.results.forEach((r, i) => {
-              sources.push({ index: i + 1, kind: 'web', title: r.title, url: r.url, snippet: r.content.slice(0, 240) });
-            });
-            webText = web.results
-              .map((r, i) => `[${i + 1}] ${r.title}\nURL: ${r.url}${r.publishedDate ? `\nPublished: ${r.publishedDate}` : ''}\n${r.content.slice(0, 1500)}`)
-              .join('\n\n');
+          if (web) {
+            searchInfo = web.info;
+            researchSteps = web.steps;
+            sources.push(...web.sources);
+            send({ type: 'search', info: web.info });
+            for (const n of web.notices) notice(n);
+            if (web.failure) notice(web.info.message ?? `Web search: ${web.failure}`);
           }
           if (docs?.sources.length) sources.push(...docs.sources);
           if (sources.length) send({ type: 'sources', sources });
@@ -224,9 +233,9 @@ export async function runChat(
             relatedConversations: related,
             documents: docs?.text || undefined,
             failedDocuments: docs?.failed,
-            webResults: webText || undefined,
-            webSearchFailed:
-              web && 'error' in web ? web.error : web && 'results' in web && !web.results?.length ? 'no results found' : null,
+            webResults: web?.text || undefined,
+            webSearchFailed: web?.failure ?? null,
+            deepResearch: Boolean(body.options.deepResearch && web?.text),
           });
 
           // ---- Generation with fallbacks ----
@@ -279,11 +288,7 @@ export async function runChat(
               lastErr = err;
               const canFallback = err instanceof ProviderError && err.fallbackable && !content && i < chain.length - 1;
               if (!canFallback) break;
-              send({
-                type: 'notice',
-                message: `${modelId}: ${(err as ProviderError).message} Trying ${chain[i + 1]}.`,
-                model: chain[i + 1],
-              });
+              notice(`${modelId}: ${(err as ProviderError).message} Trying ${chain[i + 1]}.`, chain[i + 1]);
             }
           }
           if (lastErr) throw lastErr;
@@ -321,6 +326,9 @@ export async function runChat(
               model: usedModel,
               status,
               sources,
+              notices: notices.slice(0, 12),
+              search: searchInfo,
+              researchSteps: researchSteps.slice(0, 20),
               usage,
               error: errorEvent ? { code: errorEvent.code, message: errorEvent.message, suggestion: errorEvent.suggestion ?? null } : null,
               createdAt: SERVER_TIME,

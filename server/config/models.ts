@@ -30,6 +30,18 @@ export const FEATURED_MODELS: FeaturedModel[] = [
   { id: 'google/gemma-4-26b-a4b-it', blurb: 'Google open model, paid tier with higher limits.' },
 ];
 
+/**
+ * Preferred models per task, best first. Used by the model router only when
+ * the selected model cannot handle a request. Free models only; paid models
+ * always need the user's approval.
+ */
+export const TASK_PREFERENCES: Record<'vision' | 'code' | 'longContext' | 'general', string[]> = {
+  vision: ['nvidia/nemotron-3.5-super-vl:free', 'google/gemma-4-31b-it:free', 'google/gemma-4-26b-a4b-it:free'],
+  code: ['cohere/north-mini-code:free'],
+  longContext: ['nvidia/nemotron-3.5-super-vl:free', 'nvidia/nemotron-3-ultra-550b-a55b:free'],
+  general: ['nvidia/nemotron-3-ultra-550b-a55b:free', 'google/gemma-4-31b-it:free', 'google/gemma-4-26b-a4b-it:free'],
+};
+
 export function modelConfig() {
   const e = env();
   return {

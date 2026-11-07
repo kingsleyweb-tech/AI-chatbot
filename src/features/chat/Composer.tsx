@@ -1,4 +1,4 @@
-import { ArrowUp, FileText, Globe, ImagePlus, Library, Loader2, Mic, Paperclip, Square, TriangleAlert, X } from 'lucide-react';
+import { ArrowUp, FileText, Globe, ImagePlus, Library, Loader2, Mic, Paperclip, Square, Telescope, TriangleAlert, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
 import type { ImageAttachment, ModelInfo } from '@shared/types';
 import { IconButton, Menu } from '@/components/ui';
@@ -19,6 +19,10 @@ export interface ComposerProps {
   webSearch: boolean;
   onWebSearch: (v: boolean) => void;
   searchAvailable: boolean;
+  deepResearch: boolean;
+  onDeepResearch: (v: boolean) => void;
+  /** tooltip describing search mode and budget */
+  searchHint?: string;
   documents: DocumentMeta[];
   onUploadDocuments: (files: File[]) => void;
   onRemoveDocument: (id: string) => void;
@@ -230,7 +234,7 @@ export function Composer(props: ComposerProps) {
           <button
             onClick={() => {
               if (!props.searchAvailable) {
-                toast('Web search is not configured. Add a TAVILY_API_KEY on the server to enable it.', 'info');
+                toast('Web search is not configured on the server (SERPAPI_API_KEY or TAVILY_API_KEY).', 'info');
                 return;
               }
               props.onWebSearch(!props.webSearch);
@@ -241,10 +245,29 @@ export function Composer(props: ComposerProps) {
               props.webSearch ? 'bg-accent-soft text-accent' : 'text-muted hover:bg-surface-2 hover:text-fg',
               !props.searchAvailable && 'opacity-50',
             )}
-            title={props.searchAvailable ? 'Search the web' : 'Web search is not configured'}
+            title={props.searchAvailable ? props.searchHint ?? 'Search the web for this message' : 'Web search is not configured'}
           >
             <Globe className="size-4" />
             <span>Search</span>
+          </button>
+          <button
+            onClick={() => {
+              if (!props.searchAvailable) {
+                toast('Deep Research needs web search, which is not configured on the server.', 'info');
+                return;
+              }
+              props.onDeepResearch(!props.deepResearch);
+            }}
+            aria-pressed={props.deepResearch}
+            className={cn(
+              'inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-[13px] font-medium transition-colors',
+              props.deepResearch ? 'bg-accent-soft text-accent' : 'text-muted hover:bg-surface-2 hover:text-fg',
+              !props.searchAvailable && 'opacity-50',
+            )}
+            title="Deep Research: several searches and page reads within a fixed budget, then a structured report"
+          >
+            <Telescope className="size-4" />
+            <span className="hidden min-[400px]:inline">Research</span>
           </button>
           <div className="flex-1" />
           {dictation.supported && (

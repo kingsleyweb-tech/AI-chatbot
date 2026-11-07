@@ -278,10 +278,27 @@ function ModelsSection() {
           {catalog && (catalog.paidAvailable ? ' · paid models enabled' : ' · free models only (no credits)')}
         </span>
       </Row>
-      <Row title="Web search">
-        <span className="text-sm text-muted">{caps?.searchAvailable ? `Enabled (${caps.searchProvider})` : 'Not configured. Set TAVILY_API_KEY on the server.'}</span>
+      <Row title="Web search" description="SerpAPI handles general and news searches; Tavily handles research and page reading. Keys stay on the server.">
+        <span className="text-sm text-muted">
+          {caps?.searchProviders?.length
+            ? caps.searchProviders.map((p) => `${p.label}: ${p.configured ? 'on' : 'not configured'}`).join(' · ')
+            : caps?.searchAvailable
+              ? `Enabled (${caps.searchProvider})`
+              : 'Not configured'}
+        </span>
       </Row>
-      <Row title="Search the web by default" description="Turns the Search toggle on for new chats.">
+      <Row
+        title="Search automatically when needed"
+        description="Searches only when a message clearly asks for current information (news, prices, “latest”, a link). Uses search credits; limits apply."
+      >
+        <Switch
+          label="Auto search"
+          checked={settings.autoSearch}
+          disabled={!caps?.searchAvailable}
+          onChange={(v) => update({ autoSearch: v })}
+        />
+      </Row>
+      <Row title="Search every message by default" description="Turns the Search toggle on for new chats. Uses a search credit per message unless cached.">
         <Switch
           label="Search by default"
           checked={settings.webSearchDefault}

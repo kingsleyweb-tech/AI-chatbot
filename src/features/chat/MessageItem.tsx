@@ -6,6 +6,7 @@ import {
   ChevronDown,
   Copy,
   FileText,
+  Globe,
   Languages,
   ListCollapse,
   Maximize2,
@@ -15,18 +16,19 @@ import {
   RefreshCw,
   Sparkles,
   StepForward,
+  Telescope,
   Trash2,
   Volume2,
   VolumeX,
 } from 'lucide-react';
 import { memo, useState } from 'react';
-import type { QuickAction, Source } from '@shared/types';
+import type { QuickAction, ResearchStep, SearchInfo, Source } from '@shared/types';
 import { LogoMark } from '@/components/Logo';
 import { Markdown } from '@/components/Markdown';
 import { Button, IconButton, Menu, Textarea } from '@/components/ui';
 import { speak, stopSpeaking, ttsSupported, useSpeaking } from '@/lib/speech';
 import type { Message } from '@/lib/types';
-import { cn, copyText, domainOf, modelShortName } from '@/lib/utils';
+import { cn, copyText, domainOf, modelShortName, relativeTime } from '@/lib/utils';
 import { useSettings } from '@/state/settings';
 import { useToast } from '@/state/toast';
 import type { LiveReply } from './engine';
@@ -48,14 +50,17 @@ function Sources({ sources }: { sources: Source[] }) {
                 href={s.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                title={s.snippet ? `${s.title}\n\n${s.snippet}` : s.title}
+                title={[s.title, s.site && s.site !== domainOf(s.url) ? s.site : '', s.publishedDate ? `Published: ${s.publishedDate}` : '', s.snippet ?? '']
+                  .filter(Boolean)
+                  .join('\n')}
                 className="flex max-w-[260px] items-center gap-1.5 rounded-lg border border-border bg-surface px-2 py-1 text-xs transition-colors hover:border-border-strong hover:bg-surface-2"
               >
                 <span className="flex size-4 shrink-0 items-center justify-center rounded bg-surface-2 text-[10px] font-semibold text-muted">
                   {s.index}
                 </span>
                 <span className="truncate">{s.title || domainOf(s.url)}</span>
-                <span className="shrink-0 text-subtle">{domainOf(s.url)}</span>
+                <span className="shrink-0 text-subtle">{s.site || domainOf(s.url)}</span>
+                {s.publishedDate && <span className="shrink-0 text-subtle">· {s.publishedDate}</span>}
               </a>
             ))}
             {web.length > 4 && (
@@ -81,6 +86,52 @@ function Sources({ sources }: { sources: Source[] }) {
             ))}
           </ul>
         </details>
+      )}
+    </div>
+  );
+}
+
+const PROVIDER: Record<string, string> = { serpapi: 'SerpAPI', tavily: 'Tavily' };
+
+function SearchStatus({ info, steps, live }: { info?: SearchInfo | null; steps: ResearchStep[]; live: boolean }) {
+  const [open, setOpen] = useState(false);
+  if (!info && !steps.length) return null;
+  const provider = info?.provider ? PROVIDER[info.provider] : null;
+  let label: string;
+  if (!info) label = 'Researching…';
+  else if (info.status === 'unavailable') label = info.message ? `Web search not used: ${info.message}` : 'Web search not used';
+  else if (info.mode === 'research') label = `Deep research${info.message ? ` · ${info.message}` : ''}`;
+  else if (info.mode === 'extract') label = `Read the linked page${info.cached ? ' (from cache)' : ''}`;
+  else if (info.cached) label = `Web results from cache${info.cachedAt ? `, fetched ${relativeTime(info.cachedAt)}` : ''}`;
+  else label = info.trigger === 'auto' ? 'Searched the web automatically (current information needed)' : 'Searched the web';
+  const Icon = info?.mode === 'research' || (!info && steps.length) ? Telescope : Globe;
+  const expandable = steps.length > 0;
+  return (
+    <div className="mb-2 text-xs text-muted">
+      <button
+        type="button"
+        disabled={!expandable}
+        onClick={() => setOpen((o) => !o)}
+        className={cn('flex max-w-full items-center gap-1.5 text-left', expandable && 'hover:text-fg')}
+        title={info?.query ? `Query: ${info.query}` : undefined}
+      >
+        <Icon className={cn('size-3.5 shrink-0', info?.status === 'unavailable' ? 'text-warn' : 'text-accent', live && !info && 'animate-pulse')} />
+        <span className="min-w-0">
+          {label}
+          {provider && info?.status === 'ok' && <span className="text-subtle"> · {provider}</span>}
+        </span>
+        {expandable && <ChevronDown className={cn('size-3 shrink-0 transition-transform', (open || live) && 'rotate-180')} />}
+      </button>
+      {expandable && (open || (live && !info)) && (
+        <ol className="mt-1.5 space-y-1 border-l-2 border-border pl-3">
+          {steps.map((s, i) => (
+            <li key={i} className={cn(s.kind === 'skip' && 'text-warn')}>
+              {s.kind === 'search' ? 'Searched: ' : s.kind === 'read' ? '' : s.kind === 'skip' ? 'Skipped: ' : ''}
+              {s.text}
+              {s.provider && <span className="text-subtle"> · {PROVIDER[s.provider]}{s.cached ? ' (cache)' : ''}</span>}
+            </li>
+          ))}
+        </ol>
       )}
     </div>
   );
@@ -236,6 +287,9 @@ export const AssistantMessage = memo(function AssistantMessage({
   const content = live?.content ?? m.content;
   const reasoning = live?.reasoning ?? m.reasoning ?? '';
   const sources = live?.sources ?? m.sources ?? [];
+  const notices = live?.notices ?? m.notices ?? [];
+  const search = live ? live.search : m.search;
+  const researchSteps = live?.researchSteps ?? m.researchSteps ?? [];
   const model = live?.model ?? m.model;
   const error = live?.error ?? m.error;
   const status = live ? live.status : m.status;
@@ -248,7 +302,8 @@ export const AssistantMessage = memo(function AssistantMessage({
         </div>
       </div>
       <div className="min-w-0 flex-1">
-        {live?.notices.map((n, i) => (
+        <SearchStatus info={search} steps={researchSteps} live={streaming} />
+        {notices.map((n, i) => (
           <div key={i} className="mb-2 rounded-lg bg-surface px-3 py-1.5 text-xs text-muted">
             {n}
           </div>
@@ -261,7 +316,7 @@ export const AssistantMessage = memo(function AssistantMessage({
               <span className="size-1.5 animate-bounce rounded-full bg-accent [animation-delay:-0.15s]" />
               <span className="size-1.5 animate-bounce rounded-full bg-accent" />
             </span>
-            {live.sources.length ? 'Reading sources…' : 'Thinking…'}
+            {live.researchSteps.length && !live.search ? 'Researching…' : live.sources.length ? 'Reading sources…' : 'Thinking…'}
           </div>
         )}
         {content && (

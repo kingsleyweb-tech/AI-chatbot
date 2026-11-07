@@ -1,5 +1,5 @@
 import { env } from '../env.js';
-import { FEATURED_MODELS } from '../config/models.js';
+import { FEATURED_MODELS, TASK_PREFERENCES } from '../config/models.js';
 import { parseSSE } from '../shared/sse.js';
 import type { Modality, ModelInfo } from '../shared/types.js';
 import {
@@ -32,6 +32,9 @@ export function mapModel(m: ORModel, featuredIds: string[]): ModelInfo {
   const inputs = (m.architecture?.input_modalities ?? ['text']).filter((x): x is Modality =>
     ['text', 'image', 'file', 'audio', 'video'].includes(x),
   );
+  const outputs = (m.architecture?.output_modalities ?? ['text']).filter((x): x is Modality =>
+    ['text', 'image', 'file', 'audio', 'video'].includes(x),
+  );
   const prompt = Number(m.pricing?.prompt ?? NaN);
   const completion = Number(m.pricing?.completion ?? NaN);
   const free = m.id.endsWith(':free') || (prompt === 0 && completion === 0);
@@ -45,16 +48,22 @@ export function mapModel(m: ORModel, featuredIds: string[]): ModelInfo {
     description: featured?.blurb ?? (m.description ?? '').slice(0, 280),
     contextLength: m.context_length ?? 0,
     inputModalities: inputs.length ? inputs : ['text'],
+    outputModalities: outputs.length ? outputs : ['text'],
     free,
     pricing: Number.isFinite(prompt)
       ? { prompt: +(prompt * 1e6).toFixed(4), completion: +(completion * 1e6).toFixed(4) }
       : undefined,
     capabilities: {
       vision: inputs.includes('image'),
+      audioInput: inputs.includes('audio'),
+      fileInput: inputs.includes('file'),
+      imageOutput: outputs.includes('image'),
+      audioOutput: outputs.includes('audio'),
       tools: params.includes('tools'),
       reasoning: params.includes('reasoning') || params.includes('include_reasoning'),
       structuredOutput: params.includes('response_format') || params.includes('structured_outputs'),
       streaming: true,
+      code: TASK_PREFERENCES.code.includes(m.id),
     },
     available: true,
     featured: featuredIds.includes(m.id),

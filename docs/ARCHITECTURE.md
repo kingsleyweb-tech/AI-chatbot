@@ -9,7 +9,8 @@ Firestore SDK (offline) ──┼─ realtime reads/writes ───────
                           └─ fetch + SSE ───► /api/chat ─────────────┤ REST with the user's ID token
                                               /api/models            │
                                               /api/config            ├──► OpenRouter (chat, embeddings, catalog)
-                                              /api/memory            └──► Tavily (web search, optional)
+                                              /api/memory            ├──► SerpAPI (general / news search)
+                                                                     └──► Tavily (research, page reading)
                                               /api/documents
 ```
 
@@ -31,6 +32,34 @@ Firestore SDK (offline) ──┼─ realtime reads/writes ───────
 7. After the response, in the background via `waitUntil`: generate a title, extract memories, and update the conversation summary.
 
 The browser keeps live replies in a module-level store (`src/features/chat/engine.ts`). Navigating away doesn't interrupt a stream, and **Stop** aborts the fetch, which aborts the upstream request.
+
+## Web search (`server/search`)
+
+All searches go through one service, `SearchService` in `router.ts`. Nothing else calls a search provider.
+
+1. **When to search** (`web.ts`, `heuristics.ts`). Search runs only when:
+   - the user turns on **Search** (every message), or
+   - **Auto** is on (the default) and the message clearly needs current information: news, prices, weather, "latest/today", a year at or after the model's knowledge, or a link, or
+   - the user turns on **Deep Research**.
+
+   Ordinary chat never searches. Short follow-ups ("what about 2025?") are rewritten into a standalone query by a free utility model.
+2. **Cache first** (`store.ts`). Queries are normalized (case, punctuation, filler words) and looked up in `users/{uid}/searchCache/{sha1}`. The cache is shared across providers. Lifetime depends on intent: news 2 h, general 24 h, reference 7 days. A cache hit costs nothing and is shown as "from cache".
+3. **De-duplication and throttling.** Identical searches in flight share one request. A user can make at most one search every 3 seconds and 10 a minute.
+4. **Provider choice.** SerpAPI (Google) handles general and news questions. Tavily handles research, reference and page reading (`/extract`). The other provider is tried only when the first is over budget or fails, and a notice says so. Both are never queried for the same question.
+5. **Budgets** (`config/limits.ts`, `config/limits` in Firestore). Before any request, two checks run:
+   - the app's own per-provider daily and monthly counters (`usage/{day}`, `usage/m-{yyyy-mm}`, field `search.<provider>`)
+   - the provider's own reported remaining quota (SerpAPI `account.json`, Tavily `/usage`, both free to call and cached for 10 minutes)
+
+   When everything is exhausted, the user is told and the chat continues without search. A quota error marks the provider exhausted, so it isn't retried.
+6. **Deep Research** (`research.ts`):
+   1. A free model plans up to N sub-queries.
+   2. Each sub-query goes through the same router within the run budget.
+   3. Tavily reads the top pages.
+   4. The model writes a structured report covering summary, findings, disagreements, limitations and sources.
+
+   Progress streams to the UI as `research` events.
+
+Sources carry title, site, URL, snippet and a publication date only when the provider reported one. Each answer stores what happened (`message.search`: provider, cached or fresh, trigger, query) so the UI can show it.
 
 ## Memory (`server/memory`)
 
@@ -58,9 +87,12 @@ All user data is under `users/{uid}`:
 | `…/documents/{id}` | `name`, `mime`, `size`, `status`, `error`, `chunkCount`, `pageCount`, `warning` |
 | `…/documents/{id}/chunks/{n}` | `text`, `ref`, `embedding` |
 | `…/savedResponses/{messageId}` | bookmarked answer snapshot |
-| `…/usage/{yyyy-mm-dd}` | request and token counters, per-model breakdown |
+| `…/usage/{yyyy-mm-dd}` | request and token counters, per-model breakdown, `search.<provider>.{requests,cached,failed,credits}` |
+| `…/usage/m-{yyyy-mm}` | monthly search counters (budget checks) |
+| `…/searchCache/{hash}` | cached search results or page extracts, with `expiresAt` |
 | `config/access` | `allowedEmails[]`, `adminEmails[]` (admin-write) |
 | `config/public` | `registrationOpen` (public read, admin-write) |
+| `config/limits` | search budgets, Deep Research budget, cache lifetimes (approved read, admin-write) |
 
 ## Security model (`firebase/firestore.rules`)
 
@@ -69,9 +101,10 @@ All user data is under `users/{uid}`:
 - Message roles are restricted to `user` or `assistant`, and content and title sizes are bounded.
 - `config/access` is admin-write only, with a validated shape.
 - Everything else is denied.
-- Covered by `tests/rules/firestore.rules.test.ts` (12 cases, run in the emulator).
+- `config/limits` is admin-write only, with a validated shape.
+- Covered by `tests/rules/firestore.rules.test.ts` (15 cases, run in the emulator).
 
-Secrets: `OPENROUTER_API_KEY` and `TAVILY_API_KEY` are read only in `server/env.ts`. They are never logged and never sent to the browser.
+Secrets: `OPENROUTER_API_KEY`, `SERPAPI_API_KEY` and `TAVILY_API_KEY` are read only in `server/env.ts`. They are never logged and never sent to the browser.
 
 ## Known limitations
 

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { fakeModel } from './helpers.js';
 import { evaluateAccess } from '../server/access.js';
 import { buildSystemPrompt, toProviderMessages } from '../server/chat/prompt.js';
 import { chunkSections } from '../server/docs/chunk.js';
@@ -79,6 +80,17 @@ describe('OpenRouter mapping', () => {
     expect(m.name).toBe('Small (free)');
   });
 
+  it('reads audio, file and output modalities from provider metadata', () => {
+    const omni = mapModel(
+      { id: 'acme/omni:free', name: 'Omni', architecture: { input_modalities: ['text', 'image', 'audio', 'file'], output_modalities: ['text', 'image'] } },
+      [],
+    );
+    expect(omni.capabilities).toMatchObject({ vision: true, audioInput: true, fileInput: true, imageOutput: true, audioOutput: false });
+    expect(omni.outputModalities).toEqual(['text', 'image']);
+    expect(mapModel({ id: 'cohere/north-mini-code:free', name: 'North' }, []).capabilities.code).toBe(true);
+    expect(omni.capabilities.code).toBe(false);
+  });
+
   it.each([
     [401, '{}', 'invalid_key', false],
     [402, '{}', 'insufficient_credits', true],
@@ -95,20 +107,7 @@ describe('OpenRouter mapping', () => {
   });
 });
 
-const model = (id: string, opts: Partial<ModelInfo> & { vision?: boolean } = {}): ModelInfo => ({
-  id,
-  name: id,
-  provider: 'openrouter',
-  vendor: id.split('/')[0],
-  description: '',
-  contextLength: 100000,
-  inputModalities: ['text'],
-  free: id.endsWith(':free'),
-  capabilities: { vision: Boolean(opts.vision), tools: false, reasoning: false, structuredOutput: false, streaming: true },
-  available: true,
-  featured: false,
-  ...opts,
-});
+const model = (id: string, opts: Parameters<typeof fakeModel>[1] = {}): ModelInfo => fakeModel(id, opts);
 
 describe('fallbackChain', () => {
   afterEach(() => {

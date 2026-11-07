@@ -99,6 +99,7 @@ export default function ChatPage() {
   const [draftModel, setDraftModel] = useState<string | null>(null);
   const [draftDocs, setDraftDocs] = useState<string[]>([]);
   const [webSearch, setWebSearch] = useState(settings.webSearchDefault);
+  const [deepResearch, setDeepResearch] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [translateOpen, setTranslateOpen] = useState(false);
   const [translateLang, setTranslateLang] = useState('English');
@@ -201,13 +202,17 @@ export default function ChatPage() {
         history: toTurns(history),
         options: {
           webSearch: webSearch && Boolean(caps?.searchAvailable),
+          autoSearch: settings.autoSearch && Boolean(caps?.searchAvailable),
+          deepResearch: deepResearch && Boolean(caps?.searchAvailable),
           memory: settings.memoryEnabled,
           documentIds: extraDocs ?? docIds,
           projectId,
         },
       });
+      // Deep Research spends search credits, so it applies to one message at a time.
+      if (deepResearch) setDeepResearch(false);
     },
-    [uid, modelId, webSearch, caps?.searchAvailable, settings.memoryEnabled, docIds, projectId],
+    [uid, modelId, webSearch, deepResearch, caps?.searchAvailable, settings.memoryEnabled, settings.autoSearch, docIds, projectId],
   );
 
   const send = async (text: string, images: ImageAttachment[]) => {
@@ -456,6 +461,15 @@ export default function ChatPage() {
             webSearch={webSearch}
             onWebSearch={setWebSearch}
             searchAvailable={Boolean(caps?.searchAvailable)}
+            searchHint={
+              webSearch
+                ? 'Web search is on for every message'
+                : settings.autoSearch
+                  ? 'Auto: searches only when a message needs current information. Tap to search every message.'
+                  : 'Search the web for every message'
+            }
+            deepResearch={deepResearch}
+            onDeepResearch={setDeepResearch}
             documents={attachedDocs}
             onUploadDocuments={uploadDocs}
             onRemoveDocument={removeDoc}

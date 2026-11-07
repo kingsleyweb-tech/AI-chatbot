@@ -13,15 +13,25 @@ export interface ModelInfo {
   description: string;
   contextLength: number;
   inputModalities: Modality[];
+  outputModalities: Modality[];
   free: boolean;
   /** USD per 1M tokens, when known */
   pricing?: { prompt: number; completion: number };
   capabilities: {
+    /** accepts image input */
     vision: boolean;
+    audioInput: boolean;
+    /** accepts native file (PDF) input */
+    fileInput: boolean;
+    /** can produce images (shown only; image generation is not used in this app) */
+    imageOutput: boolean;
+    audioOutput: boolean;
     tools: boolean;
     reasoning: boolean;
     structuredOutput: boolean;
     streaming: boolean;
+    /** listed as a preferred coding model in server config (not guessed) */
+    code: boolean;
   };
   /** true when the model is listed by the provider right now */
   available: boolean;
@@ -38,11 +48,44 @@ export interface ModelCatalog {
   fetchedAt: string;
 }
 
+export type SearchProviderId = 'serpapi' | 'tavily';
+
 export interface AppCapabilities {
   searchAvailable: boolean;
+  /** label of the primary configured provider */
   searchProvider: string | null;
+  searchProviders: { id: SearchProviderId; label: string; configured: boolean }[];
   embeddingsAvailable: boolean;
   providers: string[];
+}
+
+export interface SearchLimits {
+  serpapi: { daily: number; monthly: number };
+  tavily: { daily: number; monthly: number };
+  research: { maxSearches: number; maxPageReads: number };
+  cacheTtlHours: { news: number; general: number; reference: number };
+  providerReserve: number;
+}
+
+/** What happened with web search for one answer (persisted on the message). */
+export interface SearchInfo {
+  status: 'ok' | 'unavailable';
+  mode: 'search' | 'extract' | 'research';
+  provider: SearchProviderId | null;
+  query: string;
+  cached: boolean;
+  /** ISO time the cached results were fetched */
+  cachedAt?: string;
+  /** why search was used: the user asked, or the auto heuristic */
+  trigger: 'manual' | 'auto' | 'url' | 'research';
+  message?: string;
+}
+
+export interface ResearchStep {
+  kind: 'plan' | 'search' | 'read' | 'skip' | 'done';
+  text: string;
+  provider?: SearchProviderId | null;
+  cached?: boolean;
 }
 
 export interface ImageAttachment {
@@ -70,6 +113,11 @@ export interface Source {
   url: string;
   snippet?: string;
   kind: 'web' | 'document';
+  /** publisher / site name (web) */
+  site?: string;
+  /** only when the provider reported it */
+  publishedDate?: string;
+  provider?: SearchProviderId;
 }
 
 export interface ChatTurn {
@@ -84,7 +132,12 @@ export interface ChatRequestBody {
   model: string;
   messages: ChatTurn[];
   options: {
+    /** force a web search for this message */
     webSearch: boolean;
+    /** let the server decide whether this message needs current information */
+    autoSearch?: boolean;
+    /** multi-step research with a fixed search budget */
+    deepResearch?: boolean;
     memory: boolean;
     documentIds: string[];
     projectId?: string | null;
@@ -102,6 +155,8 @@ export type StreamEvent =
   | { type: 'start'; model: string }
   | { type: 'notice'; message: string; model?: string }
   | { type: 'sources'; sources: Source[] }
+  | { type: 'search'; info: SearchInfo }
+  | { type: 'research'; step: ResearchStep }
   | { type: 'context'; memories: number; documents: number; conversations: number }
   | { type: 'reasoning'; text: string }
   | { type: 'delta'; text: string }

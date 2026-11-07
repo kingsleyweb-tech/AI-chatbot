@@ -13,7 +13,7 @@ npx firebase deploy --only firestore:rules,firestore:indexes --project ai-app-6e
 1. In Vercel, **Add New > Project** and import the GitHub repository. The framework preset (Vite), build command and output directory come from `vercel.json`.
 2. **Settings > Environment Variables** (Production and Preview):
    - `OPENROUTER_API_KEY`: mark it **Sensitive**
-   - `TAVILY_API_KEY`: optional, also Sensitive
+   - `SERPAPI_API_KEY` and `TAVILY_API_KEY`: optional, also Sensitive
    - `APP_URL`: for example `https://your-app.vercel.app`
    - `FIREBASE_PROJECT_ID`: `ai-app-6efa7`
    - all `VITE_FIREBASE_*` values from `.env.local`
@@ -46,4 +46,13 @@ In Vercel **Deployments**, choose a previous deployment and select **Promote to 
 
 - Vercel Hobby, Firebase Spark and OpenRouter `:free` models cost nothing. Free models have per-minute and per-day rate limits. The app falls back between free models and tells you which one answered.
 - Paid models (for example `google/gemini-3.8-flash`) need OpenRouter credits. Until credits are added, the picker marks them "Needs credits" and requests fall back to a free model.
-- Tavily's free tier includes a monthly search allowance.
+- **Web search** costs credits:
+  - SerpAPI free plan: 250 searches/month.
+  - Tavily Researcher plan: 1,000 credits/month.
+
+  Tessera enforces its own lower limits and stops before either plan runs out:
+  - SerpAPI 8/day and 200/month
+  - Tavily 30/day and 900/month
+  - Deep Research at most 6 searches and 4 page reads per run
+
+  It caches results, so a repeated question costs nothing. It never moves to paid usage. An admin can change the limits in **Settings > Usage**.

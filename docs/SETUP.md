@@ -5,7 +5,7 @@
 - Node.js 20 or newer (developed on Node 24)
 - A Firebase project (the Spark free plan is enough)
 - An OpenRouter API key
-- Optional: a Tavily API key for web search
+- Optional: a SerpAPI key and/or a Tavily API key for web search
 - Optional: Java 11+ for the Firestore emulator (`npm run test:rules`)
 
 ## 1. Firebase console (one-time)
@@ -26,7 +26,8 @@ Copy `.env.example` to `.env.local`. It is gitignored, so never commit it.
 | Variable | Where it's used | Secret? | Notes |
 | --- | --- | --- | --- |
 | `OPENROUTER_API_KEY` | server | **yes** | Required. Free-tier keys work with `:free` models only. |
-| `TAVILY_API_KEY` | server | **yes** | Optional. Enables web search. |
+| `SERPAPI_API_KEY` | server | **yes** | Optional. Google results via SerpAPI: general and news searches. |
+| `TAVILY_API_KEY` | server | **yes** | Optional. Research searches, page reading, Deep Research. |
 | `APP_URL` | server | no | Public app URL, sent to OpenRouter as the referer. |
 | `FIREBASE_PROJECT_ID` | server | no | Used to verify ID tokens and call Firestore. |
 | `ADMIN_EMAILS` | server | no | Optional, comma separated. Defaults to the owner email. Keep in sync with `firebase/firestore.rules`. |
@@ -76,4 +77,10 @@ npm run build && npm run test:e2e   # WebKit iPhone viewports (first time: npx p
 
 ```bash
 npx tsx --env-file=.env.local dev/smoke.ts
+```
+
+`dev/smoke-search.ts` checks the search router against the real providers with an in-memory store, so it never touches Firestore. It costs about 2 SerpAPI searches and 3 Tavily credits:
+
+```bash
+npx tsx --env-file=.env.local dev/smoke-search.ts
 ```

@@ -65,6 +65,19 @@ service cloud.firestore {
         && request.resource.data.get('adminEmails', []) is list;
     }
 
+    // Cost limits for web search / deep research. Readable by approved users
+    // (the server reads them with the caller's token), writable by admins.
+    match /config/limits {
+      allow read: if isAllowed();
+      allow write: if isAdmin()
+        && request.resource.data.keys().hasOnly(['serpapi', 'tavily', 'research', 'cacheTtlHours', 'providerReserve', 'updatedAt'])
+        && request.resource.data.get('serpapi', {}) is map
+        && request.resource.data.get('tavily', {}) is map
+        && request.resource.data.get('research', {}) is map
+        && request.resource.data.get('cacheTtlHours', {}) is map
+        && request.resource.data.get('providerReserve', 0) is int;
+    }
+
     match /config/{other} {
       allow read, write: if false;
     }
@@ -97,15 +110,16 @@ service cloud.firestore {
         allow create, update: if isOwner(uid)
           && smallString(request.resource.data.name, 300);
 
-        match /chunks/{chunkId} {
-          allow read, write: if isOwner(uid);
+        // extracted chunks, embedded slide images, cached summaries, table rows
+        match /{sub}/{subId} {
+          allow read, write: if isOwner(uid) && sub in ['chunks', 'images', 'summaries', 'tables'];
         }
       }
 
       // projects, savedResponses, usage, memoryVectors, convVectors, ...
       match /{collection}/{docId} {
         allow read, write: if isOwner(uid)
-          && collection in ['projects', 'savedResponses', 'usage', 'memoryVectors', 'convVectors'];
+          && collection in ['projects', 'savedResponses', 'usage', 'memoryVectors', 'convVectors', 'searchCache'];
       }
     }
 

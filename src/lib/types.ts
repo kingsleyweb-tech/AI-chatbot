@@ -1,7 +1,7 @@
 import type { Timestamp } from 'firebase/firestore';
-import type { Attachment, MemoryCategory, MessageStatus, Source, UsageInfo } from '@shared/types';
+import type { Attachment, MemoryCategory, MessageStatus, ResearchStep, SearchInfo, Source, UsageInfo } from '@shared/types';
 
-export type { Attachment, MemoryCategory, MessageStatus, Source, UsageInfo };
+export type { Attachment, MemoryCategory, MessageStatus, ResearchStep, SearchInfo, Source, UsageInfo };
 
 export type Theme = 'light' | 'dark' | 'system';
 export type Accent = 'teal' | 'cyan' | 'emerald' | 'blue' | 'amber' | 'graphite';
@@ -18,6 +18,8 @@ export interface UserSettings {
   language: string;
   memoryEnabled: boolean;
   webSearchDefault: boolean;
+  /** search automatically when a message clearly needs current information */
+  autoSearch: boolean;
   sendOnEnter: boolean;
   voiceName: string | null;
 }
@@ -34,6 +36,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   language: 'auto',
   memoryEnabled: true,
   webSearchDefault: false,
+  autoSearch: true,
   sendOnEnter: true,
   voiceName: null,
 };
@@ -69,6 +72,9 @@ export interface Message {
   model?: string;
   status?: MessageStatus;
   sources?: Source[];
+  notices?: string[];
+  search?: SearchInfo | null;
+  researchSteps?: ResearchStep[];
   usage?: UsageInfo | null;
   reasoning?: string | null;
   error?: { code: string; message: string; suggestion?: string | null } | null;
