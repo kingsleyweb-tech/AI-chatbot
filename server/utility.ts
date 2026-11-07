@@ -1,5 +1,5 @@
 import { modelConfig } from './config/models.js';
-import { providerFor } from './providers/registry.js';
+import { isModelConfigured, providerFor } from './providers/registry.js';
 import type { ProviderMessage } from './providers/types.js';
 
 /**
@@ -10,7 +10,7 @@ export async function utilityComplete(
   messages: ProviderMessage[],
   opts: { json?: boolean; maxTokens?: number } = {},
 ): Promise<string | null> {
-  for (const model of modelConfig().utilityModels) {
+  for (const model of modelConfig().utilityModels.filter(isModelConfigured)) {
     try {
       const out = await providerFor(model).complete({
         model,

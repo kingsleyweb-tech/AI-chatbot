@@ -162,7 +162,15 @@ export class OpenRouterProvider implements ChatProvider {
     try {
       const res = await fetch(`${BASE}/key`, { headers: this.headers(), signal: AbortSignal.timeout(10_000) });
       if (!res.ok) return null;
-      const { data } = (await res.json()) as { data: { is_free_tier?: boolean; limit_remaining?: number | null } };
+      const { data } = (await res.json()) as {
+        data: {
+          is_free_tier?: boolean;
+          limit_remaining?: number | null;
+          free_model_daily_requests?: { remaining?: number };
+        };
+      };
+      // Learn about an exhausted free daily quota without spending a failed request on it.
+      if (data.free_model_daily_requests?.remaining === 0) markFreeDailyLimit();
       const paid = data.is_free_tier === false && (data.limit_remaining == null || data.limit_remaining > 0);
       keyCache = { at: Date.now(), paid };
       return paid;

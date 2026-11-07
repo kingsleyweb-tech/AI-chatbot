@@ -1,0 +1,316 @@
+/**
+ * Google Gemini Developer API (AI Studio) provider.
+ *
+ * Model ids are namespaced as "gemini:<model>" so they can live next to
+ * OpenRouter ids in one catalog and one router. The key is server-only
+ * (GEMINI_API_KEY); it is sent in a header, never in a URL or to the client.
+ *
+ * Cost: the owner confirmed the Google project has no billing, so the free tier
+ * applies and these models are marked free. If GEMINI_BILLING=paid is set, every
+ * Gemini model is treated as paid and the router requires approval.
+ */
+import { env } from '../env.js';
+import { parseSSE } from '../shared/sse.js';
+import type { ModelInfo } from '../shared/types.js';
+import {
+  ProviderError,
+  type ChatProvider,
+  type CompletionParams,
+  type ContentPart,
+  type ProviderChunk,
+  type ProviderMessage,
+} from './types.js';
+
+const BASE = 'https://generativelanguage.googleapis.com/v1beta';
+export const GEMINI_PREFIX = 'gemini:';
+const CONNECT_TIMEOUT_MS = 30_000;
+const IDLE_TIMEOUT_MS = 90_000;
+
+/**
+ * Curated chat models (verified against the models list for this key;
+ * Gemini 2.5 models are no longer offered to new keys).
+ * Only models that exist for the key right now are shown.
+ */
+export const GEMINI_CHAT_MODELS: { id: string; blurb: string; featured?: boolean; audio?: boolean }[] = [
+  { id: 'gemini-3.8-flash', blurb: 'Google’s newest Flash model: text, images, audio, 1M context. Often busy on the free tier.', audio: true },
+  { id: 'gemini-3.5-flash', blurb: 'Fast multimodal Gemini model: text, images, audio, 1M-token context.', featured: true, audio: true },
+  { id: 'gemini-3.5-flash-lite', blurb: 'Lightweight, quick Gemini model for everyday tasks.', audio: true },
+  { id: 'gemini-3.1-flash-lite', blurb: 'Lightweight Gemini model.', audio: true },
+  { id: 'gemini-3.1-pro-preview', blurb: 'Most capable Gemini reasoning model (preview). May not be in the free tier.', audio: true },
+];
+
+interface GModel {
+  name: string;
+  displayName?: string;
+  inputTokenLimit?: number;
+  supportedGenerationMethods?: string[];
+  thinking?: boolean;
+}
+
+let modelCache: { at: number; models: ModelInfo[] } | null = null;
+const MODEL_TTL = 30 * 60_000;
+
+export const toGeminiId = (model: string) => model.replace(GEMINI_PREFIX, '');
+
+function geminiPaid(): boolean {
+  return (process.env.GEMINI_BILLING ?? '').toLowerCase() === 'paid';
+}
+
+export function mapGeminiModel(m: GModel): ModelInfo | null {
+  const raw = m.name.replace(/^models\//, '');
+  const cfg = GEMINI_CHAT_MODELS.find((c) => c.id === raw);
+  if (!cfg || !m.supportedGenerationMethods?.includes('generateContent')) return null;
+  const inputs: ModelInfo['inputModalities'] = cfg.audio ? ['text', 'image', 'audio', 'file'] : ['text', 'image'];
+  return {
+    id: GEMINI_PREFIX + raw,
+    name: `Google: ${m.displayName ?? raw}${geminiPaid() ? '' : ' (free tier)'}`,
+    provider: 'gemini',
+    vendor: 'google',
+    description: cfg.blurb,
+    contextLength: m.inputTokenLimit ?? 0,
+    inputModalities: inputs,
+    outputModalities: ['text'],
+    free: !geminiPaid(),
+    capabilities: {
+      vision: true,
+      audioInput: Boolean(cfg.audio),
+      fileInput: Boolean(cfg.audio),
+      imageOutput: false,
+      audioOutput: false,
+      tools: true,
+      reasoning: true,
+      structuredOutput: true,
+      streaming: true,
+      code: false,
+    },
+    available: true,
+    featured: Boolean(cfg.featured),
+  };
+}
+
+/** Map a Gemini API error to a typed ProviderError. */
+export function mapGeminiError(status: number, body: string): ProviderError {
+  let message = body;
+  try {
+    const parsed = JSON.parse(body) as { error?: { message?: string; status?: string } } | { error?: unknown }[];
+    const e = Array.isArray(parsed) ? (parsed[0] as { error?: { message?: string } })?.error : parsed.error;
+    message = (e as { message?: string })?.message ?? body;
+  } catch {
+    /* keep raw */
+  }
+  const lower = message.toLowerCase();
+  if (status === 400 && lower.includes('api key')) return new ProviderError('invalid_key', 'Google rejected the Gemini API key.', 401);
+  if (status === 401 || status === 403) return new ProviderError('invalid_key', 'Google rejected the Gemini API key.', 401);
+  if (status === 429 && /limit:\s*0\b/.test(lower))
+    return new ProviderError('model_unavailable', 'This Gemini model is not included in the free tier.', 404);
+  if (status === 429) return new ProviderError('rate_limited', 'The Gemini free-tier quota for this model is used up for now.', 429);
+  if (status === 404) return new ProviderError('model_unavailable', 'This Gemini model is currently unavailable.', 404);
+  if (lower.includes('token') && (lower.includes('exceed') || lower.includes('too long') || lower.includes('limit')))
+    return new ProviderError('context_too_long', 'The conversation is too long for this model.', 400);
+  if (lower.includes('safety') || lower.includes('blocked')) return new ProviderError('moderation', 'Gemini blocked this request.', 403);
+  if (status >= 500) return new ProviderError('provider_error', 'Gemini had a temporary problem.', 502);
+  return new ProviderError('bad_request', `Gemini rejected the request: ${message.slice(0, 200)}`, 400);
+}
+
+type GPart = { text: string } | { inlineData: { mimeType: string; data: string } };
+
+function toParts(content: string | ContentPart[]): GPart[] {
+  if (typeof content === 'string') return [{ text: content || ' ' }];
+  const parts: GPart[] = [];
+  for (const p of content) {
+    if (p.type === 'text') parts.push({ text: p.text || ' ' });
+    else {
+      const m = /^data:([^;,]+);base64,(.*)$/s.exec(p.image_url.url);
+      if (m) parts.push({ inlineData: { mimeType: m[1], data: m[2] } });
+    }
+  }
+  return parts.length ? parts : [{ text: ' ' }];
+}
+
+/** OpenAI-style messages -> Gemini contents (system goes to systemInstruction; roles must alternate). */
+export function toGeminiRequest(messages: ProviderMessage[]) {
+  const system = messages
+    .filter((m) => m.role === 'system')
+    .map((m) => (typeof m.content === 'string' ? m.content : m.content.map((p) => (p.type === 'text' ? p.text : '')).join('\n')))
+    .join('\n\n');
+  const contents: { role: 'user' | 'model'; parts: GPart[] }[] = [];
+  for (const m of messages) {
+    if (m.role === 'system') continue;
+    const role = m.role === 'assistant' ? 'model' : 'user';
+    const parts = toParts(m.content);
+    const prev = contents[contents.length - 1];
+    if (prev && prev.role === role) prev.parts.push(...parts);
+    else contents.push({ role, parts });
+  }
+  if (!contents.length || contents[0].role !== 'user') contents.unshift({ role: 'user', parts: [{ text: ' ' }] });
+  return { ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}), contents };
+}
+
+interface GChunk {
+  candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] }; finishReason?: string }[];
+  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number; totalTokenCount?: number };
+  promptFeedback?: { blockReason?: string };
+  modelVersion?: string;
+  error?: { code?: number; message?: string };
+}
+
+export class GeminiProvider implements ChatProvider {
+  readonly id = 'gemini';
+
+  isConfigured(): boolean {
+    return Boolean(env().geminiKey);
+  }
+
+  private headers(): HeadersInit {
+    const key = env().geminiKey;
+    if (!key) throw new ProviderError('not_configured', 'GEMINI_API_KEY is not configured.', 500);
+    return { 'x-goog-api-key': key, 'content-type': 'application/json' };
+  }
+
+  async listModels(): Promise<ModelInfo[]> {
+    if (modelCache && Date.now() - modelCache.at < MODEL_TTL) return modelCache.models;
+    const res = await fetch(`${BASE}/models?pageSize=200`, { headers: this.headers(), signal: AbortSignal.timeout(15_000) });
+    if (!res.ok) throw mapGeminiError(res.status, await res.text());
+    const { models = [] } = (await res.json()) as { models?: GModel[] };
+    const mapped = models.map(mapGeminiModel).filter((m): m is ModelInfo => m !== null);
+    // keep the curated order
+    mapped.sort(
+      (a, b) =>
+        GEMINI_CHAT_MODELS.findIndex((c) => GEMINI_PREFIX + c.id === a.id) -
+        GEMINI_CHAT_MODELS.findIndex((c) => GEMINI_PREFIX + c.id === b.id),
+    );
+    modelCache = { at: Date.now(), models: mapped };
+    return mapped;
+  }
+
+  private body(p: CompletionParams) {
+    const id = toGeminiId(p.model);
+    return JSON.stringify({
+      ...toGeminiRequest(p.messages),
+      generationConfig: {
+        maxOutputTokens: p.maxTokens ?? 8192,
+        ...(p.temperature !== undefined ? { temperature: p.temperature } : {}),
+        ...(p.json ? { responseMimeType: 'application/json' } : {}),
+        ...(id.startsWith('gemini-')
+          ? {
+              // Short background calls (titles, memory, plans) skip thinking so it can't
+              // consume the whole output budget; chat replies stream their thoughts.
+              thinkingConfig:
+                (p.maxTokens ?? 8192) > 2048 || id.includes('pro')
+                  ? { includeThoughts: true }
+                  : id.includes('lite')
+                    ? { thinkingLevel: 'minimal' } // lite models reject a zero budget
+                    : { thinkingBudget: 0 },
+            }
+          : {}),
+      },
+    });
+  }
+
+  async *stream(p: CompletionParams): AsyncGenerator<ProviderChunk> {
+    const headers = this.headers();
+    const connect = new AbortController();
+    const timer = setTimeout(() => connect.abort(), CONNECT_TIMEOUT_MS);
+    const signal = AbortSignal.any([connect.signal, p.signal].filter(Boolean) as AbortSignal[]);
+    let res: Response;
+    try {
+      res = await fetch(`${BASE}/models/${encodeURIComponent(toGeminiId(p.model))}:streamGenerateContent?alt=sse`, {
+        method: 'POST',
+        headers,
+        body: this.body(p),
+        signal,
+      });
+    } catch (err) {
+      clearTimeout(timer);
+      if (p.signal?.aborted) throw err;
+      if (connect.signal.aborted) throw new ProviderError('timeout', 'Gemini took too long to start responding.', 504);
+      throw new ProviderError('provider_error', 'Could not reach Gemini.', 502);
+    }
+    clearTimeout(timer);
+    if (!res.ok || !res.body) throw mapGeminiError(res.status, await res.text());
+
+    let finish: string | null = null;
+    let usage: GChunk['usageMetadata'] | undefined;
+    let idle = setTimeout(() => connect.abort(), IDLE_TIMEOUT_MS);
+    try {
+      for await (const data of parseSSE(res.body, signal)) {
+        clearTimeout(idle);
+        idle = setTimeout(() => connect.abort(), IDLE_TIMEOUT_MS);
+        let chunk: GChunk;
+        try {
+          chunk = JSON.parse(data);
+        } catch {
+          continue;
+        }
+        if (chunk.error) throw mapGeminiError(chunk.error.code ?? 502, JSON.stringify(chunk));
+        if (chunk.promptFeedback?.blockReason) throw new ProviderError('moderation', 'Gemini blocked this request.', 403);
+        const cand = chunk.candidates?.[0];
+        for (const part of cand?.content?.parts ?? []) {
+          if (!part.text) continue;
+          yield part.thought ? { type: 'reasoning', text: part.text } : { type: 'delta', text: part.text };
+        }
+        if (cand?.finishReason) finish = cand.finishReason === 'MAX_TOKENS' ? 'length' : cand.finishReason.toLowerCase();
+        if (chunk.usageMetadata) usage = chunk.usageMetadata;
+      }
+    } catch (err) {
+      if (p.signal?.aborted) throw err;
+      if (err instanceof ProviderError) throw err;
+      if (connect.signal.aborted) throw new ProviderError('timeout', 'Gemini stopped responding.', 504);
+      throw new ProviderError('provider_error', 'The Gemini stream was interrupted.', 502);
+    } finally {
+      clearTimeout(idle);
+    }
+    if (usage) {
+      const completion = (usage.candidatesTokenCount ?? 0) + (usage.thoughtsTokenCount ?? 0);
+      yield {
+        type: 'usage',
+        usage: {
+          promptTokens: usage.promptTokenCount ?? 0,
+          completionTokens: completion,
+          totalTokens: usage.totalTokenCount ?? (usage.promptTokenCount ?? 0) + completion,
+          // free tier: nothing is billed
+          ...(geminiPaid() ? {} : { cost: 0 }),
+        },
+      };
+    }
+    yield { type: 'finish', reason: finish, model: p.model };
+  }
+
+  async complete(p: CompletionParams): Promise<string> {
+    let res: Response;
+    try {
+      res = await fetch(`${BASE}/models/${encodeURIComponent(toGeminiId(p.model))}:generateContent`, {
+        method: 'POST',
+        headers: this.headers(),
+        body: this.body(p),
+        signal: AbortSignal.any([AbortSignal.timeout(CONNECT_TIMEOUT_MS), p.signal].filter(Boolean) as AbortSignal[]),
+      });
+    } catch (err) {
+      if (err instanceof ProviderError) throw err;
+      throw new ProviderError('timeout', 'Gemini did not respond in time.', 504);
+    }
+    if (!res.ok) throw mapGeminiError(res.status, await res.text());
+    const data = (await res.json()) as GChunk;
+    return (data.candidates?.[0]?.content?.parts ?? [])
+      .filter((x) => !x.thought && x.text)
+      .map((x) => x.text)
+      .join('');
+  }
+
+  /** Embeddings (768 dims) via gemini-embedding models. */
+  async embed(model: string, inputs: string[], signal?: AbortSignal): Promise<number[][]> {
+    const id = toGeminiId(model);
+    const res = await fetch(`${BASE}/models/${encodeURIComponent(id)}:batchEmbedContents`, {
+      method: 'POST',
+      headers: this.headers(),
+      body: JSON.stringify({
+        requests: inputs.map((text) => ({ model: `models/${id}`, content: { parts: [{ text }] }, outputDimensionality: 768 })),
+      }),
+      signal: signal ?? AbortSignal.timeout(30_000),
+    });
+    if (!res.ok) throw mapGeminiError(res.status, await res.text());
+    const data = (await res.json()) as { embeddings?: { values: number[] }[] };
+    if (!data.embeddings?.length) throw new ProviderError('provider_error', 'No embeddings returned.');
+    return data.embeddings.map((e) => e.values);
+  }
+}

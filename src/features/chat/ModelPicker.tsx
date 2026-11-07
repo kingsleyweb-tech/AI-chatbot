@@ -8,7 +8,7 @@ import { cn, formatTokens, modelShortName } from '@/lib/utils';
 import { useIsDesktop } from '@/lib/viewport';
 import { useCatalog } from '@/state/catalog';
 
-type Filter = 'featured' | 'free' | 'vision' | 'all';
+type Filter = 'featured' | 'free' | 'vision' | 'gemini' | 'all';
 
 export function CapabilityBadges({ m, compact }: { m: ModelInfo; compact?: boolean }) {
   return (
@@ -75,7 +75,7 @@ function ModelRow({
           {needsCredits && <Badge tone="warn">Needs credits</Badge>}
         </span>
         <span className="mt-0.5 block truncate text-xs text-muted">
-          {m.vendor} · via {m.provider === 'openrouter' ? 'OpenRouter' : m.provider}
+          {m.vendor} · via {m.provider === 'openrouter' ? 'OpenRouter' : m.provider === 'gemini' ? 'Google AI Studio' : m.provider}
           {m.pricing && !m.free ? ` · $${m.pricing.prompt}/$${m.pricing.completion} per 1M tokens` : ''}
         </span>
         {m.description && <span className="mt-1 line-clamp-2 block text-xs text-subtle">{m.description}</span>}
@@ -137,6 +137,7 @@ export function ModelPicker({
     else if (filter === 'featured') list = all.filter((m) => m.featured);
     else if (filter === 'free') list = all.filter((m) => m.free);
     else if (filter === 'vision') list = all.filter((m) => m.capabilities.vision);
+    else if (filter === 'gemini') list = all.filter((m) => m.provider === 'gemini');
     const featuredOrder = (catalog?.models ?? []).filter((m) => m.featured).map((m) => m.id);
     return [...list].sort((a, b) => {
       if (a.featured !== b.featured) return a.featured ? -1 : 1;
@@ -162,7 +163,7 @@ export function ModelPicker({
         </div>
         {!q && (
           <div className="flex gap-1">
-            {(['featured', 'free', 'vision', 'all'] as Filter[]).map((f) => (
+            {(['featured', 'free', 'vision', 'gemini', 'all'] as Filter[]).map((f) => (
               <button
                 key={f}
                 onClick={() => setFilter(f)}
@@ -179,7 +180,7 @@ export function ModelPicker({
       </div>
       {!paidOk && (
         <p className="border-b border-border bg-warn-soft px-4 py-2 text-xs text-warn">
-          The OpenRouter account has no credits, so only free models will respond. Paid models fall back to a free one.
+          The OpenRouter account has no credits, so only free models will respond. Paid models ask for your approval first.
         </p>
       )}
       <div className="scroll-thin touch-scroll min-h-0 flex-1 overflow-y-auto p-1.5">

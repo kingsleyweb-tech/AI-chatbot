@@ -431,16 +431,18 @@ export async function runChat(
             } catch (err) {
               if (signal.aborted) throw err;
               lastErr = err;
-              const canFallback =
-                err instanceof ProviderError &&
-                err.fallbackable &&
-                !content &&
-                i < chain.length - 1;
-              if (!canFallback) break;
-              notice(
-                `${modelId}: ${(err as ProviderError).message} Trying ${chain[i + 1]}.`,
-                chain[i + 1],
-              );
+              if (!(err instanceof ProviderError) || content) break;
+              // The OpenRouter free daily cap blocks every free OpenRouter model, so skip
+              // straight to a model from another provider (no wasted requests).
+              const next =
+                err.code === 'daily_limit'
+                  ? chain.findIndex((id, j) => j > i && providerFor(id).id !== providerFor(modelId).id)
+                  : err.fallbackable && i < chain.length - 1
+                    ? i + 1
+                    : -1;
+              if (next === -1) break;
+              notice(`${nameOf(modelId)}: ${err.message} Trying ${nameOf(chain[next])}.`, chain[next]);
+              i = next - 1;
             }
           }
           if (lastErr) throw lastErr;
@@ -517,6 +519,8 @@ export async function runChat(
               ...(usage.cost ? { cost: usage.cost } : {}),
               [fieldPath('models', modelKey, 'requests')]: 1,
               [fieldPath('models', modelKey, 'tokens')]: usage.totalTokens,
+              [fieldPath('providers', providerFor(usedModel).id, 'requests')]: 1,
+              [fieldPath('providers', providerFor(usedModel).id, 'tokens')]: usage.totalTokens,
             },
           });
         }

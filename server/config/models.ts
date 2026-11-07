@@ -36,10 +36,23 @@ export const FEATURED_MODELS: FeaturedModel[] = [
  * always need the user's approval.
  */
 export const TASK_PREFERENCES: Record<'vision' | 'code' | 'longContext' | 'general', string[]> = {
-  vision: ['nvidia/nemotron-3.5-super-vl:free', 'google/gemma-4-31b-it:free', 'google/gemma-4-26b-a4b-it:free'],
-  code: ['cohere/north-mini-code:free'],
-  longContext: ['nvidia/nemotron-3.5-super-vl:free', 'nvidia/nemotron-3-ultra-550b-a55b:free'],
-  general: ['nvidia/nemotron-3-ultra-550b-a55b:free', 'google/gemma-4-31b-it:free', 'google/gemma-4-26b-a4b-it:free'],
+  // Providers are interleaved so a fallback chain never depends on one provider's quota.
+  vision: [
+    'nvidia/nemotron-3.5-super-vl:free',
+    'gemini:gemini-3.5-flash',
+    'google/gemma-4-31b-it:free',
+    'gemini:gemini-3.8-flash',
+    'google/gemma-4-26b-a4b-it:free',
+  ],
+  code: ['cohere/north-mini-code:free', 'gemini:gemini-3.5-flash', 'gemini:gemini-3.8-flash'],
+  longContext: ['gemini:gemini-3.5-flash', 'gemini:gemini-3.8-flash', 'nvidia/nemotron-3.5-super-vl:free', 'nvidia/nemotron-3-ultra-550b-a55b:free'],
+  general: [
+    'nvidia/nemotron-3-ultra-550b-a55b:free',
+    'gemini:gemini-3.5-flash',
+    'google/gemma-4-31b-it:free',
+    'gemini:gemini-3.8-flash',
+    'google/gemma-4-26b-a4b-it:free',
+  ],
 };
 
 export function modelConfig() {
@@ -47,17 +60,21 @@ export function modelConfig() {
   return {
     defaultModel: e.defaultModel ?? 'nvidia/nemotron-3-ultra-550b-a55b:free',
     fallbackModels: e.fallbackModels ?? [
+      'gemini:gemini-3.5-flash',
       'nvidia/nemotron-3.5-super-vl:free',
       'google/gemma-4-26b-a4b-it:free',
       'google/gemma-4-31b-it:free',
     ],
     /** small/fast models for titles, memory extraction and summaries */
+    // Gemini Flash-Lite first: background jobs then don't use the 50/day OpenRouter free quota.
     utilityModels: e.utilityModels ?? [
+      'gemini:gemini-3.5-flash-lite',
       'google/gemma-4-26b-a4b-it:free',
       'nvidia/nemotron-3.5-super-vl:free',
       'nvidia/nemotron-3-ultra-550b-a55b:free',
     ],
     embeddingModels: e.embeddingModels ?? [
+      'gemini:gemini-embedding-001',
       'nvidia/nemotron-3.5-embed-1b:free',
       'nvidia/nemotron-3-embed-1b:free',
       'openai/text-embedding-3-small',

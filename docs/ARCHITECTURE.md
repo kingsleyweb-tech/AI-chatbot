@@ -33,6 +33,15 @@ Firestore SDK (offline) ──┼─ realtime reads/writes ───────
 
 The browser keeps live replies in a module-level store (`src/features/chat/engine.ts`). Navigating away doesn't interrupt a stream, and **Stop** aborts the fetch, which aborts the upstream request.
 
+## Providers and model routing (`server/providers`, `server/router`)
+
+- **Providers.** OpenRouter (default prefix) and Google Gemini (`gemini:<model>`, AI Studio key) implement one `ChatProvider` interface and are registered in `server/providers/registry.ts`. One catalog, one router and one conversation engine serve both, so history, memory, documents and settings are shared.
+- **Routing** (`server/router/route.ts`). `detectTask` reads the request without a model call: images, document types, intent and a token estimate. `routeModel` keeps the selected model when it fits. Otherwise it uses the best free model for the task, for that reply only. If only a paid model fits, the server returns `approval_required` and spends nothing until the user approves that model for one request. The selected model is never changed.
+- **Fallbacks.** Each model in the chain is tried once, only before any text has streamed. Preference lists interleave providers, so one provider's quota does not stop a reply.
+- **OpenRouter free daily cap.** Accounts without purchased credits get 50 free-model requests per day. The cap is read from OpenRouter's key info, or learned from the first `free-models-per-day` 429. Free OpenRouter models are then marked unavailable until midnight UTC, and requests go to Gemini.
+- **Gemini.** It uses the free tier (no billing on the Google project; `GEMINI_BILLING=paid` flips every Gemini model to paid). Short background calls disable thinking, so it cannot use up their small output budget. Embeddings use `gemini-embedding-001` (768 dimensions). Usage is counted per provider in `usage/{day}.providers.<id>`.
+- **Image generation and editing** are not offered. The prompt tells the model so, and it says so plainly.
+
 ## Web search (`server/search`)
 
 All searches go through one service, `SearchService` in `router.ts`. Nothing else calls a search provider.
@@ -104,7 +113,7 @@ All user data is under `users/{uid}`:
 - `config/limits` is admin-write only, with a validated shape.
 - Covered by `tests/rules/firestore.rules.test.ts` (15 cases, run in the emulator).
 
-Secrets: `OPENROUTER_API_KEY`, `SERPAPI_API_KEY` and `TAVILY_API_KEY` are read only in `server/env.ts`. They are never logged and never sent to the browser.
+Secrets: `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `SERPAPI_API_KEY` and `TAVILY_API_KEY` are read only in `server/env.ts`. They are never logged and never sent to the browser.
 
 ## Known limitations
 

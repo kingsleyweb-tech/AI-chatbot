@@ -14,13 +14,13 @@ let lastGood: string | null = null;
  */
 export async function embed(texts: string[], preferredModel?: string): Promise<Embedded | null> {
   if (!texts.length) return { model: preferredModel ?? lastGood ?? '', vectors: [] };
-  const provider = embeddingProvider();
-  if (!provider.embed || !provider.isConfigured()) return null;
   const candidates = [preferredModel, lastGood, ...modelConfig().embeddingModels].filter(
-    (m, i, a): m is string => Boolean(m) && a.indexOf(m) === i,
+    (m, i, a): m is string => Boolean(m) && a.indexOf(m) === i && embeddingProvider(m!).isConfigured(),
   );
   const inputs = texts.map((t) => t.slice(0, 8000));
   for (const model of candidates) {
+    const provider = embeddingProvider(model);
+    if (!provider.embed) continue;
     try {
       const vectors: number[][] = [];
       for (let i = 0; i < inputs.length; i += 64) {

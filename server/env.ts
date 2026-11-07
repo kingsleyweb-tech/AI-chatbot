@@ -13,6 +13,7 @@ export function env() {
   const e = process.env;
   return {
     openRouterKey: e.OPENROUTER_API_KEY ?? '',
+    geminiKey: e.GEMINI_API_KEY ?? '',
     tavilyKey: e.TAVILY_API_KEY ?? '',
     serpApiKey: e.SERPAPI_API_KEY ?? '',
     appUrl: e.APP_URL ?? 'http://localhost:5173',

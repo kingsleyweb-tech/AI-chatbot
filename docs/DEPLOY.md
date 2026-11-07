@@ -13,6 +13,7 @@ npx firebase deploy --only firestore:rules,firestore:indexes --project ai-app-6e
 1. In Vercel, **Add New > Project** and import the GitHub repository. The framework preset (Vite), build command and output directory come from `vercel.json`.
 2. **Settings > Environment Variables** (Production and Preview):
    - `OPENROUTER_API_KEY`: mark it **Sensitive**
+   - `GEMINI_API_KEY`: optional, Sensitive. Set `GEMINI_BILLING=paid` only if the Google project has billing enabled.
    - `SERPAPI_API_KEY` and `TAVILY_API_KEY`: optional, also Sensitive
    - `APP_URL`: for example `https://your-app.vercel.app`
    - `FIREBASE_PROJECT_ID`: `ai-app-6efa7`

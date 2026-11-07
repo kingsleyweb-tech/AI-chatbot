@@ -1,15 +1,18 @@
 import type { ModelCatalog, ModelInfo } from '../shared/types.js';
 import { modelConfig } from '../config/models.js';
-import { OpenRouterProvider } from './openrouter.js';
+import { GEMINI_PREFIX, GeminiProvider } from './gemini.js';
+import { freeDailyLimitActive, OpenRouterProvider } from './openrouter.js';
 import type { ChatProvider } from './types.js';
 
 /**
- * Provider registry. To add Gemini/OpenAI/Anthropic later, implement
- * ChatProvider and register it here with a model-id prefix, e.g. "gemini:".
+ * Provider registry. Each provider owns a model-id prefix ("gemini:"); the
+ * empty prefix (OpenRouter) catches everything else. One catalog, one router,
+ * one conversation engine for all of them.
  */
 const openrouter = new OpenRouterProvider();
+const gemini = new GeminiProvider();
 const providers: { prefix: string; provider: ChatProvider }[] = [
-  // { prefix: 'gemini:', provider: new GeminiProvider() },
+  { prefix: GEMINI_PREFIX, provider: gemini },
   { prefix: '', provider: openrouter },
 ];
 
@@ -17,8 +20,14 @@ export function providerFor(modelId: string): ChatProvider {
   return providers.find((p) => modelId.startsWith(p.prefix))!.provider;
 }
 
-export function embeddingProvider(): ChatProvider {
-  return openrouter;
+/** The provider that serves an embedding model id. */
+export function embeddingProvider(model = ''): ChatProvider {
+  return providerFor(model);
+}
+
+/** Models whose provider has a key configured (used to filter config lists). */
+export function isModelConfigured(modelId: string): boolean {
+  return providerFor(modelId).isConfigured();
 }
 
 export function configuredProviders(): string[] {
@@ -28,11 +37,25 @@ export function configuredProviders(): string[] {
 export async function getCatalog(): Promise<ModelCatalog> {
   const cfg = modelConfig();
   const all: ModelInfo[] = [];
-  for (const { provider } of providers) {
-    if (!provider.isConfigured()) continue;
-    all.push(...(await provider.listModels()));
+  const lists = await Promise.all(
+    providers
+      .filter(({ provider }) => provider.isConfigured())
+      .map(({ provider }) =>
+        provider.listModels().catch((err) => {
+          // one provider being down must not hide the others
+          console.warn(`[catalog] ${provider.id} models unavailable: ${err instanceof Error ? err.message : err}`);
+          return [] as ModelInfo[];
+        }),
+      ),
+  );
+  // checked first: the key info also tells us when the free daily quota is used up
+  const paidAvailable = openrouter.isConfigured() ? await openrouter.paidAvailable() : null;
+  const limited = freeDailyLimitActive();
+  for (const list of lists) {
+    // Free OpenRouter models are all blocked once the account-wide daily cap is hit.
+    all.push(...(limited ? list.map((m) => (m.provider === 'openrouter' && m.free ? { ...m, available: false } : m)) : list));
   }
-  const paidAvailable = await openrouter.paidAvailable();
+  if (!all.length && !lists.length) throw new Error('No AI provider is configured.');
   return {
     models: all,
     defaultModel: cfg.defaultModel,
