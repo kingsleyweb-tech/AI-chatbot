@@ -22,7 +22,8 @@ import { recordSecurityEvent } from '../account/events.js';
 import type { AccountAdmin } from '../admin.js';
 import type { Firestore, Write } from '../firestore.js';
 import { HttpError } from '../http.js';
-import type { SmsProvider } from '../sms/provider.js';
+import { deliveryOf, logSms } from '../sms/log.js';
+import { SmsError, type SmsProvider } from '../sms/provider.js';
 import { CODE_TTL_MS, MAX_ATTEMPTS, phoneKey, RESEND_MS } from './otp.js';
 import { maskPhone } from './phone.js';
 
@@ -163,10 +164,14 @@ export async function startRecovery(deps: RecoveryDeps, rawEmail: string, ip: st
   await deps.db.commit(writes);
 
   if (send) {
+    const entry = { at: now, uid: target?.uid ?? null, purpose: 'recovery' as const, route: 'sms' as const, phone: send.to };
     try {
-      await deps.sms.send(send.to, recoverySms(send.code));
+      const r = await deps.sms.send(send.to, recoverySms(send.code));
+      await logSms(deps.db, { ...entry, ref: r.id ?? null, accepted: true, delivery: deliveryOf(r.status), providerStatus: r.status ?? 'queued' });
     } catch (err) {
       await deps.db.set(`recovery/${rid}`, { codeHash: null }, true).catch(() => undefined);
+      const p = err instanceof SmsError ? err.provider : { message: err instanceof Error ? err.message : String(err) };
+      await logSms(deps.db, { ...entry, ref: null, accepted: false, delivery: 'failed', error: p.message ?? null, httpStatus: p.httpStatus ?? null, providerStatus: p.code ?? 'rejected' });
       console.error('[recovery] SMS delivery failed', err instanceof Error ? err.message : err);
     }
   } else if (deps.decoyDelayMs !== 0) {

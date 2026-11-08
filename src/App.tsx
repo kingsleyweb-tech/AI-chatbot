@@ -22,6 +22,7 @@ const UsersPage = lazy(() => import('./features/admin/UsersPage'));
 const AccessRequestsPage = lazy(() => import('./features/admin/AccessRequestsPage'));
 const SupportAdminPage = lazy(() => import('./features/admin/SupportAdminPage'));
 const SupportReportAdminPage = lazy(() => import('./features/admin/SupportReportAdminPage'));
+const SmsAdminPage = lazy(() => import('./features/admin/SmsAdminPage'));
 const ReportIssuePage = lazy(() => import('./features/support/ReportIssuePage'));
 const MyReportsPage = lazy(() => import('./features/support/MyReportsPage'));
 const ReportThreadPage = lazy(() => import('./features/support/ReportThreadPage'));
@@ -105,6 +106,7 @@ function Routed() {
               <Route path="admin/requests" element={<AccessRequestsPage />} />
               <Route path="admin/support" element={<SupportAdminPage />} />
               <Route path="admin/support/:ref" element={<SupportReportAdminPage />} />
+              <Route path="admin/sms" element={<SmsAdminPage />} />
               <Route path="support" element={<MyReportsPage />} />
               <Route path="support/new" element={<ReportIssuePage />} />
               <Route path="support/:ref" element={<ReportThreadPage />} />

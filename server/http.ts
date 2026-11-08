@@ -27,6 +27,15 @@ export function errorResponse(err: unknown): Response {
   return json({ error: { code: 'internal', message: 'Unexpected server error.' } }, { status: 500 });
 }
 
+/** Raw request body (webhooks verify a signature over the exact bytes). */
+export async function readText(request: Request, maxBytes = 100_000): Promise<string> {
+  const len = Number(request.headers.get('content-length') ?? 0);
+  if (len > maxBytes) throw new HttpError(413, 'too_large', 'Request body is too large.');
+  const text = await request.text();
+  if (text.length > maxBytes) throw new HttpError(413, 'too_large', 'Request body is too large.');
+  return text;
+}
+
 export async function readJson<T>(request: Request, maxBytes = 4_000_000): Promise<T> {
   const len = Number(request.headers.get('content-length') ?? 0);
   if (len > maxBytes) throw new HttpError(413, 'too_large', 'Request body is too large.');

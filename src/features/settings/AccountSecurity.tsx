@@ -28,7 +28,8 @@ import { paths } from '@/lib/db';
 import { useQuery } from '@/lib/hooks';
 import { useAuth, useUid } from '@/state/auth';
 import { useToast } from '@/state/toast';
-import { CodeBoxes, mmss, phoneError, useCountdown } from '../auth/otpUi';
+import { CodeBoxes, DeliveryLine, mmss, phoneError, useCountdown, type DeliveryState } from '../auth/otpUi';
+import { countryByCode, toE164 } from '@/lib/phone';
 import { maskPhone, providerLabel, Row, Section } from './parts';
 
 const hasPassword = (user: User | null) =>
@@ -42,8 +43,20 @@ interface PhoneStatus {
   required: boolean;
   pending?: boolean;
   phoneMasked?: string | null;
+  phoneDisplay?: string | null;
+  codeLength?: number;
   expiresIn?: number;
   resendIn?: number;
+  delivery?: { state: DeliveryState; error: string | null } | null;
+}
+
+interface SendResult {
+  phoneMasked: string;
+  phoneDisplay?: string;
+  expiresIn: number;
+  resendIn: number;
+  codeLength?: number;
+  delivery?: DeliveryState;
 }
 
 /**
@@ -59,6 +72,9 @@ export function PhoneManager() {
   const [mode, setMode] = useState<'view' | 'number' | 'code'>('view');
   const [phone, setPhone] = useState('');
   const [masked, setMasked] = useState('');
+  const [codeLength, setCodeLength] = useState(6);
+  const [delivery, setDelivery] = useState<{ state: DeliveryState; error: string | null } | null>(null);
+  const [hint, setHint] = useState('');
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -73,7 +89,9 @@ export function PhoneManager() {
         if (!live) return;
         setStatus(s);
         if (s.pending && s.phoneMasked) {
-          setMasked(s.phoneMasked);
+          setMasked(s.phoneDisplay ?? s.phoneMasked);
+          setCodeLength(s.codeLength ?? 6);
+          setDelivery(s.delivery ?? null);
           expiry.start(s.expiresIn ?? 0);
           setMode('code');
         }
@@ -86,37 +104,54 @@ export function PhoneManager() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const send = async (e?: FormEvent) => {
-    e?.preventDefault();
+  // While an ordinary SMS is in flight, check its delivery report a few times.
+  const waiting = mode === 'code' && (delivery?.state === 'pending' || delivery?.state === 'sent') && expiry.left > 0;
+  useEffect(() => {
+    if (!waiting) return;
+    let n = 0;
+    const t = setInterval(() => {
+      if (++n > 8) return clearInterval(t);
+      api<PhoneStatus>('phone', { json: { action: 'status' } })
+        .then((s) => s.delivery && setDelivery(s.delivery))
+        .catch(() => undefined);
+    }, 8000);
+    return () => clearInterval(t);
+  }, [waiting]);
+
+  const request = async (json: Record<string, unknown>) => {
     setError('');
-    const digits = phone.replace(/\D/g, '');
-    if (digits.length < 9) return setError('Enter your mobile number, for example 024 123 4567.');
+    setHint('');
     setBusy(true);
     try {
-      const r = await api<{ phoneMasked: string; expiresIn: number; resendIn: number }>('phone', {
-        json: { action: 'send', phone: digits },
-      });
-      setMasked(r.phoneMasked);
+      const r = await api<SendResult>('phone', { json });
+      setMasked(r.phoneDisplay ?? r.phoneMasked);
+      setCodeLength(r.codeLength ?? 6);
+      setDelivery(r.delivery ? { state: r.delivery, error: null } : null);
       setCode('');
       expiry.start(r.expiresIn);
       resend.start(r.resendIn);
       setMode('code');
     } catch (err) {
-      if (
-        err instanceof ApiError &&
-        err.code === 'resend_cooldown' &&
-        typeof err.details.retryAfter === 'number'
-      )
+      if (err instanceof ApiError && (err.code === 'resend_cooldown' || err.code === 'otp_pending') && typeof err.details.retryAfter === 'number')
         resend.start(err.details.retryAfter);
+      if (err instanceof ApiError && err.code === 'otp_pending' && typeof err.details.ussd === 'string')
+        setHint(`No text yet? Dial ${err.details.ussd} on this phone to see your code.`);
       setError(phoneError(err));
     } finally {
       setBusy(false);
     }
   };
 
+  const send = (e?: FormEvent) => {
+    e?.preventDefault();
+    const e164 = toE164(countryByCode('GH'), phone);
+    if (!e164) return setError('Enter a valid Ghana mobile number, for example 024 123 4567.');
+    void request({ action: 'send', phone: e164 });
+  };
+
   const verify = async (e?: FormEvent) => {
     e?.preventDefault();
-    if (code.length !== 6) return setError('Enter the 6-digit code.');
+    if (code.length !== codeLength) return setError(`Enter the ${codeLength}-digit code.`);
     setError('');
     setBusy(true);
     try {
@@ -229,7 +264,7 @@ export function PhoneManager() {
                 id="phone-number"
                 type="tel"
                 inputMode="tel"
-                autoComplete="tel-national"
+                autoComplete="tel"
                 placeholder="024 123 4567"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
@@ -237,10 +272,11 @@ export function PhoneManager() {
             </div>
           </div>
           <p id="phone-country-note" className="text-xs text-muted">
-            Only Ghana numbers are supported at the moment. We send one 6-digit code; it expires
-            after 5 minutes.
+            Only Ghana mobile numbers are supported at the moment (024 123 4567 or +233 24 123 4567).
+            We text one code; it expires after a few minutes.
           </p>
           {error && <p className="text-sm text-danger">{error}</p>}
+          {hint && <p className="text-xs text-muted">{hint}</p>}
           <div className="flex gap-2">
             <Button type="submit" variant="primary" loading={busy} disabled={resend.left > 0}>
               {resend.left > 0 ? `Send code in ${resend.left} s` : 'Send code'}
@@ -255,17 +291,19 @@ export function PhoneManager() {
       {mode === 'code' && (
         <form className="space-y-3 py-4" onSubmit={verify}>
           <p className="text-sm">
-            Enter the code sent to <b className="font-medium">{masked}</b>.{' '}
+            Enter the {codeLength}-digit code requested for <b className="font-medium">{masked}</b>.{' '}
             <span className="text-muted">
               {expiry.left > 0
                 ? `Expires in ${mmss(expiry.left)}.`
                 : 'The code has expired; request a new one.'}
             </span>
           </p>
+          <DeliveryLine state={delivery?.state} error={delivery?.error} />
           <div className="max-w-xs">
-            <CodeBoxes value={code} onChange={setCode} disabled={busy} invalid={Boolean(error)} />
+            <CodeBoxes value={code} onChange={setCode} length={codeLength} disabled={busy} invalid={Boolean(error)} />
           </div>
           {error && <p className="text-sm text-danger">{error}</p>}
+          {hint && <p className="text-xs text-muted">{hint}</p>}
           <div className="flex flex-wrap gap-2">
             <Button type="submit" variant="primary" loading={busy}>
               Verify
@@ -274,9 +312,12 @@ export function PhoneManager() {
               type="button"
               variant="outline"
               disabled={busy || resend.left > 0}
-              onClick={() => setMode('number')}
+              onClick={() => void request({ action: 'resend' })}
             >
-              {resend.left > 0 ? `Resend in ${resend.left} s` : 'Use another number or resend'}
+              {resend.left > 0 ? `Resend in ${resend.left} s` : 'Resend code'}
+            </Button>
+            <Button type="button" variant="ghost" disabled={busy} onClick={() => (setMode('number'), setError(''), setHint(''))}>
+              Use another number
             </Button>
             <Button type="button" variant="ghost" onClick={() => (setMode('view'), setError(''))}>
               Cancel

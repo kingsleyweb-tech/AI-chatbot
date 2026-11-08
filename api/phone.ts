@@ -7,12 +7,14 @@ import { otpStatus, phoneKey, sendCode, verifyCode, type OtpDeps } from '../serv
 import { maskPhone } from '../server/auth/phone.js';
 import { env } from '../server/env.js';
 import { SERVER_TIME, type Write } from '../server/firestore.js';
-import { handle, HttpError, json, readJson } from '../server/http.js';
-import { getSmsProvider } from '../server/sms/provider.js';
+import { handle, HttpError, json, readJson, readText } from '../server/http.js';
+import { getOtpGateway, getSmsProvider } from '../server/sms/provider.js';
+import { handleVynfyWebhook } from '../server/sms/webhook.js';
 
 const schema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('status') }),
-  z.object({ action: z.literal('send'), phone: z.string().min(9).max(20) }),
+  z.object({ action: z.literal('send'), phone: z.string().min(9).max(24) }),
+  z.object({ action: z.literal('resend') }),
   z.object({ action: z.literal('verify'), code: z.string().max(10) }),
   z.object({ action: z.literal('remove') }),
 ]);
@@ -20,10 +22,20 @@ const schema = z.discriminatedUnion('action', [
 async function deps(): Promise<OtpDeps> {
   const e = env();
   const sms = getSmsProvider();
-  if (!adminConfigured() || !sms || e.otpSecret.length < 32) {
+  const otp = getOtpGateway();
+  if (!adminConfigured() || !(sms || otp) || e.otpSecret.length < 32) {
     throw new HttpError(503, 'otp_unavailable', 'Phone verification is not configured on the server yet.');
   }
-  return { db: await adminDb(), sms, secret: e.otpSecret, dailyCap: e.otpDailyCap };
+  return {
+    db: await adminDb(),
+    sms,
+    otp,
+    secret: e.otpSecret,
+    dailyCap: e.otpDailyCap,
+    otpLength: e.otpLength,
+    otpExpiryMin: e.otpExpiryMin,
+    smsFallback: e.otpSmsFallback,
+  };
 }
 
 /**
@@ -57,12 +69,18 @@ async function assertMayVerify(user: AuthUser, db: OtpDeps['db']) {
  * accepted, then its ownership record is released).
  */
 export const POST = handle(async (request) => {
+  // Vynfy delivery reports (configured in the Vynfy dashboard as .../api/phone?webhook=vynfy)
+  if (new URL(request.url).searchParams.get('webhook') === 'vynfy') {
+    if (!adminConfigured()) throw new HttpError(503, 'unavailable', 'Not configured.');
+    const r = await handleVynfyWebhook(await adminDb(), env().vynfyWebhookSecret, await readText(request, 20_000), request.headers.get('x-webhook-signature'));
+    return json(r.body, { status: r.status });
+  }
   const user = await requireUser(request);
   const parsed = schema.safeParse(await readJson(request, 10_000));
   if (!parsed.success) throw new HttpError(400, 'bad_request', 'Invalid request.');
   const b = parsed.data;
   const required = user.provider === 'password';
-  const configured = adminConfigured() && Boolean(getSmsProvider()) && env().otpSecret.length >= 32;
+  const configured = adminConfigured() && Boolean(getSmsProvider() || getOtpGateway()) && env().otpSecret.length >= 32;
 
   if (b.action === 'status') {
     if (!configured) return json({ required, verified: !needsPhone(user), phoneVerified: user.phoneVerified, configured });
@@ -73,9 +91,9 @@ export const POST = handle(async (request) => {
   const d = await deps();
   const device = deviceLabel(request.headers.get('user-agent'));
 
-  if (b.action === 'send') {
+  if (b.action === 'send' || b.action === 'resend') {
     await assertMayVerify(user, d.db);
-    return json({ ok: true, ...(await sendCode(d, user.uid, b.phone)) });
+    return json({ ok: true, ...(await sendCode(d, user.uid, b.action === 'send' ? b.phone : null)) });
   }
 
   if (b.action === 'remove') {

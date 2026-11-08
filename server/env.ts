@@ -34,10 +34,21 @@ export function env() {
     /** HMAC key for one-time codes (32+ random bytes). */
     otpSecret: e.OTP_HMAC_SECRET ?? '',
     smsProvider: (e.SMS_PROVIDER ?? 'vynfy').toLowerCase(),
-    vynfyKey: e.VYNFY_API_KEY ?? '',
-    vynfySender: e.VYNFY_SENDER_ID ?? '',
+    vynfyKey: (e.VYNFY_API_KEY ?? '').trim(),
+    /** Approved sender ID (max 11 characters). Only an approved sender that the networks accept is delivered. */
+    vynfySender: (e.VYNFY_SENDER_ID ?? '').trim(),
     /** '1' sends through Vynfy's sandbox (never delivered, never charged). */
     vynfySandbox: e.VYNFY_SANDBOX === '1',
+    /** Verification codes through Vynfy's OTP service (default). '0' = app-generated codes sent as ordinary SMS. */
+    vynfyOtp: (e.VYNFY_OTP ?? '1') !== '0',
+    /** Code length for the OTP service (4-8, default 6). */
+    otpLength: Math.min(8, Math.max(4, Number(e.VYNFY_OTP_LENGTH ?? 6) || 6)),
+    /** Code lifetime in minutes for the OTP service (1-60, default 5). */
+    otpExpiryMin: Math.min(60, Math.max(1, Number(e.VYNFY_OTP_EXPIRY ?? 5) || 5)),
+    /** When the OTP balance is empty, fall back to app codes sent as ordinary SMS (default on; '0' disables). */
+    otpSmsFallback: (e.VYNFY_OTP_FALLBACK ?? '1') !== '0',
+    /** Shared secret for Vynfy delivery webhooks (HMAC-SHA256, X-Webhook-Signature). */
+    vynfyWebhookSecret: (e.VYNFY_WEBHOOK_SECRET ?? '').trim(),
     /** App-wide cap on verification texts per day (protects the SMS balance). */
     otpDailyCap: Number(e.OTP_DAILY_CAP ?? 200) || 200,
   };

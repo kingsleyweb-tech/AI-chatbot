@@ -71,7 +71,7 @@ describe('phone normalisation', () => {
 describe('sending codes', () => {
   it('texts a 6-digit code and stores only a hash', async () => {
     const r = await sendCode(deps, 'u1', '0241234567');
-    expect(r).toEqual({ phoneMasked: '+233 •• ••• 4567', expiresIn: 300, resendIn: 60 });
+    expect(r).toEqual({ phoneMasked: '+233 •• ••• 4567', phoneDisplay: '+233 24 123 4567', expiresIn: 300, resendIn: 60, route: 'sms', codeLength: 6, delivery: 'pending' });
     expect(sms.sent).toHaveLength(1);
     expect(sms.sent[0].to).toBe('+233241234567');
     const c = sms.lastCode();
@@ -90,18 +90,22 @@ describe('sending codes', () => {
   });
 
   it('limits codes per hour and per day, per account and per phone', async () => {
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 3; i++) {
       await sendCode(deps, 'u1', '0241234567');
       now += 61_000;
     }
-    expect(await code(sendCode(deps, 'u1', '0241234567'))).toBe('too_many_codes');
+    expect(await code(sendCode(deps, 'u1', '0241234567'))).toBe('too_many_codes'); // 3 per hour
     // a different account cannot keep texting the same number
     expect(await code(sendCode(deps, 'u2', '0241234567'))).toBe('too_many_codes');
-    now += 3_600_000;
-    for (let i = 0; i < 5; i++) {
-      await sendCode(deps, 'u1', '0241234567');
-      now += 61_000;
+    for (let h = 0; h < 2; h++) {
+      now += 3_600_000;
+      for (let i = 0; i < 3; i++) {
+        await sendCode(deps, 'u1', '0241234567');
+        now += 61_000;
+      }
     }
+    now += 3_600_000;
+    await sendCode(deps, 'u1', '0241234567'); // 10th today
     now += 3_600_000;
     expect(await code(sendCode(deps, 'u1', '0241234567'))).toBe('too_many_codes'); // 10 per day
     now += 24 * 3_600_000;
@@ -199,7 +203,17 @@ describe('verifying codes', () => {
     await sendCode(deps, 'u1', '0241234567');
     now += 20_000;
     const s = await otpStatus(deps, 'u1');
-    expect(s).toEqual({ pending: true, phoneMasked: '+233 •• ••• 4567', expiresIn: 280, resendIn: 40, attemptsLeft: 5 });
+    expect(s).toEqual({
+      pending: true,
+      phoneMasked: '+233 •• ••• 4567',
+      phoneDisplay: '+233 24 123 4567',
+      route: 'sms',
+      codeLength: 6,
+      expiresIn: 280,
+      resendIn: 40,
+      attemptsLeft: 5,
+      delivery: { state: 'pending', error: null },
+    });
     expect(JSON.stringify(s)).not.toContain(sms.lastCode());
   });
 });

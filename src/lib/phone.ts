@@ -1,3 +1,5 @@
+import { parsePhoneNumberFromString, type CountryCode } from 'libphonenumber-js/min';
+
 /** Countries offered in phone fields. Verification texts currently reach Ghana numbers only. */
 export interface Country {
   code: string;
@@ -28,15 +30,30 @@ export function countryByCode(code: string): Country {
   return COUNTRIES.find((c) => c.code === code) ?? COUNTRIES[0];
 }
 
+/** Ghana mobile network prefixes (after +233). The server checks again with full metadata. */
+const GH_MOBILE = /^(20|23|24|25|26|27|28|50|53|54|55|56|57|59)\d{7}$/;
+
 /**
  * Combine a country and a locally written number into E.164, or null when it
- * cannot be a valid number. The server normalises and validates again.
+ * cannot be a valid number. Accepts 0501901401, +233501901401, 233501901401,
+ * 00233…, and the common mistake +2330501901401. The server normalises and
+ * validates again.
  */
 export function toE164(country: Country, input: string): string | null {
-  let digits = input.trim().replace(/[\s().-]/g, '');
-  if (!/^\+?\d+$/.test(digits)) return null;
-  if (digits.startsWith('00')) digits = '+' + digits.slice(2);
-  if (!digits.startsWith('+')) digits = country.dial + digits.replace(/^0+/, '');
-  if (digits.startsWith('+233')) return /^\+233(20|23|24|25|26|27|28|50|53|54|55|56|57|59)\d{7}$/.test(digits) ? digits : null;
-  return /^\+[1-9]\d{7,14}$/.test(digits) ? digits : null;
+  let s = input.trim().replace(/[\s().-]/g, '');
+  if (!/^\+?\d+$/.test(s)) return null;
+  if (s.startsWith('00')) s = '+' + s.slice(2);
+  else if (!s.startsWith('+') && country.code === 'GH' && /^233\d{9,10}$/.test(s)) s = '+' + s;
+  const p = s.startsWith('+') ? parsePhoneNumberFromString(s) : parsePhoneNumberFromString(s, country.code as CountryCode);
+  if (!p) return null;
+  let national = String(p.nationalNumber);
+  // "+233 0XX…": drop the domestic trunk zero that was kept after the country code
+  if (p.countryCallingCode === '233' && national.length === 10 && national.startsWith('0')) national = national.slice(1);
+  if (p.countryCallingCode === '233') return GH_MOBILE.test(national) ? `+233${national}` : null;
+  return p.isValid() ? p.number : null;
+}
+
+/** +233501901401 -> +233 50 190 1401 (international format). */
+export function formatPhone(e164: string): string {
+  return parsePhoneNumberFromString(e164)?.formatInternational() ?? e164;
 }

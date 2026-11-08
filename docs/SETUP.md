@@ -38,8 +38,12 @@ Copy `.env.example` to `.env.local`. It is gitignored, so never commit it.
 | `CRON_SECRET` | server | **yes** | 16+ random characters. Vercel Cron sends it to `/api/admin?job=purge` daily to permanently delete accounts whose 30-day recovery period has ended. |
 | `OTP_HMAC_SECRET` | server | **yes** | Required for phone verification. 32+ random bytes, e.g. `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. Codes are stored only as HMACs with this key. |
 | `SMS_PROVIDER` | server | no | `vynfy` (default). New providers implement `SmsProvider` in `server/sms/provider.ts`. |
-| `VYNFY_API_KEY`, `VYNFY_SENDER_ID` | server | key: **yes** | Vynfy SMS (Ghana). The sender ID must be approved in Vynfy. |
+| `VYNFY_API_KEY`, `VYNFY_SENDER_ID` | server | key: **yes** | Vynfy SMS (Ghana). The sender ID must be approved in Vynfy **and accepted by the networks**: test delivery to a real phone after changing it (NEXORA was listed as approved but was not delivered to MTN; ATLAS is delivered). |
 | `VYNFY_SANDBOX` | server | no | `1` sends to Vynfy's sandbox: nothing is delivered or charged. Use it for testing. |
+| `VYNFY_OTP` | server | no | `1` (default): verification codes are generated, texted and checked by Vynfy's OTP service (`/otp/generate`, `/otp/verify`); the app never sees the code. `0`: app codes (HMAC-stored) sent as ordinary SMS. The OTP service uses a separate balance in the Vynfy dashboard. |
+| `VYNFY_OTP_LENGTH`, `VYNFY_OTP_EXPIRY` | server | no | Code length 4-8 (default 6) and lifetime 1-60 minutes (default 5). |
+| `VYNFY_OTP_FALLBACK` | server | no | `1` (default): when the OTP balance is empty, fall back to an app code sent as ordinary SMS. `0` disables. |
+| `VYNFY_WEBHOOK_SECRET` | server | no | Secret for Vynfy delivery webhooks (HMAC-SHA256, `X-Webhook-Signature`). Set the same secret and the URL `https://<domain>/api/phone?webhook=vynfy` in the Vynfy dashboard. Without it, delivery reports are fetched from Vynfy's status endpoint instead. Webhooks cover ordinary SMS only; Vynfy's OTP service publishes no delivery reports. |
 | `OTP_DAILY_CAP` | server | no | App-wide maximum verification texts per day (default 200). |
 | `VITE_FIREBASE_AUTH_DOMAIN` | browser | no | `ai-app-6efa7.firebaseapp.com`, or `auto` in production to serve sign-in from the app's own domain (needed for reliable Google/Apple sign-in in Safari and installed apps; see DEPLOY.md). |
 | `VITE_FIREBASE_*` | browser | no | Firebase web config, public by design. |

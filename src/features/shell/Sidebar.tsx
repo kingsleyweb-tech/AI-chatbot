@@ -1,5 +1,5 @@
 import { collection, getCountFromServer, limit, orderBy, query, where } from 'firebase/firestore';
-import { Bell, Bookmark, Brain, CircleHelp, FileText, FolderClosed, LifeBuoy, Library, LogOut, MoreHorizontal, PanelLeftClose, Pencil, Search, Settings, SquarePen, Trash2, UserPlus, Users, X } from 'lucide-react';
+import { Bell, Bookmark, Brain, CircleHelp, FileText, FolderClosed, LifeBuoy, Library, LogOut, MessageSquareText, MoreHorizontal, PanelLeftClose, Pencil, Search, Settings, SquarePen, Trash2, UserPlus, Users, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { NavLink, useMatch, useNavigate } from 'react-router-dom';
 import { Logo } from '@/components/Logo';
@@ -246,6 +246,7 @@ export function Sidebar({ onSearch, onClose, onCollapse }: { onSearch: () => voi
         {admin && <NavItem to="/admin/users" icon={<Users className="size-[17px]" />} label="Users" />}
         {admin && <NavItem to="/admin/requests" icon={<UserPlus className="size-[17px]" />} label="Access requests" count={pendingRequests} />}
         {admin && <NavItem to="/admin/support" icon={<LifeBuoy className="size-[17px]" />} label="Support" count={newReports} />}
+        {admin && <NavItem to="/admin/sms" icon={<MessageSquareText className="size-[17px]" />} label="SMS" />}
       </div>
 
       <div className="scroll-thin touch-scroll mt-3 min-h-0 flex-1 overflow-y-auto px-2 pb-3">
@@ -317,7 +318,8 @@ export function Sidebar({ onSearch, onClose, onCollapse }: { onSearch: () => voi
         )}
       </div>
 
-      <div className="shrink-0 border-t border-border p-2 pb-safe">
+      <div className="flex shrink-0 items-center gap-1 border-t border-border p-2 pb-safe">
+        <div className="min-w-0 flex-1">
         <Menu
           side="top"
           align="start"
@@ -345,6 +347,16 @@ export function Sidebar({ onSearch, onClose, onCollapse }: { onSearch: () => voi
             { label: 'Sign out', icon: <LogOut className="size-4" />, onSelect: () => signOut() },
           ]}
         />
+        </div>
+        <IconButton
+          label="Settings"
+          onClick={() => {
+            navigate('/settings');
+            onClose?.();
+          }}
+        >
+          <Settings className="size-[18px]" />
+        </IconButton>
       </div>
       {rename.dialog}
       {del.dialog}

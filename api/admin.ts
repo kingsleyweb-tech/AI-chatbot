@@ -16,6 +16,8 @@ import { maskPhone } from '../server/auth/phone.js';
 import { env } from '../server/env.js';
 import type { Firestore } from '../server/firestore.js';
 import { handle, HttpError, json, readJson } from '../server/http.js';
+import { smsOverview } from '../server/sms/log.js';
+import { getOtpGateway, getSmsProvider, vynfyBalances } from '../server/sms/provider.js';
 
 const uid = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
 const schema = z.discriminatedUnion('action', [
@@ -28,6 +30,7 @@ const schema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('purge'), uid, confirmEmail: z.string().max(320), acknowledge: z.literal(true) }),
   z.object({ action: z.literal('approve'), uid, approved: z.boolean() }),
   z.object({ action: z.literal('logs') }),
+  z.object({ action: z.literal('sms') }),
   z.object({ action: z.literal('requests') }),
   z.object({ action: z.literal('requestDecision'), uid, decision: z.enum(['approve', 'reject']), note: z.string().max(300).optional() }),
   z.object({ action: z.literal('requestDelete'), uid }),
@@ -217,6 +220,37 @@ export const POST = handle(async (request) => {
   if (b.action === 'logs') {
     const logs = await db.list<Record<string, unknown>>('adminLogs', { orderBy: 'at', direction: 'DESCENDING', limit: 100 });
     return json({ logs: logs.map((l) => ({ id: l.id, ...l.data })) });
+  }
+
+  if (b.action === 'sms') {
+    const [overview, balances] = await Promise.all([smsOverview(db, getSmsProvider(), Date.now(), getOtpGateway()), vynfyBalances()]);
+    const uids = [...new Set(overview.recent.map((r) => r.uid).filter((u): u is string => Boolean(u)))];
+    const accounts = await Promise.all(uids.map((u) => accountAdmin().get(u).catch(() => null)));
+    const who = new Map(uids.map((u, i) => [u, accounts[i] ? { email: accounts[i]!.email ?? null, name: accounts[i]!.displayName ?? null } : null]));
+    const e = env();
+    return json({
+      totals: overview.totals,
+      balances,
+      config: { sender: e.vynfySender || null, otpService: Boolean(getOtpGateway()), otpLength: e.otpLength, otpExpiryMin: e.otpExpiryMin, smsFallback: e.otpSmsFallback, webhook: Boolean(e.vynfyWebhookSecret), sandbox: e.vynfySandbox },
+      recent: overview.recent.map((r) => ({
+        id: r.id,
+        at: r.at,
+        updatedAt: r.updatedAt,
+        purpose: r.purpose,
+        route: r.route,
+        // network prefix + last four digits only
+        phone: r.phone ? `${r.phone.slice(0, 4)} ${r.phone.slice(4, 6)} ••• ${r.phone.slice(-4)}` : null,
+        ref: r.ref,
+        accepted: r.accepted,
+        delivery: r.delivery,
+        providerStatus: r.providerStatus ?? null,
+        error: r.error ?? null,
+        outcome: r.outcome,
+        uid: r.uid,
+        user: r.uid ? (who.get(r.uid) ?? null) : null,
+      })),
+      generatedAt: Date.now(),
+    });
   }
 
   if (b.action === 'requestDelete') {

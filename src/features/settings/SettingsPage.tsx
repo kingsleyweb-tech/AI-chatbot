@@ -16,6 +16,7 @@ import {
   KeyRound,
   Library,
   LogOut,
+  MessageSquareText,
   Palette,
   Phone,
   Plus,
@@ -918,6 +919,7 @@ function SettingsHome() {
         <NavRow to="/support/new" icon={LifeBuoy} label="Report an issue" />
         <NavRow to="/support" icon={Inbox} label="My reports" />
         {admin && <NavRow to="/admin/support" icon={LifeBuoy} label="Support & issue reports" value="Admin" />}
+        {admin && <NavRow to="/admin/sms" icon={MessageSquareText} label="SMS & verification" value="Admin" />}
       </Group>
 
       <Group>
