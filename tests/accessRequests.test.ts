@@ -25,6 +25,10 @@ const google = (o: Partial<AuthUser> = {}): AuthUser => ({
 });
 const password = (o: Partial<AuthUser> = {}): AuthUser => google({ uid: 'p1', email: 'kojo@example.com', provider: 'password', phoneVerified: true, name: null, ...o });
 
+/** current Terms/Privacy accepted (server/shared/legal.ts) */
+const C = { consent: { termsVersion: '1.0', privacyVersion: '1.0', acceptedAt: 1, method: 'google' as const } };
+const consented = (uid: string) => db.docs.set(`users/${uid}`, { ...(db.docs.get(`users/${uid}`) ?? {}), ...C });
+
 beforeEach(() => {
   process.env.OTP_HMAC_SECRET = SECRET;
   process.env.ADMIN_EMAILS = OWNER[0];
@@ -45,20 +49,29 @@ describe('decideAccess', () => {
     expect(decideAccess(google(), { accountStatus: 'deleted' }, cfg, OWNER).state).toBe('deleted');
   });
   it('phone verification alone never grants access', () => {
-    expect(decideAccess(password(), { accessStatus: 'pending' }, cfg, OWNER).state).toBe('request');
+    expect(decideAccess(password(), { ...C, accessStatus: 'pending' }, cfg, OWNER).state).toBe('request');
   });
   it('admins, approved profiles and the legacy allowlist are approved', () => {
-    expect(decideAccess(google({ email: 'owner@example.com' }), undefined, null, OWNER)).toEqual({ state: 'approved', admin: true });
-    expect(decideAccess(google({ email: 'admin2@example.com' }), undefined, cfg, OWNER)).toEqual({ state: 'approved', admin: true });
-    expect(decideAccess(google(), { accessStatus: 'approved' }, cfg, OWNER).state).toBe('approved');
-    expect(decideAccess(google({ email: 'legacy@example.com' }), {}, cfg, OWNER).state).toBe('approved');
+    expect(decideAccess(google({ email: 'owner@example.com' }), C, null, OWNER)).toEqual({ state: 'approved', admin: true });
+    expect(decideAccess(google({ email: 'admin2@example.com' }), C, cfg, OWNER)).toEqual({ state: 'approved', admin: true });
+    expect(decideAccess(google(), { ...C, accessStatus: 'approved' }, cfg, OWNER).state).toBe('approved');
+    expect(decideAccess(google({ email: 'legacy@example.com' }), C, cfg, OWNER).state).toBe('approved');
   });
   it('rejection overrides the legacy allowlist', () => {
-    expect(decideAccess(google({ email: 'legacy@example.com' }), { accessStatus: 'rejected' }, cfg, OWNER).state).toBe('rejected');
+    expect(decideAccess(google({ email: 'legacy@example.com' }), { ...C, accessStatus: 'rejected' }, cfg, OWNER).state).toBe('rejected');
   });
   it('reports pending and missing requests', () => {
-    expect(decideAccess(google(), { accessStatus: 'pending' }, cfg, OWNER, { status: 'pending' }).state).toBe('pending');
-    expect(decideAccess(google(), { accessStatus: 'pending' }, cfg, OWNER, null).state).toBe('request');
+    expect(decideAccess(google(), { ...C, accessStatus: 'pending' }, cfg, OWNER, { status: 'pending' }).state).toBe('pending');
+    expect(decideAccess(google(), { ...C, accessStatus: 'pending' }, cfg, OWNER, null).state).toBe('request');
+  });
+  it('asks for the current Terms of Use and Privacy Policy before approval, after account status', () => {
+    expect(decideAccess(google(), { accessStatus: 'approved' }, cfg, OWNER).state).toBe('consent');
+    expect(decideAccess(google({ email: 'owner@example.com' }), undefined, null, OWNER).state).toBe('consent');
+    expect(decideAccess(google(), { accessStatus: 'approved', consent: { termsVersion: '0.9', privacyVersion: '1.0' } }, cfg, OWNER).state).toBe('consent');
+    // consent never lifts a suspension or a rejection
+    expect(decideAccess(google(), { accountStatus: 'suspended' }, cfg, OWNER).state).toBe('suspended');
+    expect(decideAccess(google(), { ...C, accessStatus: 'rejected' }, cfg, OWNER).state).toBe('rejected');
+    expect(decideAccess(google(), { accessStatus: 'approved' }, cfg, OWNER, null, { ignoreConsent: true }).state).toBe('approved');
   });
 });
 
@@ -95,6 +108,10 @@ describe('profiles for every signed-in person', () => {
 });
 
 describe('access requests', () => {
+  beforeEach(() => {
+    consented('g1');
+    consented('p1');
+  });
   it('stores a Google request with the email from the token and an unverified phone', async () => {
     const r = await submitRequest(db.asFirestore(), google(), { fullName: '  Ama   Mensah ', phone: '0241234567', dialCode: '+233', reason: 'Research' });
     expect(r).toMatchObject({ state: 'pending', created: true });
@@ -112,7 +129,7 @@ describe('access requests', () => {
   });
 
   it('uses the verified phone of a password account', async () => {
-    db.docs.set('users/p1', { email: 'kojo@example.com', displayName: 'Kojo', phoneNumber: '+233201234567', phoneVerified: true, accessStatus: 'pending' });
+    db.docs.set('users/p1', { ...C, email: 'kojo@example.com', displayName: 'Kojo', phoneNumber: '+233201234567', phoneVerified: true, accessStatus: 'pending' });
     await submitRequest(db.asFirestore(), password(), { fullName: 'Kojo Boateng', phone: '+447700900123' });
     expect(db.docs.get('accessRequests/p1')).toMatchObject({ phoneNumber: '+233201234567', phoneVerified: true });
   });
@@ -156,6 +173,7 @@ describe('access requests', () => {
 
 describe('administrator decisions', () => {
   beforeEach(async () => {
+    consented('g1');
     await submitRequest(db.asFirestore(), google(), { fullName: 'Ama Mensah', phone: '0241234567' });
   });
 
@@ -166,7 +184,7 @@ describe('administrator decisions', () => {
     expect((db.docs.get('accessRequests/g1')!.history as { status: string }[]).map((h) => h.status)).toEqual(['submitted', 'approved']);
     const logs = [...db.docs.entries()].filter(([p]) => p.startsWith('adminLogs/')).map(([, l]) => l.action);
     expect(logs).toEqual(['request_approved']);
-    expect(decideAccess(google(), db.docs.get('users/g1'), null, OWNER).state).toBe('approved');
+    expect(decideAccess(google(), db.docs.get('users/g1') as never, null, OWNER).state).toBe('approved');
   });
 
   it('rejection blocks access and removes the email from the legacy allowlist', async () => {

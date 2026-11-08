@@ -3,6 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useState } from 'rea
 import { Outlet, useLocation } from 'react-router-dom';
 import { useIsDesktop } from '@/lib/viewport';
 import { NotificationsProvider } from '../notifications/useNotifications';
+import { PhoneReminder } from './PhoneReminder';
 import { SearchDialog } from './SearchDialog';
 import { Sidebar } from './Sidebar';
 
@@ -116,6 +117,7 @@ export default function AppShell() {
         </main>
       </div>
       <SearchDialog open={searchOpen} onClose={() => setSearchOpen(false)} />
+      <PhoneReminder />
       </NotificationsProvider>
     </Ctx.Provider>
   );

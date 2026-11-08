@@ -3,10 +3,18 @@ import { needsPhone, requireUser, type AuthUser } from './auth.js';
 import { env } from './env.js';
 import { Firestore } from './firestore.js';
 import { HttpError } from './http.js';
+import { consentCurrent, type ConsentRecord } from './shared/legal.js';
 
 export interface AccessConfig {
   allowedEmails?: string[];
   adminEmails?: string[];
+}
+
+/** config/approval: written only by the server (api/admin setAutoApprove), read by administrators. */
+export interface ApprovalConfig {
+  autoApprove?: boolean;
+  updatedAt?: number;
+  updatedBy?: string | null;
 }
 
 const cache = new Map<string, { ok: boolean; admin: boolean; at: number }>();
@@ -35,17 +43,19 @@ export type AccessStatus = 'pending' | 'approved' | 'rejected';
  * unverified  email address not verified
  * suspended   suspended by an administrator
  * deleted     scheduled for deletion
+ * consent     the current Terms of Use and Privacy Policy are not accepted yet
  * approved    full access
  * rejected    an administrator declined access
  * pending     an access request is waiting for review
  * request     not approved and no request submitted yet
  */
-export type GateState = 'phone' | 'unverified' | 'suspended' | 'deleted' | 'approved' | 'rejected' | 'pending' | 'request';
+export type GateState = 'phone' | 'unverified' | 'suspended' | 'deleted' | 'consent' | 'approved' | 'rejected' | 'pending' | 'request';
 
 export interface GateProfile {
   accountStatus?: string;
   sessionsValidAfter?: number;
   accessStatus?: string;
+  consent?: Partial<ConsentRecord> | null;
 }
 
 export function decideAccess(
@@ -54,11 +64,15 @@ export function decideAccess(
   config: AccessConfig | null,
   bootstrapAdmins: string[],
   request?: { status?: string } | null,
+  opts: { ignoreConsent?: boolean } = {},
 ): { state: GateState; admin: boolean } {
   if (needsPhone(user)) return { state: 'phone', admin: false };
   if (!user.email || !user.emailVerified) return { state: 'unverified', admin: false };
   if (profile?.accountStatus === 'suspended') return { state: 'suspended', admin: false };
   if (profile?.accountStatus === 'deleted') return { state: 'deleted', admin: false };
+  // Everyone, administrators included, accepts the current documents first. Acceptance never
+  // overrides a suspension (above) or a rejection (below: approval is decided separately).
+  if (!opts.ignoreConsent && !consentCurrent(profile?.consent)) return { state: 'consent', admin: false };
   const legacy = evaluateAccess(user.email, true, config, bootstrapAdmins);
   if (legacy.admin) return { state: 'approved', admin: true };
   if (profile?.accessStatus === 'rejected') return { state: 'rejected', admin: false };
@@ -75,6 +89,7 @@ export interface Ctx {
 }
 
 let configCache: { value: AccessConfig | null; at: number } | null = null;
+let approvalCache: { value: ApprovalConfig | null; at: number } | null = null;
 const CONFIG_TTL = 60_000;
 
 /** config/access read with the server identity, shared briefly across requests. */
@@ -84,14 +99,24 @@ export async function accessConfig(sdb: Firestore, fresh = false): Promise<Acces
   configCache = { value, at: Date.now() };
   return value;
 }
+/** config/approval (automatic approval), same short cache; `fresh` for decisions that create accounts. */
+export async function approvalConfig(sdb: Firestore, fresh = false): Promise<ApprovalConfig | null> {
+  if (!fresh && approvalCache && Date.now() - approvalCache.at < CONFIG_TTL) return approvalCache.value;
+  const value = (await sdb.get<ApprovalConfig>('config/approval'))?.data ?? null;
+  approvalCache = { value, at: Date.now() };
+  return value;
+}
+
 export function clearAccessCache() {
   configCache = null;
+  approvalCache = null;
   cache.clear();
 }
 
 function denied(state: GateState): HttpError {
   if (state === 'pending') return new HttpError(403, 'access_pending', 'Your access request is waiting for administrator approval.');
   if (state === 'rejected') return new HttpError(403, 'access_rejected', 'Access to Atlas AI was not approved for this account.');
+  if (state === 'consent') return new HttpError(403, 'consent_required', 'Please accept the Terms of Use and Privacy Policy to continue.');
   return new HttpError(403, 'not_allowed', 'This account is not approved.');
 }
 

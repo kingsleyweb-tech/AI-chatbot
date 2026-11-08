@@ -155,6 +155,32 @@ All user data is under `users/{uid}`:
 - Enforcement is server-side: the Firestore rules' `verified()` and every API (`requireAllowedUser`) reject password sign-ins without the claim. Only allowlisted accounts can trigger texts.
 - Profiles (`users/{uid}`) hold `uid`, `email`, `displayName`, `photoURL`, `provider`, `emailVerified`, `accountCreatedAt`, `lastLoginAt` and the server-written phone fields and `accountStatus`. Name and photo are filled in, never overwritten. One Firebase account per email prevents duplicate profiles; a sign-in with a different provider for an existing email shows how to sign in instead.
 
+## Terms and Privacy acceptance (`server/shared/legal.ts`, `server/account/consent.ts`)
+
+- Current versions: Terms of Use **1.0**, Privacy Policy **1.0** (`TERMS_VERSION`, `PRIVACY_VERSION`). The Firestore rules' `consentOk()` repeats them, so **change both places together** when a document changes; everyone is then asked again.
+- Order for every sign-in method (Google, email/password): authentication, then phone (password accounts) and email checks, then **consent**, then approval. Consent never overrides a rejection, suspension or deletion.
+- `/consent` ("Before you continue") shows links to both documents and an unticked checkbox; Continue stays disabled until it is ticked. Registration has the same checkbox and records acceptance straight after the account is created.
+- `/api/account` `acceptTerms` records `users/{uid}.consent = {termsVersion, privacyVersion, acceptedAt (server time), method}` and a history entry in `users/{uid}/consents/{id}` (`userId`, `termsAccepted`, `privacyAccepted`, versions, method, server time), plus a `terms_accepted` security event. Clients cannot write either (server-only key, no client rule).
+- Enforcement: `decideAccess` returns `consent`, `requireAllowedUser` answers `consent_required` (the client then re-checks and opens `/consent`), and the rules' `isAllowed()`/`isAdmin()` require current consent. The consent and legal pages stay public.
+- Admin users page: accepted or not, versions, date and method.
+
+## Automatic approval (`config/approval`, `api/admin.ts`)
+
+- Toggle on the Access Requests page. Stored in `config/approval` `{autoApprove, updatedAt, updatedBy}`: admins can read it, only the admin API writes it, and every change is logged (`auto_approve_changed`, previous and new value).
+- When on, a **new** profile is created already approved (`approvedBy: 'auto'`) in the same write by `ensureProfile` (precondition: the profile does not exist, so concurrent sign-ins cannot create two). Logged as `user_auto_approved`. Password accounts still have to verify their phone.
+- Never applied to existing accounts, to rejected, suspended or deleted accounts, or to an email whose earlier request was rejected. Waiting requests are approved only with "Approve all pending" (confirmation, logged as `pending_bulk_approved`).
+- Sign-in round trips: the `access` call reads config, approval setting, profile and request in parallel, creates the profile if needed and does the login bookkeeping (login fields and event) itself, so the browser no longer reads the profile or sends a separate `session` call.
+
+## Phone reminder (`src/features/shell/PhoneReminder.tsx`)
+
+- "Secure your account" for signed-in people without a verified number: country selector, number, Continue, Skip for now. Uses the same `/api/phone` send and verify as Settings (`PhoneVerifyFlow`); nothing is saved until the server has checked the code.
+- At most once per browser session, after the first screen settles, never over another dialog, never on the auth pages or the phone settings page. Skip stores `phoneReminderDismissedAt` and `phoneReminderNextAt` (+14 days) on the profile. A verified number stops it; removing the number clears `phoneReminderNextAt`, so it can show again.
+- This is account recovery and security, not two-step sign-in.
+
+## Client monitoring (`src/lib/monitor.ts`)
+
+Uncaught errors, failed API calls (5xx and network errors) and API calls slower than 10 s are reported to `/api/account` `clientReport`, which writes one line to the server log (Vercel runtime logs). Messages are scrubbed of emails, numbers, query strings and tokens on both sides; prompts, message text and request bodies are never sent. At most 8 reports per page load, duplicates dropped.
+
 ## Security model (`firebase/firestore.rules`)
 
 - Every read and write requires a **verified email** that is a bootstrap admin or on the allowlist, plus the `phoneVerified` claim for email/password sign-ins.

@@ -28,6 +28,9 @@ rules_version = '2';
 // - Support reports (supportReports and subcollections), administrator
 //   notifications and help articles are written only by the server. Users
 //   read only their own reports; internal notes are administrator-only.
+// - Every account must have accepted the current Terms of Use and Privacy
+//   Policy (users/{uid}.consent, server-written) before any data access:
+//   consentOk() is part of isAllowed().
 // - Every user-owned record lives under users/{uid}/... and is only
 //   accessible to that uid. Admins cannot read other users' data.
 // - The backend talks to Firestore with the caller's own ID token, so these
@@ -63,7 +66,7 @@ service cloud.firestore {
     function serverOnlyProfileKeys() {
       return ['phoneNumber', 'phoneVerified', 'phoneVerifiedAt', 'accountStatus', 'sessionsValidAfter',
         'suspendedAt', 'suspendedReason', 'deletionScheduledAt', 'purgeAfter', 'lastAuthTime',
-        'accessStatus', 'approvedAt', 'approvedBy', 'rejectedAt', 'rejectedBy', 'accessRequestedAt'];
+        'accessStatus', 'approvedAt', 'approvedBy', 'rejectedAt', 'rejectedBy', 'accessRequestedAt', 'consent'];
     }
     function email() {
       return request.auth.token.email.lower();
@@ -79,17 +82,25 @@ service cloud.firestore {
       return verified() && email() in ['kingsleyanaab604@gmail.com'];
     }
     function isAdmin() {
-      return isBootstrapAdmin()
-        || (verified() && exists(accessPath()) && email() in accessDoc().get('adminEmails', []));
+      return consentOk() && (isBootstrapAdmin()
+        || (verified() && exists(accessPath()) && email() in accessDoc().get('adminEmails', [])));
     }
     function accessStatus() {
       return exists(profilePath()) ? get(profilePath()).data.get('accessStatus', '') : '';
     }
+    // The current Terms of Use and Privacy Policy are accepted (users/{uid}.consent, written only
+    // by the server). Keep the versions in sync with server/shared/legal.ts.
+    function consentOk() {
+      return exists(profilePath())
+        && get(profilePath()).data.get('consent', {}).get('termsVersion', '') == '1.0'
+        && get(profilePath()).data.get('consent', {}).get('privacyVersion', '') == '1.0';
+    }
     function isAllowed() {
-      return isAdmin()
+      return consentOk() && (
+        isAdmin()
         || (verified() && accessStatus() == 'approved')
         || (verified() && accessStatus() != 'rejected'
-          && exists(accessPath()) && email() in accessDoc().get('allowedEmails', []));
+          && exists(accessPath()) && email() in accessDoc().get('allowedEmails', [])));
     }
     function isOwner(uid) {
       return isAllowed() && request.auth.uid == uid;
@@ -115,6 +126,13 @@ service cloud.firestore {
         && request.resource.data.allowedEmails is list
         && request.resource.data.allowedEmails.size() <= 200
         && request.resource.data.get('adminEmails', []) is list;
+    }
+
+    // Automatic approval of new accounts. Changed only through the server (api/admin
+    // setAutoApprove, which checks the administrator and writes an audit entry).
+    match /config/approval {
+      allow read: if isAdmin();
+      allow write: if false;
     }
 
     // Cost limits for web search / deep research. Readable by approved users
@@ -174,6 +192,12 @@ service cloud.firestore {
         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(serverOnlyProfileKeys());
 
       match /securityEvents/{eid} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+
+      // Every Terms of Use / Privacy Policy acceptance (history). Server-only writes.
+      match /consents/{id} {
         allow read: if isOwner(uid);
         allow write: if false;
       }

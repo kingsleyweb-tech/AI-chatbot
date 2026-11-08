@@ -97,6 +97,7 @@ export async function restoreAccount(db: Firestore, actor: Actor, target: AuthAc
  */
 export const USER_COLLECTIONS = [
   'securityEvents',
+  'consents',
   'notifications',
   'conversations',
   'messages',

@@ -18,7 +18,6 @@ import {
   Dialog,
   Input,
   Label,
-  Select,
   Spinner,
 } from '@/components/ui';
 import { downloadAccountExport } from '@/lib/accountExport';
@@ -28,8 +27,8 @@ import { paths } from '@/lib/db';
 import { useQuery } from '@/lib/hooks';
 import { useAuth, useUid } from '@/state/auth';
 import { useToast } from '@/state/toast';
-import { CodeBoxes, DeliveryLine, mmss, phoneError, useCountdown, type DeliveryState } from '../auth/otpUi';
-import { countryByCode, toE164 } from '@/lib/phone';
+import { phoneError, type DeliveryState } from '../auth/otpUi';
+import { PhoneVerifyFlow, type PendingCode } from './PhoneVerifyFlow';
 import { maskPhone, providerLabel, Row, Section } from './parts';
 
 const hasPassword = (user: User | null) =>
@@ -50,37 +49,21 @@ interface PhoneStatus {
   delivery?: { state: DeliveryState; error: string | null } | null;
 }
 
-interface SendResult {
-  phoneMasked: string;
-  phoneDisplay?: string;
-  expiresIn: number;
-  resendIn: number;
-  codeLength?: number;
-  delivery?: DeliveryState;
-}
-
 /**
  * Add, change, verify or remove the account phone number. Codes are sent and
  * checked only by the server; the verified flag comes back as a token claim
  * and a profile field written by the server, never from this component.
+ * Changing the number keeps the current one until the new one is verified.
  */
 export function PhoneManager() {
   const { user, profile, refreshAccess } = useAuth();
   const toast = useToast();
   const passwordAccount = hasPassword(user);
   const [status, setStatus] = useState<PhoneStatus | null>(null);
-  const [mode, setMode] = useState<'view' | 'number' | 'code'>('view');
-  const [phone, setPhone] = useState('');
-  const [masked, setMasked] = useState('');
-  const [codeLength, setCodeLength] = useState(6);
-  const [delivery, setDelivery] = useState<{ state: DeliveryState; error: string | null } | null>(null);
-  const [hint, setHint] = useState('');
-  const [code, setCode] = useState('');
-  const [error, setError] = useState('');
+  const [pending, setPending] = useState<PendingCode | null>(null);
+  const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
-  const resend = useCountdown();
-  const expiry = useCountdown();
 
   useEffect(() => {
     let live = true;
@@ -89,13 +72,15 @@ export function PhoneManager() {
         if (!live) return;
         setStatus(s);
         if (s.pending && s.phoneMasked) {
-          setMasked(s.phoneDisplay ?? s.phoneMasked);
-          setCodeLength(s.codeLength ?? 6);
-          setDelivery(s.delivery ?? null);
-          expiry.start(s.expiresIn ?? 0);
-          setMode('code');
+          setPending({
+            phoneMasked: s.phoneDisplay ?? s.phoneMasked,
+            codeLength: s.codeLength ?? 6,
+            expiresIn: s.expiresIn ?? 0,
+            resendIn: s.resendIn ?? 0,
+            delivery: s.delivery ?? null,
+          });
+          setEditing(true);
         }
-        if (s.resendIn) resend.start(s.resendIn);
       })
       .catch(() => live && setStatus({ configured: false, required: passwordAccount }));
     return () => {
@@ -103,73 +88,6 @@ export function PhoneManager() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // While an ordinary SMS is in flight, check its delivery report a few times.
-  const waiting = mode === 'code' && (delivery?.state === 'pending' || delivery?.state === 'sent') && expiry.left > 0;
-  useEffect(() => {
-    if (!waiting) return;
-    let n = 0;
-    const t = setInterval(() => {
-      if (++n > 8) return clearInterval(t);
-      api<PhoneStatus>('phone', { json: { action: 'status' } })
-        .then((s) => s.delivery && setDelivery(s.delivery))
-        .catch(() => undefined);
-    }, 8000);
-    return () => clearInterval(t);
-  }, [waiting]);
-
-  const request = async (json: Record<string, unknown>) => {
-    setError('');
-    setHint('');
-    setBusy(true);
-    try {
-      const r = await api<SendResult>('phone', { json });
-      setMasked(r.phoneDisplay ?? r.phoneMasked);
-      setCodeLength(r.codeLength ?? 6);
-      setDelivery(r.delivery ? { state: r.delivery, error: null } : null);
-      setCode('');
-      expiry.start(r.expiresIn);
-      resend.start(r.resendIn);
-      setMode('code');
-    } catch (err) {
-      if (err instanceof ApiError && (err.code === 'resend_cooldown' || err.code === 'otp_pending') && typeof err.details.retryAfter === 'number')
-        resend.start(err.details.retryAfter);
-      if (err instanceof ApiError && err.code === 'otp_pending' && typeof err.details.ussd === 'string')
-        setHint(`No text yet? Dial ${err.details.ussd} on this phone to see your code.`);
-      setError(phoneError(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const send = (e?: FormEvent) => {
-    e?.preventDefault();
-    const e164 = toE164(countryByCode('GH'), phone);
-    if (!e164) return setError('Enter a valid Ghana mobile number, for example 024 123 4567.');
-    void request({ action: 'send', phone: e164 });
-  };
-
-  const verify = async (e?: FormEvent) => {
-    e?.preventDefault();
-    if (code.length !== codeLength) return setError(`Enter the ${codeLength}-digit code.`);
-    setError('');
-    setBusy(true);
-    try {
-      await api('phone', { json: { action: 'verify', code } });
-      await refreshAccess();
-      toast('Phone number verified.', 'success');
-      setMode('view');
-      setPhone('');
-      setCode('');
-    } catch (err) {
-      setCode('');
-      if (err instanceof ApiError && ['too_many_attempts', 'expired', 'no_code'].includes(err.code))
-        expiry.start(0);
-      setError(phoneError(err));
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const remove = async () => {
     setBusy(true);
@@ -191,17 +109,12 @@ export function PhoneManager() {
   return (
     <Section title="Phone number">
       <div className="py-3 text-sm text-muted">
-        Add your phone number to secure your account and enable SMS password recovery.
+        Add your phone number to secure your account and enable SMS password recovery. This is not two-step sign-in: your password or Google
+        account still signs you in.
       </div>
       <Row
         title={current ?? 'No phone number'}
-        description={
-          verified
-            ? 'Verified by text message'
-            : passwordAccount
-              ? 'Required for email and password sign-in'
-              : 'Optional for Google sign-in'
-        }
+        description={verified ? 'Verified by text message' : passwordAccount ? 'Required for email and password sign-in' : 'Optional for Google sign-in'}
       >
         <div className="flex flex-wrap items-center gap-2">
           {verified ? (
@@ -211,24 +124,13 @@ export function PhoneManager() {
           ) : current ? (
             <Badge tone="warn">Not verified</Badge>
           ) : null}
-          {mode === 'view' && (
-            <Button
-              size="sm"
-              variant="outline"
-              icon={<Smartphone className="size-4" />}
-              disabled={status?.configured === false}
-              onClick={() => setMode('number')}
-            >
+          {!editing && (
+            <Button size="sm" variant="outline" icon={<Smartphone className="size-4" />} disabled={status?.configured === false} onClick={() => setEditing(true)}>
               {current ? 'Change' : 'Add number'}
             </Button>
           )}
-          {mode === 'view' && current && !passwordAccount && (
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={busy}
-              onClick={() => setConfirmRemove(true)}
-            >
+          {!editing && current && !passwordAccount && (
+            <Button size="sm" variant="ghost" disabled={busy} onClick={() => setConfirmRemove(true)}>
               Remove
             </Button>
           )}
@@ -241,89 +143,27 @@ export function PhoneManager() {
       )}
       {status?.configured === false && (
         <div className="py-3 text-sm text-muted">
-          Text message verification is not configured on the server yet, so numbers cannot be added
-          or changed right now.
+          Text message verification is not configured on the server yet, so numbers cannot be added or changed right now.
         </div>
       )}
 
-      {mode === 'number' && (
-        <form className="space-y-3 py-4" onSubmit={send} noValidate>
-          <div className="grid gap-2 sm:grid-cols-[10rem_1fr]">
-            <div>
-              <Label htmlFor="phone-country">Country</Label>
-              <Select
-                id="phone-country"
-                value="GH"
-                onChange={() => undefined}
-                options={[{ value: 'GH', label: 'Ghana (+233)' }]}
-              />
-            </div>
-            <div>
-              <Label htmlFor="phone-number">Mobile number</Label>
-              <Input
-                id="phone-number"
-                type="tel"
-                inputMode="tel"
-                autoComplete="tel"
-                placeholder="024 123 4567"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-              />
-            </div>
-          </div>
-          <p id="phone-country-note" className="text-xs text-muted">
-            Only Ghana mobile numbers are supported at the moment (024 123 4567 or +233 24 123 4567).
-            We text one code; it expires after a few minutes.
-          </p>
-          {error && <p className="text-sm text-danger">{error}</p>}
-          {hint && <p className="text-xs text-muted">{hint}</p>}
-          <div className="flex gap-2">
-            <Button type="submit" variant="primary" loading={busy} disabled={resend.left > 0}>
-              {resend.left > 0 ? `Send code in ${resend.left} s` : 'Send code'}
-            </Button>
-            <Button type="button" variant="ghost" onClick={() => (setMode('view'), setError(''))}>
-              Cancel
-            </Button>
-          </div>
-        </form>
-      )}
-
-      {mode === 'code' && (
-        <form className="space-y-3 py-4" onSubmit={verify}>
-          <p className="text-sm">
-            Enter the {codeLength}-digit code requested for <b className="font-medium">{masked}</b>.{' '}
-            <span className="text-muted">
-              {expiry.left > 0
-                ? `Expires in ${mmss(expiry.left)}.`
-                : 'The code has expired; request a new one.'}
-            </span>
-          </p>
-          <DeliveryLine state={delivery?.state} error={delivery?.error} />
-          <div className="max-w-xs">
-            <CodeBoxes value={code} onChange={setCode} length={codeLength} disabled={busy} invalid={Boolean(error)} />
-          </div>
-          {error && <p className="text-sm text-danger">{error}</p>}
-          {hint && <p className="text-xs text-muted">{hint}</p>}
-          <div className="flex flex-wrap gap-2">
-            <Button type="submit" variant="primary" loading={busy}>
-              Verify
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={busy || resend.left > 0}
-              onClick={() => void request({ action: 'resend' })}
-            >
-              {resend.left > 0 ? `Resend in ${resend.left} s` : 'Resend code'}
-            </Button>
-            <Button type="button" variant="ghost" disabled={busy} onClick={() => (setMode('number'), setError(''), setHint(''))}>
-              Use another number
-            </Button>
-            <Button type="button" variant="ghost" onClick={() => (setMode('view'), setError(''))}>
-              Cancel
-            </Button>
-          </div>
-        </form>
+      {editing && (
+        <div className="py-4">
+          {current && <p className="mb-3 text-xs text-muted">Your current number stays on the account until the new one is verified.</p>}
+          <PhoneVerifyFlow
+            pending={pending}
+            onVerified={() => {
+              toast('Phone number verified.', 'success');
+              setPending(null);
+              setEditing(false);
+            }}
+            secondary={(b) => (
+              <Button type="button" variant="ghost" disabled={b} onClick={() => (setEditing(false), setPending(null))}>
+                Cancel
+              </Button>
+            )}
+          />
+        </div>
       )}
 
       <ConfirmDialog

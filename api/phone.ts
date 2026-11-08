@@ -52,7 +52,7 @@ async function assertMayVerify(user: AuthUser, db: OtpDeps['db']) {
   if (profile?.accountStatus && profile.accountStatus !== 'active') {
     throw new HttpError(403, 'account_suspended', 'This account is not active.');
   }
-  const gate = decideAccess({ ...user, emailVerified: true, phoneVerified: true }, profile, config, env().adminEmails);
+  const gate = decideAccess({ ...user, emailVerified: true, phoneVerified: true }, profile, config, env().adminEmails, null, { ignoreConsent: true });
   if (gate.state === 'rejected') throw new HttpError(403, 'access_rejected', 'Access to Atlas AI was not approved for this account.');
 }
 
@@ -105,7 +105,7 @@ export const POST = handle(async (request) => {
     }
     const profile = (await d.db.get<{ phoneNumber?: string | null }>(`users/${user.uid}`))?.data;
     const writes: Write[] = [
-      { op: 'set', path: `users/${user.uid}`, data: { phoneNumber: null, phoneVerified: false, phoneVerifiedAt: null }, merge: true },
+      { op: 'set', path: `users/${user.uid}`, data: { phoneNumber: null, phoneVerified: false, phoneVerifiedAt: null, phoneReminderNextAt: null }, merge: true },
       { op: 'set', path: `otp/${user.uid}`, data: { verifiedPhoneHash: null, codeHash: null }, merge: true },
     ];
     if (profile?.phoneNumber) {

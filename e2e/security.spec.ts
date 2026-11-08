@@ -59,3 +59,26 @@ test('signed-out visitors cannot open protected or administrator pages', async (
     await expect(page).toHaveURL(/\/login$/);
   }
 });
+
+test('the consent page is not reachable signed out, and the legal pages stay public', async ({ page }) => {
+  await page.goto('/consent', { waitUntil: 'commit' });
+  await expect(page).toHaveURL(/\/login$/);
+  await page.goto('/terms');
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('Terms');
+  await expect(page.getByText(/Version 1\.0/)).toBeVisible();
+  await page.goto('/privacy');
+  await expect(page.getByText(/Version 1\.0/)).toBeVisible();
+});
+
+test('registration cannot be submitted until the Terms and Privacy Policy are accepted', async ({ page }) => {
+  await page.goto('/register');
+  const box = page.getByRole('checkbox', { name: /I have read and agree to the Terms of Use and Privacy Policy of Atlas AI/ });
+  // registration may be closed on this deployment; the checkbox only exists on the open form
+  if (!(await box.count())) test.skip(true, 'registration is closed');
+  await expect(box).not.toBeChecked();
+  const submit = page.getByRole('button', { name: 'Create account' });
+  await expect(submit).toBeDisabled();
+  await box.check();
+  await expect(submit).toBeEnabled();
+  await expect(page.getByRole('link', { name: 'Terms of Use' }).first()).toHaveAttribute('href', '/terms');
+});

@@ -40,7 +40,11 @@ function enc(v: unknown): unknown {
   return { mapValue: { fields: Object.fromEntries(Object.entries(v as object).map(([k, x]) => [k, enc(x)])) } };
 }
 
+/** Accepted current Terms/Privacy (server/shared/legal.ts); seeded profiles get it unless a test sets `consent`. */
+const CONSENT = { termsVersion: '1.0', privacyVersion: '1.0', acceptedAt: 1, method: 'google' };
+
 async function call(who: Who, method: string, path: string, data?: object): Promise<number> {
+  if (who === OWNER && method === 'PATCH' && data && /^users\/[^/?]+$/.test(path) && !('consent' in data)) data = { consent: CONSENT, ...data };
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   if (who) headers.authorization = `Bearer ${who}`;
   const res = await fetch(`${BASE}/${path}`, {
@@ -72,6 +76,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   await fetch(`http://${HOST}/emulator/v1/projects/${PROJECT}/databases/(default)/documents`, { method: 'DELETE' });
   ok(await write(OWNER, 'config/access', { allowedEmails: ['alice@example.com', 'bob@example.com'], adminEmails: [] }));
+  for (const uid of ['alice', 'bob', 'admin-uid']) ok(await write(OWNER, `users/${uid}`, { displayName: uid }));
   ok(await write(OWNER, 'users/alice/conversations/c1', { title: 'Hello', projectId: null, saved: false }));
   ok(await write(OWNER, 'users/alice/memories/m1', { text: 'Likes tea', category: 'preference', active: true }));
 });
@@ -257,7 +262,8 @@ describe('phone verification', () => {
     denied(await write(ALLOWED, 'users/alice', { displayName: 'Alice', phoneVerified: true }));
     denied(await write(ALLOWED, 'users/alice', { displayName: 'Alice', phoneNumber: '+233241234567' }));
     denied(await write(ALLOWED, 'users/alice', { displayName: 'Alice', accountStatus: 'active' }));
-    ok(await write(ALLOWED, 'users/alice', { displayName: 'Alice', provider: 'password' }));
+    // a real client update (merge, like updateDoc) of its own non-server fields is fine
+    ok(await call(ALLOWED, 'PATCH', 'users/alice?updateMask.fieldPaths=displayName&updateMask.fieldPaths=provider', { displayName: 'Alice', provider: 'password' }));
   });
 
   it('server-only verification records are unreadable and unwritable', async () => {
@@ -481,5 +487,63 @@ describe('support reports, notifications and help articles', () => {
     ok(await read(ALLOWED, 'helpArticles/billing'));
     denied(await read(null, 'helpArticles/billing'));
     denied(await write(ADMIN, 'helpArticles/billing', { id: 'billing', title: 'Changed', body: 'y' }));
+  });
+});
+
+describe('Terms of Use and Privacy Policy consent', () => {
+  it('without accepting the current versions, an approved user reaches no data', async () => {
+    ok(await write(OWNER, 'users/alice', { displayName: 'Alice', accessStatus: 'approved', consent: null }));
+    denied(await read(ALLOWED, 'users/alice/conversations/c1'));
+    denied(await read(ALLOWED, 'users/alice/memories/m1'));
+    denied(await write(ALLOWED, 'users/alice/projects/p1', { name: 'P', instructions: '' }));
+    denied(await read(ALLOWED, 'users/alice'));
+  });
+
+  it('an older accepted version is not enough after a document update', async () => {
+    ok(await write(OWNER, 'users/alice', { displayName: 'Alice', consent: { termsVersion: '0.9', privacyVersion: '1.0', acceptedAt: 1, method: 'google' } }));
+    denied(await read(ALLOWED, 'users/alice/conversations/c1'));
+  });
+
+  it('users cannot grant themselves consent, and cannot write the consent history', async () => {
+    ok(await write(OWNER, 'users/alice', { displayName: 'Alice', consent: null }));
+    denied(await call(ALLOWED, 'PATCH', 'users/alice?updateMask.fieldPaths=consent', { consent: { termsVersion: '1.0', privacyVersion: '1.0', acceptedAt: 1, method: 'google' } }));
+    ok(await write(OWNER, 'users/alice', { displayName: 'Alice' })); // accepted (seeded)
+    denied(await call(ALLOWED, 'PATCH', 'users/alice?updateMask.fieldPaths=consent', { consent: { termsVersion: '9.9', privacyVersion: '9.9', acceptedAt: 1, method: 'google' } }));
+    denied(await write(ALLOWED, 'users/alice/consents/x', { termsVersion: '1.0', privacyVersion: '1.0' }));
+    ok(await write(OWNER, 'users/alice/consents/x', { termsVersion: '1.0', privacyVersion: '1.0' }));
+    ok(await read(ALLOWED, 'users/alice/consents/x'));
+    denied(await read(BOB, 'users/alice/consents/x'));
+  });
+
+  it('accepting never overrides a rejection or a suspension', async () => {
+    ok(await write(OWNER, 'users/alice', { email: 'alice@example.com', accessStatus: 'rejected' }));
+    denied(await read(ALLOWED, 'users/alice/conversations/c1'));
+    ok(await write(OWNER, 'users/alice', { email: 'alice@example.com', accessStatus: 'approved', accountStatus: 'suspended' }));
+    denied(await read(ALLOWED, 'users/alice/conversations/c1'));
+  });
+
+  it('administrators also need to accept before they can use admin data', async () => {
+    ok(await write(OWNER, 'users/admin-uid', { displayName: 'Admin', consent: null }));
+    denied(await read(ADMIN, 'config/access'));
+    ok(await write(OWNER, 'users/admin-uid', { displayName: 'Admin' }));
+    ok(await read(ADMIN, 'config/access'));
+  });
+});
+
+describe('automatic approval setting (config/approval)', () => {
+  it('only administrators can read it and nobody can write it from a client', async () => {
+    ok(await write(OWNER, 'config/approval', { autoApprove: false }));
+    ok(await read(ADMIN, 'config/approval'));
+    denied(await read(ALLOWED, 'config/approval'));
+    denied(await write(ADMIN, 'config/approval', { autoApprove: true }));
+    denied(await write(ALLOWED, 'config/approval', { autoApprove: true }));
+    denied(await write(STRANGER, 'config/approval', { autoApprove: true }));
+  });
+
+  it('a user cannot approve themselves', async () => {
+    ok(await write(OWNER, 'users/carol', { email: 'carol@example.com', accessStatus: 'pending' }));
+    const CAROL = token('carol', 'carol@example.com');
+    denied(await call(CAROL, 'PATCH', 'users/carol?updateMask.fieldPaths=accessStatus', { accessStatus: 'approved' }));
+    denied(await call(CAROL, 'PATCH', 'users/carol?updateMask.fieldPaths=approvedBy', { approvedBy: 'auto' }));
   });
 });

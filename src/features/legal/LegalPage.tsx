@@ -2,6 +2,7 @@ import { ArrowLeft, TriangleAlert } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { LogoMark } from '@/components/Logo';
 import { useAuth } from '@/state/auth';
+import { PRIVACY_VERSION, TERMS_VERSION } from '@shared/legal';
 import { LEGAL_UPDATED, PRIVACY, TERMS } from './content';
 
 /**
@@ -29,7 +30,9 @@ export default function LegalPage({ doc }: { doc: 'privacy' | 'terms' }) {
 
       <main className="mx-auto max-w-3xl px-4 pt-6 pb-safe-12 sm:px-6 sm:pt-10">
         <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{d.title}</h1>
-        <p className="mt-1 text-sm text-muted">Last updated: {LEGAL_UPDATED}</p>
+        <p className="mt-1 text-sm text-muted">
+          Version {doc === 'privacy' ? PRIVACY_VERSION : TERMS_VERSION} · Last updated: {LEGAL_UPDATED}
+        </p>
 
         <div role="note" className="mt-5 flex gap-3 rounded-2xl bg-warn-soft px-4 py-3 text-sm">
           <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warn" />

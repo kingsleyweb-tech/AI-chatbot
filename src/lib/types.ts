@@ -61,6 +61,9 @@ export interface UserProfile {
   accountStatus?: string;
   createdAt?: Timestamp;
   settings?: Partial<UserSettings>;
+  /** "Secure your account" reminder: when it was last skipped, and when it may show again (ms) */
+  phoneReminderDismissedAt?: Timestamp;
+  phoneReminderNextAt?: number | null;
 }
 
 export interface Conversation {

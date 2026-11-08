@@ -16,6 +16,7 @@ export const BOOTSTRAP_ADMINS = ['kingsleyanaab604@gmail.com'];
  * signed-out  no user
  * phone       email/password account that has not verified a phone number
  * unverified  email address not verified yet
+ * consent     has not accepted the current Terms of Use and Privacy Policy
  * request     not approved yet and no access request submitted
  * pending     access request waiting for an administrator
  * rejected    an administrator declined access
@@ -30,6 +31,7 @@ export type AccessState =
   | 'signed-out'
   | 'phone'
   | 'unverified'
+  | 'consent'
   | 'request'
   | 'pending'
   | 'rejected'
@@ -103,6 +105,11 @@ interface Decision {
   info?: AccessInfo;
   /** the session was revoked (password reset, sign out everywhere): sign out */
   revoked?: boolean;
+  /**
+   * The server answered and already did the sign-in bookkeeping (profile,
+   * login fields, login event). `needsSettings`: the profile has no settings yet.
+   */
+  server?: { needsSettings: boolean };
 }
 
 /**
@@ -123,8 +130,9 @@ async function blockedState(provider: string | null): Promise<Decision | null> {
 
 interface ServerAccess {
   configured: boolean;
-  state?: 'phone' | 'unverified' | 'suspended' | 'deleted' | 'approved' | 'rejected' | 'pending' | 'request' | 'revoked';
+  state?: 'phone' | 'unverified' | 'consent' | 'suspended' | 'deleted' | 'approved' | 'rejected' | 'pending' | 'request' | 'revoked';
   admin?: boolean;
+  needsSettings?: boolean;
   request?: OwnAccessRequest | null;
   profile?: AccessInfo['profile'];
 }
@@ -135,24 +143,35 @@ interface ServerAccess {
  * Returns null when the server cannot answer, so the client check below
  * can still let approved users in.
  */
-async function serverAccess(provider: string | null): Promise<Decision | null> {
-  let r: ServerAccess;
-  try {
-    r = await api<ServerAccess>('account', { json: { action: 'access', name: auth.currentUser?.displayName ?? undefined } });
-  } catch {
-    return null;
-  }
+function decisionFrom(r: ServerAccess, provider: string | null): Decision | null {
   if (!r.configured || !r.state) return null;
   const info: AccessInfo = { request: r.request ?? null, profile: r.profile ?? null };
   const admin = Boolean(r.admin);
   switch (r.state) {
     case 'approved':
-      return { state: 'allowed', admin, provider, info };
+      return { state: 'allowed', admin, provider, info, server: { needsSettings: Boolean(r.needsSettings) } };
     case 'revoked':
       return { state: 'signed-out', admin: false, provider, revoked: true };
     default:
       return { state: r.state, admin: false, provider, info };
   }
+}
+
+async function serverAccess(provider: string | null): Promise<Decision | null> {
+  try {
+    const r = await api<ServerAccess>('account', { json: { action: 'access', name: auth.currentUser?.displayName ?? undefined } });
+    return decisionFrom(r, provider);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Accept the current Terms of Use and Privacy Policy. The server records it
+ * (with its own time) and answers with the new access decision.
+ */
+export async function acceptTermsOnServer(termsVersion: string, privacyVersion: string): Promise<void> {
+  await api('account', { json: { action: 'acceptTerms', termsVersion, privacyVersion, name: auth.currentUser?.displayName ?? undefined } });
 }
 
 async function checkAccess(user: User, forceToken: boolean): Promise<Decision> {
@@ -201,8 +220,14 @@ async function checkAccess(user: User, forceToken: boolean): Promise<Decision> {
  * status and last login current and fill (never overwrite) name and photo.
  * Phone fields and account status are written only by the server.
  */
-async function upsertProfile(u: User, provider: string | null) {
+async function upsertProfile(u: User, provider: string | null, server?: { needsSettings: boolean }) {
   const ref = paths.user(u.uid);
+  // The server already created the profile and updated the login fields: only the
+  // settings the browser owns are missing on a profile created before approval.
+  if (server) {
+    if (server.needsSettings) await updateDoc(ref, { settings: DEFAULT_SETTINGS });
+    return;
+  }
   const snap = await getDoc(ref);
   if (!snap.exists()) {
     await setDoc(ref, {
@@ -296,7 +321,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (r.state === 'allowed') {
       writeCache(u.uid, r.admin ? 'admin' : 'allowed');
       try {
-        await upsertProfile(u, r.provider);
+        await upsertProfile(u, r.provider, r.server);
       } catch (err) {
         if (mine !== seq.current) return;
         if (!offline(err)) {
@@ -307,8 +332,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       }
       if (mine !== seq.current) return;
-      // one login event per sign-in session (deduplicated on the server)
-      void api('account', { json: { action: 'session' } }).catch(() => undefined);
+      // one login event per sign-in session (deduplicated on the server); the access call already did it
+      if (!r.server) void api('account', { json: { action: 'session' } }).catch(() => undefined);
     } else if (r.state !== 'error') {
       writeCache(u.uid, null);
     }

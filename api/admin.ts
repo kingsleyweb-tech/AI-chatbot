@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { requireAllowedUser, type AccessConfig } from '../server/access.js';
+import { CONSENT_METHOD_LABEL, consentCurrent, type ConsentMethod, type ConsentRecord } from '../server/shared/legal.js';
+import { approvalConfig, clearAccessCache, requireAllowedUser, type AccessConfig, type ApprovalConfig } from '../server/access.js';
 import { deleteRequest, listRequests, requestStats, setAccess, type AccessRequest } from '../server/account/requests.js';
 import {
   purgeAccount,
@@ -15,7 +16,7 @@ import { accountAdmin, adminConfigured, adminDb, SERVER_UID, type AuthAccount } 
 import { maskPhone } from '../server/auth/phone.js';
 import { env } from '../server/env.js';
 import type { Firestore } from '../server/firestore.js';
-import { noteUnauthorizedAccess } from '../server/account/events.js';
+import { noteUnauthorizedAccess, recordAdminAction } from '../server/account/events.js';
 import { handle, HttpError, json, readJson } from '../server/http.js';
 import { smsOverview } from '../server/sms/log.js';
 import { getOtpGateway, getSmsProvider, vynfyBalances } from '../server/sms/provider.js';
@@ -35,6 +36,8 @@ const schema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('requests') }),
   z.object({ action: z.literal('requestDecision'), uid, decision: z.enum(['approve', 'reject']), note: z.string().max(300).optional() }),
   z.object({ action: z.literal('requestDelete'), uid }),
+  z.object({ action: z.literal('setAutoApprove'), enabled: z.boolean() }),
+  z.object({ action: z.literal('approveAllPending'), confirm: z.literal(true) }),
 ]);
 
 interface Profile extends ProfileStatus {
@@ -43,6 +46,7 @@ interface Profile extends ProfileStatus {
   phoneVerified?: boolean;
   lastLoginAt?: string;
   accessStatus?: string;
+  consent?: Partial<ConsentRecord> | null;
 }
 
 export interface AdminUserRow {
@@ -63,6 +67,8 @@ export interface AdminUserRow {
   admin: boolean;
   owner: boolean;
   purgeAfter: number | null;
+  /** Terms of Use and Privacy Policy acceptance (current: matches the versions in force) */
+  consent: { termsVersion: string; privacyVersion: string; acceptedAt: number | null; method: string; current: boolean } | null;
 }
 
 const NEW_DAYS = 7;
@@ -93,6 +99,15 @@ function row(a: AuthAccount, p: Profile | undefined, access: AccessConfig | null
     admin: Boolean(email && admins.includes(email)),
     owner: Boolean(email && owners.includes(email)),
     purgeAfter: status === 'deleted' ? (p?.purgeAfter ?? null) : null,
+    consent: p?.consent?.termsVersion
+      ? {
+          termsVersion: String(p.consent.termsVersion),
+          privacyVersion: String(p.consent.privacyVersion ?? ''),
+          acceptedAt: typeof p.consent.acceptedAt === 'number' ? p.consent.acceptedAt : null,
+          method: CONSENT_METHOD_LABEL[p.consent.method as ConsentMethod] ?? 'Other',
+          current: consentCurrent(p.consent),
+        }
+      : null,
   };
 }
 
@@ -123,6 +138,37 @@ export function stats(rows: AdminUserRow[], now = Date.now()) {
     /** password accounts that cannot use the app until they verify a phone */
     phoneRequiredPending: rows.filter((r) => r.providers.includes('password') && !r.phoneVerified).length,
   };
+}
+
+function approvalView(a: ApprovalConfig | null) {
+  return { autoApprove: a?.autoApprove === true, updatedAt: a?.updatedAt ?? null, updatedBy: a?.updatedBy ?? null };
+}
+
+/** The ten newest profiles with their approval state (for the Access Requests page). */
+async function recentProfiles(db: Firestore) {
+  const docs = await db.list<{ displayName?: string; email?: string | null; provider?: string; accessStatus?: string; approvedBy?: string; accountStatus?: string; createdAt?: unknown }>(
+    'users',
+    { orderBy: 'createdAt', direction: 'DESCENDING', limit: 10 },
+  );
+  return docs
+    .filter((d) => d.id !== SERVER_UID)
+    .map((d) => ({
+      uid: d.id,
+      name: d.data.displayName ?? null,
+      email: d.data.email ?? null,
+      provider: d.data.provider ?? null,
+      accessStatus: d.data.accessStatus ?? 'pending',
+      autoApproved: d.data.approvedBy === 'auto',
+      accountStatus: d.data.accountStatus ?? 'active',
+      createdAt: toMs(d.data.createdAt),
+    }));
+}
+
+function toMs(v: unknown): number | null {
+  if (v instanceof Date) return v.getTime();
+  if (typeof v === 'number') return v;
+  if (typeof v === 'string') return Date.parse(v) || null;
+  return null;
 }
 
 async function loadTarget(db: Firestore, targetUid: string) {
@@ -217,8 +263,44 @@ export const POST = handle(async (request) => {
   }
 
   if (b.action === 'requests') {
-    const rows = await listRequests(db);
-    return json({ requests: rows, stats: requestStats(rows), generatedAt: Date.now() });
+    const [rows, approval, recentUsers] = await Promise.all([listRequests(db), approvalConfig(db, true), recentProfiles(db)]);
+    return json({ requests: rows, stats: requestStats(rows), approval: approvalView(approval), recentUsers, generatedAt: Date.now() });
+  }
+
+  if (b.action === 'setAutoApprove') {
+    // Only this server code writes config/approval (the rules give clients no write access).
+    const before = await approvalConfig(db, true);
+    const previous = before?.autoApprove === true;
+    if (previous !== b.enabled) {
+      const now = Date.now();
+      await db.set('config/approval', { autoApprove: b.enabled, updatedAt: now, updatedBy: ctx.user.email ?? ctx.user.uid } satisfies ApprovalConfig, true);
+      clearAccessCache();
+      await recordAdminAction(db, {
+        action: 'auto_approve_changed',
+        adminUid: ctx.user.uid,
+        adminEmail: ctx.user.email,
+        targetUid: 'config/approval',
+        targetEmail: null,
+        detail: `Automatic approval ${previous ? 'on' : 'off'} → ${b.enabled ? 'on' : 'off'}`,
+      }, now);
+    }
+    return json({ ok: true, approval: approvalView(await approvalConfig(db, true)) });
+  }
+
+  if (b.action === 'approveAllPending') {
+    // An explicit administrator choice: automatic approval never touches existing requests.
+    const pending = (await listRequests(db)).filter((r) => r.status === 'pending' && r.accountStatus === 'active');
+    let approved = 0;
+    for (const r of pending.slice(0, 200)) {
+      try {
+        await setAccess(db, actor, { uid: r.uid, email: r.email }, 'approve');
+        approved++;
+      } catch (err) {
+        console.warn('[admin] bulk approve skipped', r.uid, err instanceof Error ? err.message : err);
+      }
+    }
+    await recordAdminAction(db, { action: 'pending_bulk_approved', adminUid: ctx.user.uid, adminEmail: ctx.user.email, targetUid: 'accessRequests', targetEmail: null, detail: `${approved} of ${pending.length} pending requests approved` });
+    return json({ ok: true, approved, total: pending.length });
   }
 
   if (b.action === 'logs') {

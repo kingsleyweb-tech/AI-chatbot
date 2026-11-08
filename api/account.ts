@@ -1,7 +1,8 @@
 import { z } from 'zod';
-import { accessConfig, accountBlock, decideAccess } from '../server/access.js';
+import { accessConfig, accountBlock, approvalConfig, decideAccess } from '../server/access.js';
+import { acceptTerms } from '../server/account/consent.js';
 import { deviceLabel, recordSecurityEvent } from '../server/account/events.js';
-import { ensureProfile, ownRequestView, submitRequest, type AccessRequest } from '../server/account/requests.js';
+import { ensureProfile, ownRequestView, submitRequest, type AccessRequest, type ProfileForAccess } from '../server/account/requests.js';
 import { accountAdmin, adminConfigured, adminDb } from '../server/admin.js';
 import { maskPhone } from '../server/auth/phone.js';
 import { env } from '../server/env.js';
@@ -12,6 +13,7 @@ import { handle, HttpError, json, readJson } from '../server/http.js';
 const schema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('status') }),
   z.object({ action: z.literal('access'), name: z.string().max(100).optional() }),
+  z.object({ action: z.literal('acceptTerms'), termsVersion: z.string().max(20), privacyVersion: z.string().max(20), name: z.string().max(100).optional() }),
   z.object({
     action: z.literal('requestAccess'),
     fullName: z.string().min(1).max(100),
@@ -20,6 +22,14 @@ const schema = z.discriminatedUnion('action', [
     reason: z.string().max(500).optional(),
   }),
   z.object({ action: z.literal('session') }),
+  z.object({
+    action: z.literal('clientReport'),
+    kind: z.enum(['error', 'api', 'slow']),
+    message: z.string().max(300),
+    path: z.string().max(100).optional(),
+    status: z.number().int().min(0).max(999).optional(),
+    ms: z.number().int().min(0).max(600_000).optional(),
+  }),
   z.object({ action: z.literal('passwordChanged') }),
   z.object({ action: z.literal('providerLinked'), provider: z.enum(['password', 'google.com']) }),
   z.object({ action: z.literal('revokeSessions') }),
@@ -32,6 +42,13 @@ interface Profile {
   sessionsValidAfter?: number;
   purgeAfter?: number;
   lastAuthTime?: number;
+}
+
+interface StoredProfile {
+  consent?: Partial<import('../server/shared/legal.js').ConsentRecord> | null;
+  settings?: unknown;
+  lastAuthTime?: number;
+  sessionsValidAfter?: number;
 }
 
 /** Recent enough to be the change the client just made (it reports right after). */
@@ -48,8 +65,15 @@ export const POST = handle(async (request) => {
   const parsed = schema.safeParse(await readJson(request, 4_000));
   if (!parsed.success) throw new HttpError(400, 'bad_request', 'Invalid request.');
   const b = parsed.data;
+  if (b.action === 'clientReport') {
+    // Client monitoring: one line in the server log. The client already removed personal data;
+    // this trims again and never stores anything.
+    const clean = (t: string) => t.replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, '[email]').replace(/\s+/g, ' ').slice(0, 300);
+    console.warn('[client]', JSON.stringify({ kind: b.kind, message: clean(b.message), path: b.path ? clean(b.path) : undefined, status: b.status, ms: b.ms, uid: user.uid.slice(0, 6) }));
+    return json({ ok: true });
+  }
   if (!adminConfigured()) {
-    if (b.action === 'status' || b.action === 'session' || b.action === 'exported' || b.action === 'access' || b.action === 'signedOut') return json({ ok: true, configured: false, accountStatus: 'active' });
+    if (b.action === 'status' || b.action === 'session' || b.action === 'exported' || b.action === 'access' || b.action === 'signedOut' || b.action === 'acceptTerms') return json({ ok: true, configured: false, accountStatus: 'active' });
     throw new HttpError(503, 'admin_unconfigured', 'This needs the server service account, which is not configured yet.');
   }
   const db = await adminDb();
@@ -68,20 +92,49 @@ export const POST = handle(async (request) => {
     });
   }
 
-  if (b.action === 'access') {
-    // Where this account stands, decided on the server. Every signed-in
-    // person gets a profile here, including those not approved yet.
-    const config = await accessConfig(db, true);
-    const profile = await ensureProfile(db, user, config, b.name);
+  if (b.action === 'access' || b.action === 'acceptTerms') {
+    // Where this account stands, decided on the server. Every signed-in person gets a profile
+    // here, including those not approved yet. All reads happen in parallel; the profile is
+    // created (and approved automatically when an administrator turned that on) in one write.
+    const [config, approval, stored, requestDoc] = await Promise.all([
+      accessConfig(db, true),
+      approvalConfig(db, true),
+      db.get<ProfileForAccess & StoredProfile>(profilePath),
+      db.get<AccessRequest>(`accessRequests/${user.uid}`),
+    ]);
+    const now = Date.now();
+    let profile: ProfileForAccess & StoredProfile = await ensureProfile(db, user, config, b.name, {
+      existing: stored?.data ?? null,
+      autoApprove: approval?.autoApprove === true,
+      now,
+    });
+    if (b.action === 'acceptTerms') {
+      const r = await acceptTerms(db, user, b, profile.consent, device, now);
+      profile = { ...profile, consent: r.consent };
+    }
     const block = accountBlock(profile, user.authTime);
-    const request = (await db.get<AccessRequest>(`accessRequests/${user.uid}`))?.data ?? null;
+    const request = requestDoc?.data ?? null;
     const gate = decideAccess(user, profile, config, env().adminEmails, request);
+    let needsSettings = false;
+    if (gate.state === 'approved' && !block) {
+      // Sign-in bookkeeping the browser used to do in separate round trips: login fields and
+      // one login event per sign-in session (auth_time from the verified token).
+      const patch: Record<string, unknown> = { provider: user.provider || profile.provider || 'unknown', emailVerified: user.emailVerified };
+      if (!profile.photoURL && user.picture) patch.photoURL = user.picture;
+      const newSession = (profile.lastAuthTime ?? 0) < user.authTime;
+      if (newSession) Object.assign(patch, { lastAuthTime: user.authTime, lastLoginAt: SERVER_TIME });
+      await db.set(profilePath, patch, true);
+      if (newSession) await recordSecurityEvent(db, user.uid, 'login', { provider: user.provider, device }, user.authTime * 1000);
+      needsSettings = !profile.settings;
+    }
     return json({
       ok: true,
       configured: true,
       state: block?.code === 'session_revoked' ? 'revoked' : gate.state,
       admin: gate.admin,
       accessStatus: profile.accessStatus ?? 'pending',
+      autoApproved: Boolean((profile as { autoApproved?: boolean }).autoApproved),
+      needsSettings,
       profile: {
         displayName: profile.displayName ?? null,
         email: user.email,

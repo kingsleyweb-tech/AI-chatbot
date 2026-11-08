@@ -83,13 +83,34 @@ export function ownRequestView(r: AccessRequest | undefined | null) {
  * who are not approved yet), and give older profiles an accessStatus:
  * approved when the legacy allowlist or admin list already grants access,
  * otherwise pending. Returns the profile as stored.
+ *
+ * Automatic approval (config/approval.autoApprove, set only by an
+ * administrator through the server) applies only when the profile is
+ * created here, i.e. to accounts seen for the first time. Existing pending,
+ * rejected, suspended or restricted accounts are never changed by it, and an
+ * email whose earlier request was rejected is never approved automatically.
+ *
+ * `opts.existing` (already read by the caller, null = no profile) saves a read.
  */
-export async function ensureProfile(db: Firestore, user: AuthUser, config: AccessConfig | null, name?: string): Promise<ProfileForAccess> {
+export async function ensureProfile(
+  db: Firestore,
+  user: AuthUser,
+  config: AccessConfig | null,
+  name?: string,
+  opts: { existing?: ProfileForAccess | null; autoApprove?: boolean; now?: number } = {},
+): Promise<ProfileForAccess & { autoApproved?: boolean }> {
   const path = `users/${user.uid}`;
-  const existing = (await db.get<ProfileForAccess>(path))?.data;
-  const decided = decideAccess({ ...user, emailVerified: true, phoneVerified: true }, existing, config, env().adminEmails);
+  const now = opts.now ?? Date.now();
+  const existing = opts.existing !== undefined ? (opts.existing ?? undefined) : (await db.get<ProfileForAccess>(path))?.data;
+  const decided = decideAccess({ ...user, emailVerified: true, phoneVerified: true }, existing, config, env().adminEmails, null, { ignoreConsent: true });
   const legacyApproved = decided.state === 'approved';
   if (!existing) {
+    let autoApproved = false;
+    if (!legacyApproved && opts.autoApprove && user.email) {
+      // An earlier, rejected request for this email (e.g. a deleted and re-created account) stays a manual decision.
+      const prior = await db.list<AccessRequest>('accessRequests', { where: [['emailNorm', 'EQUAL', user.email.toLowerCase()]], limit: 5 });
+      autoApproved = !prior.some((r) => r.data.status === 'rejected');
+    }
     const profile: ProfileForAccess & Record<string, unknown> = {
       uid: user.uid,
       email: user.email,
@@ -97,15 +118,25 @@ export async function ensureProfile(db: Firestore, user: AuthUser, config: Acces
       photoURL: user.picture ?? null,
       provider: user.provider || 'unknown',
       emailVerified: user.emailVerified,
-      accessStatus: legacyApproved ? 'approved' : 'pending',
-      createdAt: new Date(),
-      lastSeenAt: new Date(),
+      accessStatus: legacyApproved || autoApproved ? 'approved' : 'pending',
+      ...(autoApproved ? { approvedAt: now, approvedBy: 'auto' } : {}),
+      createdAt: new Date(now),
+      lastSeenAt: new Date(now),
     };
+    let created = true;
     await db.commit([{ op: 'set', path, data: profile, precondition: { exists: false } }]).catch(async (err) => {
-      // created concurrently by another request: fine
+      // created concurrently by another request: fine, use that one
       if ((err as { status?: number }).status !== 409) throw err;
+      created = false;
     });
-    return profile;
+    if (!created) return (await db.get<ProfileForAccess>(path))?.data ?? profile;
+    if (autoApproved) {
+      await Promise.all([
+        recordSecurityEvent(db, user.uid, 'access_approved', { provider: user.provider, by: 'system', detail: 'Approved automatically' }, now),
+        recordAdminAction(db, { action: 'user_auto_approved', adminUid: 'system', adminEmail: null, targetUid: user.uid, targetEmail: user.email, detail: 'Automatic approval was on' }, now).catch(() => undefined),
+      ]);
+    }
+    return { ...profile, autoApproved };
   }
   const patch: Record<string, unknown> = {};
   if (!existing.accessStatus) patch.accessStatus = legacyApproved ? 'approved' : 'pending';
@@ -141,6 +172,7 @@ export async function submitRequest(
   const gate = decideAccess(user, profile, config, env().adminEmails, existing);
   if (gate.state === 'phone') throw new HttpError(403, 'phone_unverified', 'Please verify your phone number first.');
   if (gate.state === 'suspended' || gate.state === 'deleted') throw new HttpError(403, 'account_suspended', 'This account is not active.');
+  if (gate.state === 'consent') throw new HttpError(403, 'consent_required', 'Please accept the Terms of Use and Privacy Policy first.');
   // Already approved, or a request already exists: never create a second one.
   if (gate.state === 'approved' || existing) return { state: gate.state, request: existing, created: false };
 
@@ -318,10 +350,9 @@ export function requestStats(rows: Pick<AdminRequestRow, 'status' | 'submittedAt
 
 /** Every request with the linked account's current state, newest first. */
 export async function listRequests(db: Firestore): Promise<AdminRequestRow[]> {
-  const [requests, profiles] = await Promise.all([
-    db.list<AccessRequest>('accessRequests', { limit: 2000 }),
-    db.list<ProfileForAccess>('users', { limit: 2500 }),
-  ]);
+  const requests = await db.list<AccessRequest>('accessRequests', { limit: 2000 });
+  // Only the profiles behind these requests (one batched read), not every user.
+  const profiles = requests.length ? await db.getMany<ProfileForAccess>(requests.map((r) => `users/${r.id}`)) : [];
   const byUid = new Map(profiles.map((p) => [p.id, p.data]));
   return requests
     .map(({ id, data: r }) => {

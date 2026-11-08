@@ -119,6 +119,7 @@ describe('admin statistics', () => {
     admin: false,
     owner: false,
     purgeAfter: null,
+    consent: null,
     ...o,
   });
   it('counts from the rows given, with no sample data', () => {

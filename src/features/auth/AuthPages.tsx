@@ -18,9 +18,10 @@ import { PhoneField } from './PhoneField';
 import { auth, db } from '@/lib/firebase';
 import { validateRegistration } from './validate';
 import { CodeBoxes, DeliveryLine, mmss, phoneError, useCountdown, type DeliveryState } from './otpUi';
-import { useAuth, type AccessState } from '@/state/auth';
+import { acceptTermsOnServer, useAuth, type AccessState } from '@/state/auth';
+import { PRIVACY_VERSION, TERMS_VERSION } from '@shared/legal';
 
-type Mode = 'login' | 'register' | 'reset' | 'verify' | 'phone' | 'denied' | 'request';
+type Mode = 'login' | 'register' | 'reset' | 'verify' | 'phone' | 'denied' | 'request' | 'consent';
 
 /** Where each access state belongs. */
 function routeFor(access: AccessState): string | null {
@@ -32,6 +33,8 @@ function routeFor(access: AccessState): string | null {
       return '/verify-phone';
     case 'unverified':
       return '/verify';
+    case 'consent':
+      return '/consent';
     case 'request':
     case 'pending':
     case 'rejected':
@@ -273,6 +276,7 @@ function FieldError({ children }: { children?: string }) {
 function Register() {
   const regOpen = useRegistrationOpen();
   const [v, setV] = useState({ name: '', email: '', country: 'GH', phone: '', password: '', confirm: '' });
+  const [agreed, setAgreed] = useState(false);
   const [touched, setTouched] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -295,7 +299,7 @@ function Register() {
     e.preventDefault();
     setTouched(true);
     setError('');
-    if (Object.keys(errors).length) return;
+    if (Object.keys(errors).length || !agreed) return;
     setBusy(true);
     try {
       const e164 = toE164(countryByCode(v.country), v.phone)!;
@@ -305,8 +309,11 @@ function Register() {
       const cred = await createUserWithEmailAndPassword(auth, v.email.trim(), v.password);
       await updateProfile(cred.user, { displayName: v.name.trim() });
       await sendEmailVerification(cred.user, { url: window.location.origin + '/' }).catch(() => undefined);
-      // Store the new account (pending approval) and text the code straight away.
-      await api('account', { json: { action: 'access', name: v.name.trim() } }).catch(() => undefined);
+      // Store the new account with the acceptance given on this form (recorded by the server),
+      // then text the code straight away. If recording fails, the consent screen asks again.
+      await acceptTermsOnServer(TERMS_VERSION, PRIVACY_VERSION).catch(() =>
+        api('account', { json: { action: 'access', name: v.name.trim() } }).catch(() => undefined),
+      );
       try {
         await api('phone', { json: { action: 'send', phone: e164 } });
       } catch (err) {
@@ -354,11 +361,15 @@ function Register() {
             <PasswordInput id="confirm" autoComplete="new-password" value={v.confirm} onChange={set('confirm')} invalid={!!show('confirm')} />
             <FieldError>{show('confirm')}</FieldError>
           </div>
+          <div>
+            <ConsentCheckbox id="reg-consent" checked={agreed} onChange={setAgreed} />
+            <FieldError>{touched && !agreed ? 'Please accept the Terms of Use and Privacy Policy to continue.' : undefined}</FieldError>
+          </div>
           <ErrorText>{error}</ErrorText>
-          <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy}>
+          <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy} disabled={!agreed}>
             Create account
           </Button>
-          <p className="text-center text-xs text-subtle">We will text a 6-digit code to confirm your number. New accounts are reviewed by an administrator before they can use Atlas AI.</p>
+          <p className="text-center text-xs text-subtle">We will text a 6-digit code to confirm your number. New accounts may need an administrator’s approval before they can use Atlas AI.</p>
         </form>
         <p className="text-center text-sm text-muted">
           Already have an account?{' '}
@@ -921,6 +932,101 @@ function Verify() {
   );
 }
 
+/** "I have read and agree…" with links that open the documents in a new tab (the form keeps its state). */
+function ConsentCheckbox({ id, checked, onChange }: { id: string; checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <div className="flex items-start gap-2.5">
+      <input
+        id={id}
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-0.5 size-4 shrink-0 cursor-pointer accent-[var(--color-accent)]"
+      />
+      <label htmlFor={id} className="text-sm leading-snug text-muted">
+        I have read and agree to the{' '}
+        <a href="/terms" target="_blank" rel="noopener" className="font-medium text-accent hover:underline">
+          Terms of Use
+        </a>{' '}
+        and{' '}
+        <a href="/privacy" target="_blank" rel="noopener" className="font-medium text-accent hover:underline">
+          Privacy Policy
+        </a>{' '}
+        of Atlas AI.
+      </label>
+    </div>
+  );
+}
+
+/**
+ * "Before you continue": every sign-in method lands here until the current
+ * Terms of Use and Privacy Policy are accepted. The server records the
+ * acceptance and enforces it (APIs and Firestore rules); this page only asks.
+ */
+function Consent() {
+  const { user, access, refreshAccess, signOut } = useAuth();
+  const [agreed, setAgreed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  if (access === 'loading' && !busy) return <Checking />;
+  if (access !== 'consent' && access !== 'loading') return <Navigate to={routeFor(access) ?? '/'} replace />;
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!agreed || busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      await acceptTermsOnServer(TERMS_VERSION, PRIVACY_VERSION);
+      await refreshAccess();
+    } catch (err) {
+      setError(
+        err instanceof ApiError && err.code === 'terms_outdated'
+          ? 'The documents were just updated. Reload the page to read the new version.'
+          : 'We could not save your acceptance. Please try again.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Shell>
+      <Heading
+        title="Before you continue"
+        subtitle={
+          <>
+            Please read the Atlas AI{' '}
+            <a href="/terms" target="_blank" rel="noopener" className="font-medium text-accent hover:underline">
+              Terms of Use
+            </a>{' '}
+            and{' '}
+            <a href="/privacy" target="_blank" rel="noopener" className="font-medium text-accent hover:underline">
+              Privacy Policy
+            </a>
+            . You need to accept both to use Atlas AI.
+          </>
+        }
+      />
+      <form className="space-y-4" onSubmit={submit}>
+        <div className="rounded-xl border border-border bg-surface p-3.5">
+          <ConsentCheckbox id="consent" checked={agreed} onChange={setAgreed} />
+        </div>
+        <ErrorText>{error}</ErrorText>
+        <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy} disabled={!agreed}>
+          Continue
+        </Button>
+        <p className="text-center text-xs text-subtle">
+          Terms of Use version {TERMS_VERSION} · Privacy Policy version {PRIVACY_VERSION}
+        </p>
+        <Button type="button" variant="ghost" className="w-full" onClick={() => signOut()}>
+          {user?.email ? `Sign out of ${user.email}` : 'Sign out'}
+        </Button>
+      </form>
+    </Shell>
+  );
+}
+
 function Denied() {
   const { user, access, accessError, refreshAccess, signOut } = useAuth();
   const [busy, setBusy] = useState(false);
@@ -1203,5 +1309,6 @@ export default function AuthPages({ mode }: { mode: Mode }) {
   if (mode === 'verify') return <Verify />;
   if (mode === 'phone') return <PhoneVerify />;
   if (mode === 'request') return <AccessRequest />;
+  if (mode === 'consent') return <Consent />;
   return <Denied />;
 }

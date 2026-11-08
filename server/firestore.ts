@@ -142,6 +142,22 @@ export class Firestore {
     return this.toDoc<T>(doc);
   }
 
+  /** Read many documents by path in one round trip per 300 (missing ones are skipped). */
+  async getMany<T = Record<string, unknown>>(paths: string[]): Promise<FsDoc<T>[]> {
+    const out: FsDoc<T>[] = [];
+    for (let i = 0; i < paths.length; i += 300) {
+      const chunk = paths.slice(i, i + 300);
+      const res = await this.request(`${this.base}:batchGet`, {
+        method: 'POST',
+        body: JSON.stringify({ documents: chunk.map((p) => `${this.dbRoot}/${p}`) }),
+      });
+      if (!res.ok) return this.fail(res, `batchGet ${chunk[0]?.split('/')[0] ?? ''}`);
+      const rows = (await res.json()) as { found?: { name: string; fields?: Fields; updateTime?: string } }[];
+      for (const r of rows) if (r.found) out.push(this.toDoc<T>(r.found));
+    }
+    return out;
+  }
+
   private toDoc<T>(doc: { name: string; fields?: Fields; updateTime?: string }): FsDoc<T> {
     const path = doc.name.slice(this.dbRoot.length + 1);
     return { id: path.split('/').pop()!, path, data: decodeFields(doc.fields ?? {}) as T, updateTime: doc.updateTime };

@@ -1,4 +1,5 @@
 import { auth } from './firebase';
+import { initMonitoring, report, SLOW_API_MS, type ClientReport } from './monitor';
 import { parseSSE } from '@shared/sse';
 import type { ChatRequestBody, StreamEvent } from '@shared/types';
 
@@ -21,7 +22,7 @@ async function token(): Promise<string> {
 }
 
 /** Server codes meaning the account can no longer be used in this session. */
-export const ACCOUNT_BLOCK_CODES = new Set(['account_suspended', 'account_deleted', 'session_revoked']);
+export const ACCOUNT_BLOCK_CODES = new Set(['account_suspended', 'account_deleted', 'session_revoked', 'consent_required']);
 export const ACCOUNT_BLOCK_EVENT = 'atlas:account-blocked';
 
 async function toError(res: Response): Promise<ApiError> {
@@ -52,18 +53,46 @@ export async function publicApi<T>(path: string, json: unknown): Promise<T> {
 export async function api<T>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
   if (!navigator.onLine) throw new ApiError(0, 'offline', 'You are offline.');
   const { json, ...rest } = init;
-  const res = await fetch(`/api/${path}`, {
-    ...rest,
-    method: rest.method ?? (json !== undefined ? 'POST' : 'GET'),
-    headers: {
-      authorization: `Bearer ${await token()}`,
-      ...(json !== undefined ? { 'content-type': 'application/json' } : {}),
-      ...rest.headers,
-    },
-    body: json !== undefined ? JSON.stringify(json) : rest.body,
-  });
+  const started = performance.now();
+  const action = json && typeof json === 'object' && 'action' in json ? `/${String((json as { action: unknown }).action)}` : '';
+  let res: Response;
+  try {
+    res = await fetch(`/api/${path}`, {
+      ...rest,
+      method: rest.method ?? (json !== undefined ? 'POST' : 'GET'),
+      headers: {
+        authorization: `Bearer ${await token()}`,
+        ...(json !== undefined ? { 'content-type': 'application/json' } : {}),
+        ...rest.headers,
+      },
+      body: json !== undefined ? JSON.stringify(json) : rest.body,
+    });
+  } catch (err) {
+    if ((err as { name?: string })?.name !== 'AbortError' && !(err instanceof ApiError)) report({ kind: 'api', message: 'network error', path: path + action });
+    throw err;
+  }
+  const ms = Math.round(performance.now() - started);
+  if (res.status >= 500) report({ kind: 'api', message: `HTTP ${res.status}`, path: path + action, status: res.status, ms });
+  else if (ms > SLOW_API_MS) report({ kind: 'slow', message: 'slow response', path: path + action, status: res.status, ms });
   if (!res.ok) throw await toError(res);
   return (await res.json()) as T;
+}
+
+/** Send one monitoring report straight to the server (never through api(), so it cannot report itself). */
+async function sendReport(r: ClientReport): Promise<void> {
+  const user = auth.currentUser;
+  if (!user || !navigator.onLine) return;
+  await fetch('/api/account', {
+    method: 'POST',
+    keepalive: true,
+    headers: { authorization: `Bearer ${await user.getIdToken()}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ action: 'clientReport', ...r }),
+  });
+}
+
+/** Start client monitoring (uncaught errors, failed and slow API calls). Called once at startup. */
+export function startMonitoring() {
+  initMonitoring(sendReport);
 }
 
 /** POST /api/chat and yield normalized stream events. */

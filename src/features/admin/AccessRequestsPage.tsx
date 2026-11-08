@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/state/auth';
 import { useToast } from '@/state/toast';
 import { Page } from '../shell/Page';
+import { ApprovalPanel, type ApprovalSetting, type RecentUser } from './ApprovalPanel';
 
 /** Mirrors AdminRequestRow in server/account/requests.ts. */
 interface RequestRow {
@@ -71,6 +72,8 @@ export default function AccessRequestsPage() {
   const { admin } = useAuth();
   const [rows, setRows] = useState<RequestRow[] | null>(null);
   const [stats, setStats] = useState<Stats | null>(null);
+  const [approval, setApproval] = useState<ApprovalSetting | null>(null);
+  const [recent, setRecent] = useState<RecentUser[]>([]);
   const [error, setError] = useState<{ code: string; message: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [q, setQ] = useState('');
@@ -81,9 +84,11 @@ export default function AccessRequestsPage() {
     setLoading(true);
     setError(null);
     try {
-      const r = await api<{ requests: RequestRow[]; stats: Stats }>('admin', { json: { action: 'requests' } });
+      const r = await api<{ requests: RequestRow[]; stats: Stats; approval?: ApprovalSetting; recentUsers?: RecentUser[] }>('admin', { json: { action: 'requests' } });
       setRows(r.requests);
       setStats(r.stats);
+      setApproval(r.approval ?? null);
+      setRecent(r.recentUsers ?? []);
     } catch (err) {
       setError(err instanceof ApiError ? { code: err.code, message: err.message } : { code: 'failed', message: 'Access requests could not be loaded.' });
     } finally {
@@ -142,6 +147,21 @@ export default function AccessRequestsPage() {
               <Stat label="Rejected" value={stats.rejected} />
               <Stat label="Last 7 days" value={stats.recent} />
             </div>
+
+            {approval && (
+              <ApprovalPanel
+                approval={approval}
+                pending={stats.pending}
+                recent={recent}
+                onChanged={(a) => {
+                  if (a) setApproval(a);
+                  else {
+                    changed();
+                    void load();
+                  }
+                }}
+              />
+            )}
 
             <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center">
               <div className="relative flex-1">

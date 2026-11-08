@@ -23,6 +23,14 @@ export class FakeDb {
     const d = this.docs.get(path);
     return d ? { id: path.split('/').pop()!, path, data: structuredClone(d) as T, updateTime: this.times.get(path) } : null;
   }
+  async getMany<T>(paths: string[]): Promise<FsDoc<T>[]> {
+    const out: FsDoc<T>[] = [];
+    for (const p of paths) {
+      const d = await this.get<T>(p);
+      if (d) out.push(d);
+    }
+    return out;
+  }
   async list<T>(
     coll: string,
     opts: { orderBy?: string; direction?: 'ASCENDING' | 'DESCENDING'; limit?: number; where?: [string, string, unknown][] } = {},

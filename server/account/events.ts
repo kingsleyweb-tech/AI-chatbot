@@ -31,6 +31,7 @@ export const SECURITY_EVENTS = [
   'access_approved',
   'access_rejected',
   'unauthorized_access',
+  'terms_accepted',
 ] as const;
 export type SecurityEventType = (typeof SECURITY_EVENTS)[number];
 
@@ -45,6 +46,9 @@ export const ADMIN_ACTIONS = [
   'request_approved',
   'request_rejected',
   'request_deleted',
+  'user_auto_approved',
+  'auto_approve_changed',
+  'pending_bulk_approved',
   'support_replied',
   'support_status_changed',
   'support_priority_changed',

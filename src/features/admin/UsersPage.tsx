@@ -26,6 +26,7 @@ interface UserRow {
   admin: boolean;
   owner: boolean;
   purgeAfter: number | null;
+  consent: { termsVersion: string; privacyVersion: string; acceptedAt: number | null; method: string; current: boolean } | null;
 }
 
 interface Stats {
@@ -331,6 +332,7 @@ export default function UsersPage() {
                                   {r.admin && <Badge>{r.owner ? 'Owner' : 'Admin'}</Badge>}
                                   {r.accessStatus === 'pending' && <Badge tone="warn">Pending approval</Badge>}
                                   {r.accessStatus === 'rejected' && <Badge tone="danger">Rejected</Badge>}
+                                  {!r.consent?.current && <Badge tone="warn">Terms not accepted</Badge>}
                                 </span>
                                 <span className="block truncate text-xs text-muted">{r.email ?? 'No email'}</span>
                                 <span className="block truncate text-xs text-muted md:hidden">
@@ -465,6 +467,18 @@ function UserDetail({ uid, selfUid, onClose, onChanged }: { uid: string; selfUid
             <DetailRow label="Sign-in methods">{u.providers.map(providerName).join(', ') || 'Unknown'}</DetailRow>
             <DetailRow label="Email">{u.email ? `${u.email}${u.emailVerified ? ' (verified)' : ' (not verified)'}` : 'None'}</DetailRow>
             <DetailRow label="Phone">{u.phoneMasked ? `${u.phoneMasked}${u.phoneVerified ? ' (verified)' : ' (not verified)'}` : 'None'}</DetailRow>
+            <DetailRow label="Terms and privacy">
+              {u.consent ? (
+                <>
+                  {u.consent.current ? 'Accepted' : 'Accepted an older version'} · Terms v{u.consent.termsVersion}, Privacy v{u.consent.privacyVersion}
+                  <span className="block text-xs text-muted">
+                    {u.consent.acceptedAt ? fmt(u.consent.acceptedAt, true) : 'Date unknown'} · {u.consent.method}
+                  </span>
+                </>
+              ) : (
+                'Not accepted yet'
+              )}
+            </DetailRow>
             <DetailRow label="Registered">{fmt(u.createdAt, true)}</DetailRow>
             <DetailRow label="Last sign-in">{fmt(u.lastLoginAt, true)}</DetailRow>
             {u.status === 'suspended' && <DetailRow label="Suspended">{fmt(detail.account.suspendedAt, true)}</DetailRow>}

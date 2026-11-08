@@ -51,6 +51,7 @@ function Protected({ children }: { children: ReactNode }) {
   if (access === 'signed-out') return <Navigate to="/login" replace />;
   if (access === 'phone') return <Navigate to="/verify-phone" replace />;
   if (access === 'unverified') return <Navigate to="/verify" replace />;
+  if (access === 'consent') return <Navigate to="/consent" replace />;
   if (access === 'request' || access === 'pending' || access === 'rejected') return <Navigate to="/request-access" replace />;
   if (access === 'denied' || access === 'error' || access === 'suspended' || access === 'deleted') return <Navigate to="/denied" replace />;
   return <>{children}</>;
@@ -104,6 +105,7 @@ function Routed() {
             <Route path="/verify-phone" element={<AuthPages mode="phone" />} />
             <Route path="/denied" element={<AuthPages mode="denied" />} />
             <Route path="/request-access" element={<AuthPages mode="request" />} />
+            <Route path="/consent" element={<AuthPages mode="consent" />} />
             <Route path="/privacy" element={<LegalPage doc="privacy" />} />
             <Route path="/terms" element={<LegalPage doc="terms" />} />
             <Route

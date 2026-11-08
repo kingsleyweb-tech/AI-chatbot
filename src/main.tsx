@@ -1,6 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import { startMonitoring } from './lib/api';
 import { initAnalytics } from './lib/firebase';
 import { reloadForNewBuild } from './lib/reload';
 import './index.css';
@@ -9,6 +10,8 @@ import './index.css';
 window.addEventListener('vite:preloadError', (e) => {
   if (reloadForNewBuild()) e.preventDefault();
 });
+
+startMonitoring();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
