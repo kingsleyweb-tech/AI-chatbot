@@ -92,6 +92,8 @@ export type Write =
 export class Firestore {
   private base: string;
   private dbRoot: string;
+  /** Set on the service-account client, so a 403 points at missing IAM roles instead of rules. */
+  admin = false;
 
   constructor(
     private token: string,
@@ -119,6 +121,10 @@ export class Firestore {
 
   private async fail(res: Response, what: string): Promise<never> {
     const body = await res.text().catch(() => '');
+    if (res.status === 403 && this.admin) {
+      console.error(`[firestore] service account denied (${what}): grant it the Cloud Datastore User role`);
+      throw new HttpError(503, 'admin_unconfigured', 'The server service account has no Firestore access yet. Grant it the Cloud Datastore User role in Google Cloud IAM.');
+    }
     if (res.status === 403) throw new HttpError(403, 'forbidden', `Access denied (${what}).`);
     if (res.status === 401) throw new HttpError(401, 'invalid_token', 'Session expired.');
     if (res.status === 409 || (res.status === 400 && body.includes('FAILED_PRECONDITION'))) {

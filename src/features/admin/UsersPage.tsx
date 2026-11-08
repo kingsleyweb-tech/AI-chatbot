@@ -195,7 +195,7 @@ export default function UsersPage() {
       <div className="mx-auto w-full max-w-5xl">
         {error?.code === 'admin_unconfigured' ? (
           <EmptyState icon={<ShieldCheck className="size-6" />} title="User management is not configured">
-            The server needs the FIREBASE_SERVICE_ACCOUNT environment variable to list, suspend or delete accounts. No user data is shown until it is set.
+            {error.message} No user data is shown until this is fixed.
           </EmptyState>
         ) : error ? (
           <EmptyState icon={<Users className="size-6" />} title="Users could not be loaded" action={<Button onClick={() => void load()}>Try again</Button>}>

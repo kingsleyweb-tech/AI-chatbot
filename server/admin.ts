@@ -71,7 +71,9 @@ export async function adminToken(): Promise<string> {
 /** Firestore client that bypasses security rules. Only for server-owned documents. */
 export async function adminDb(): Promise<Firestore> {
   if (dbOverride) return dbOverride;
-  return new Firestore(await adminToken());
+  const db = new Firestore(await adminToken());
+  db.admin = true;
+  return db;
 }
 
 function identityBase() {
