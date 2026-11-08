@@ -93,6 +93,14 @@ const ACTION_LABELS: Record<string, string> = {
   request_approved: 'Access request approved',
   request_rejected: 'Access request rejected',
   request_deleted: 'Access request deleted',
+  support_replied: 'Replied to a support report',
+  support_status_changed: 'Changed a support report status',
+  support_priority_changed: 'Changed a support report priority',
+  support_assigned: 'Assigned a support report',
+  support_note_added: 'Added an internal note',
+  support_deleted: 'Deleted a support report',
+  help_article_saved: 'Saved a help article',
+  help_article_deleted: 'Removed a help article',
 };
 
 function StatusBadge({ status }: { status: UserRow['status'] }) {

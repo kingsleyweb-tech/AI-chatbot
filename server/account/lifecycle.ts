@@ -18,6 +18,7 @@
  * Uploaded files live in Firestore (there is no Cloud Storage bucket), so
  * nothing is left behind elsewhere.
  */
+import { deleteReportsOf } from '../support/reports.js';
 import type { AccessConfig } from '../access.js';
 import { accountAdmin, SERVER_UID, type AuthAccount } from '../admin.js';
 import { phoneKey } from '../auth/otp.js';
@@ -96,6 +97,7 @@ export async function restoreAccount(db: Firestore, actor: Actor, target: AuthAc
  */
 export const USER_COLLECTIONS = [
   'securityEvents',
+  'notifications',
   'conversations',
   'messages',
   'memories',
@@ -156,7 +158,7 @@ export async function purgeAccount(db: Firestore, actor: Actor | null, target: A
       writes.push({ op: 'set', path: 'config/access', data: { allowedEmails, adminEmails }, merge: true });
     }
   }
-  const documents = await deleteTree(db, `users/${target.uid}`);
+  const documents = (await deleteTree(db, `users/${target.uid}`)) + (await deleteReportsOf(db, target.uid));
   await db.commit(writes);
   if (await accountAdmin().get(target.uid)) await accountAdmin().remove(target.uid);
   if (actor) await log(db, 'user_purged', actor, target, `${documents} documents removed`);

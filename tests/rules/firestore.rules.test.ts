@@ -410,3 +410,67 @@ describe('administrator approval (accessStatus) and access requests', () => {
     ok(await read(OWNER, 'users/dave/conversations/c9'));
   });
 });
+
+describe('support reports, notifications and help articles', () => {
+  const REF = 'ATL-2611-ABCDE';
+  beforeEach(async () => {
+    ok(await write(OWNER, `supportReports/${REF}`, { ref: REF, uid: 'alice', title: 'Upload fails', status: 'new', priority: 'medium' }));
+    ok(await write(OWNER, `supportReports/${REF}/messages/m1`, { author: 'admin', text: 'Which browser?', at: 1 }));
+    ok(await write(OWNER, `supportReports/${REF}/attachments/f1`, { name: 's.jpg', dataUrl: 'data:image/jpeg;base64,AAAA' }));
+    ok(await write(OWNER, `supportReports/${REF}/internal/n1`, { text: 'internal only', at: 1 }));
+    ok(await write(OWNER, `supportReports/${REF}/activity/e1`, { type: 'created', at: 1 }));
+    ok(await write(OWNER, `users/alice/notifications/${REF}-reply`, { kind: 'reply', ref: REF, read: false, count: 1, at: 1 }));
+    ok(await write(OWNER, `adminNotifications/${REF}-new_report`, { kind: 'new_report', ref: REF, readBy: [], at: 1 }));
+    ok(await write(OWNER, 'helpArticles/billing', { id: 'billing', title: 'Billing', body: 'x' }));
+  });
+
+  it('lets the owner read their report, its conversation and screenshots, but not notes or the timeline', async () => {
+    ok(await read(ALLOWED, `supportReports/${REF}`));
+    ok(await read(ALLOWED, `supportReports/${REF}/messages/m1`));
+    ok(await read(ALLOWED, `supportReports/${REF}/attachments/f1`));
+    denied(await read(ALLOWED, `supportReports/${REF}/internal/n1`));
+    denied(await read(ALLOWED, `supportReports/${REF}/activity/e1`));
+  });
+
+  it('hides a report from every other user', async () => {
+    denied(await read(BOB, `supportReports/${REF}`));
+    denied(await read(BOB, `supportReports/${REF}/messages/m1`));
+    denied(await read(BOB, `supportReports/${REF}/attachments/f1`));
+    denied(await read(STRANGER, `supportReports/${REF}`));
+    denied(await read(null, `supportReports/${REF}`));
+  });
+
+  it('never lets a user write reports, replies, notes or statuses directly', async () => {
+    denied(await write(ALLOWED, `supportReports/${REF}`, { ref: REF, uid: 'alice', title: 'Upload fails', status: 'resolved' }));
+    denied(await write(ALLOWED, `supportReports/ATL-2611-ZZZZZ`, { ref: 'ATL-2611-ZZZZZ', uid: 'alice', status: 'new' }));
+    denied(await write(ALLOWED, `supportReports/${REF}/messages/m2`, { author: 'admin', text: 'fake admin reply' }));
+    denied(await write(ALLOWED, `supportReports/${REF}/internal/n2`, { text: 'x' }));
+    denied(await del(ALLOWED, `supportReports/${REF}`));
+    denied(await write(ALLOWED, `supportSubmissions/alice_x`, { ref: REF }));
+  });
+
+  it('lets administrators read everything but still write only through the server', async () => {
+    ok(await read(ADMIN, `supportReports/${REF}`));
+    ok(await read(ADMIN, `supportReports/${REF}/internal/n1`));
+    ok(await read(ADMIN, `supportReports/${REF}/activity/e1`));
+    ok(await read(ADMIN, `adminNotifications/${REF}-new_report`));
+    denied(await write(ADMIN, `supportReports/${REF}`, { ref: REF, uid: 'alice', status: 'closed' }));
+    denied(await write(ADMIN, `adminNotifications/${REF}-new_report`, { readBy: ['admin-uid'] }));
+    denied(await read(ALLOWED, `adminNotifications/${REF}-new_report`));
+  });
+
+  it('lets the owner only mark their notifications read', async () => {
+    ok(await read(ALLOWED, `users/alice/notifications/${REF}-reply`));
+    denied(await read(BOB, `users/alice/notifications/${REF}-reply`));
+    ok(await write(ALLOWED, `users/alice/notifications/${REF}-reply`, { kind: 'reply', ref: REF, read: true, count: 1, at: 1 }));
+    denied(await write(ALLOWED, `users/alice/notifications/${REF}-reply`, { kind: 'reply', ref: REF, read: true, count: 9, at: 1 }));
+    denied(await write(ALLOWED, `users/alice/notifications/new-one`, { kind: 'reply', read: false }));
+    ok(await del(ALLOWED, `users/alice/notifications/${REF}-reply`));
+  });
+
+  it('lets approved users read help articles; only the server writes them', async () => {
+    ok(await read(ALLOWED, 'helpArticles/billing'));
+    denied(await read(null, 'helpArticles/billing'));
+    denied(await write(ADMIN, 'helpArticles/billing', { id: 'billing', title: 'Changed', body: 'y' }));
+  });
+});

@@ -42,6 +42,14 @@ export const ADMIN_ACTIONS = [
   'request_approved',
   'request_rejected',
   'request_deleted',
+  'support_replied',
+  'support_status_changed',
+  'support_priority_changed',
+  'support_assigned',
+  'support_note_added',
+  'support_deleted',
+  'help_article_saved',
+  'help_article_deleted',
 ] as const;
 export type AdminAction = (typeof ADMIN_ACTIONS)[number];
 
