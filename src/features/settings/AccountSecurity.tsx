@@ -20,7 +20,9 @@ import {
   Label,
   Spinner,
 } from '@/components/ui';
+import { AnalyticsSwitch } from '@/components/AnalyticsConsent';
 import { downloadAccountExport } from '@/lib/accountExport';
+import { analyticsAvailable } from '@/lib/analyticsConsent';
 import { api, ApiError } from '@/lib/api';
 import { authErrorMessage } from '@/lib/authProviders';
 import { paths } from '@/lib/db';
@@ -510,6 +512,16 @@ export function SecuritySection() {
       <RecentActivity />
 
       <Section title="Sessions and data">
+        <Row
+          title="Usage analytics"
+          description={
+            analyticsAvailable
+              ? 'Lets Google Analytics record how the app is used, in this browser only. Off unless you allow it; turning it off removes its cookies.'
+              : 'Analytics is not used on this site.'
+          }
+        >
+          <AnalyticsSwitch />
+        </Row>
         <Row
           title="Sign out of all devices"
           description="Ends every session, including this one. You will need to sign in again everywhere."

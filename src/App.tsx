@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, type ReactNode } from 'react';
+import { AnalyticsConsentBanner } from './components/AnalyticsConsent';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { SessionGuard } from './features/shell/SessionGuard';
@@ -94,54 +95,58 @@ function Routed() {
   useVisualViewport();
   usePrefetchApp();
   return (
-    <div className="app-frame">
-      <ErrorBoundary>
-        <Suspense fallback={<Splash />}>
-          <Routes>
-            <Route path="/login" element={<AuthPages mode="login" />} />
-            <Route path="/register" element={<AuthPages mode="register" />} />
-            <Route path="/reset" element={<AuthPages mode="reset" />} />
-            <Route path="/verify" element={<AuthPages mode="verify" />} />
-            <Route path="/verify-phone" element={<AuthPages mode="phone" />} />
-            <Route path="/denied" element={<AuthPages mode="denied" />} />
-            <Route path="/request-access" element={<AuthPages mode="request" />} />
-            <Route path="/consent" element={<AuthPages mode="consent" />} />
-            <Route path="/privacy" element={<LegalPage doc="privacy" />} />
-            <Route path="/terms" element={<LegalPage doc="terms" />} />
-            <Route
-              element={
-                <Protected>
-                  <AppShell />
-                </Protected>
-              }
-            >
-              <Route index element={<ChatPage />} />
-              <Route path="c/:conversationId" element={<ChatPage />} />
-              <Route path="memory" element={<MemoryPage />} />
-              <Route path="projects" element={<ProjectsPage />} />
-              <Route path="projects/:projectId" element={<ProjectPage />} />
-              <Route path="saved" element={<SavedPage />} />
-              <Route path="documents" element={<DocumentsPage />} />
-              <Route path="knowledge" element={<KnowledgePage />} />
-              <Route path="settings/:section?" element={<SettingsPage />} />
-              <Route path="admin/users" element={<AdminOnly><UsersPage /></AdminOnly>} />
-              <Route path="admin/requests" element={<AdminOnly><AccessRequestsPage /></AdminOnly>} />
-              <Route path="admin/support" element={<AdminOnly><SupportAdminPage /></AdminOnly>} />
-              <Route path="admin/support/:ref" element={<AdminOnly><SupportReportAdminPage /></AdminOnly>} />
-              <Route path="admin/sms" element={<AdminOnly><SmsAdminPage /></AdminOnly>} />
-              <Route path="admin/*" element={<Navigate to="/" replace />} />
-              <Route path="support" element={<MyReportsPage />} />
-              <Route path="support/new" element={<ReportIssuePage />} />
-              <Route path="support/:ref" element={<ReportThreadPage />} />
-              <Route path="notifications" element={<NotificationsPage />} />
-              <Route path="help" element={<HelpPage />} />
-              <Route path="help/:id" element={<HelpPage />} />
-            </Route>
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-          <Session />
-        </Suspense>
-      </ErrorBoundary>
+    // The consent banner takes its own row below the app, so it never covers a button.
+    <div className="app-frame grid grid-rows-[minmax(0,1fr)_auto]">
+      <div className="relative min-h-0">
+        <ErrorBoundary>
+          <Suspense fallback={<Splash />}>
+            <Routes>
+              <Route path="/login" element={<AuthPages mode="login" />} />
+              <Route path="/register" element={<AuthPages mode="register" />} />
+              <Route path="/reset" element={<AuthPages mode="reset" />} />
+              <Route path="/verify" element={<AuthPages mode="verify" />} />
+              <Route path="/verify-phone" element={<AuthPages mode="phone" />} />
+              <Route path="/denied" element={<AuthPages mode="denied" />} />
+              <Route path="/request-access" element={<AuthPages mode="request" />} />
+              <Route path="/consent" element={<AuthPages mode="consent" />} />
+              <Route path="/privacy" element={<LegalPage doc="privacy" />} />
+              <Route path="/terms" element={<LegalPage doc="terms" />} />
+              <Route
+                element={
+                  <Protected>
+                    <AppShell />
+                  </Protected>
+                }
+              >
+                <Route index element={<ChatPage />} />
+                <Route path="c/:conversationId" element={<ChatPage />} />
+                <Route path="memory" element={<MemoryPage />} />
+                <Route path="projects" element={<ProjectsPage />} />
+                <Route path="projects/:projectId" element={<ProjectPage />} />
+                <Route path="saved" element={<SavedPage />} />
+                <Route path="documents" element={<DocumentsPage />} />
+                <Route path="knowledge" element={<KnowledgePage />} />
+                <Route path="settings/:section?" element={<SettingsPage />} />
+                <Route path="admin/users" element={<AdminOnly><UsersPage /></AdminOnly>} />
+                <Route path="admin/requests" element={<AdminOnly><AccessRequestsPage /></AdminOnly>} />
+                <Route path="admin/support" element={<AdminOnly><SupportAdminPage /></AdminOnly>} />
+                <Route path="admin/support/:ref" element={<AdminOnly><SupportReportAdminPage /></AdminOnly>} />
+                <Route path="admin/sms" element={<AdminOnly><SmsAdminPage /></AdminOnly>} />
+                <Route path="admin/*" element={<Navigate to="/" replace />} />
+                <Route path="support" element={<MyReportsPage />} />
+                <Route path="support/new" element={<ReportIssuePage />} />
+                <Route path="support/:ref" element={<ReportThreadPage />} />
+                <Route path="notifications" element={<NotificationsPage />} />
+                <Route path="help" element={<HelpPage />} />
+                <Route path="help/:id" element={<HelpPage />} />
+              </Route>
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+            <Session />
+          </Suspense>
+        </ErrorBoundary>
+      </div>
+      <AnalyticsConsentBanner />
     </div>
   );
 }

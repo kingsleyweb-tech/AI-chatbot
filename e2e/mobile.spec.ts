@@ -53,6 +53,8 @@ test('form inputs are at least 16px so iOS Safari does not zoom on focus', async
 test('buttons get a finger-sized hit area beyond their visible edge on touch screens', async ({ page }) => {
   await page.goto('/login');
   const button = page.getByRole('button', { name: 'Sign in', exact: true });
+  // on a small phone the analytics banner takes the bottom row, so the form may need scrolling
+  await button.scrollIntoViewIfNeeded();
   const box = (await button.boundingBox())!;
   const hit = await page.evaluate(
     ({ x, y }) => (document.elementFromPoint(x, y) as HTMLElement | null)?.closest('button')?.textContent?.trim() ?? null,
@@ -94,7 +96,7 @@ test('admin and security pages require sign-in', async ({ page }) => {
   }
 });
 
-test('privacy policy and terms are public, dated, marked as drafts and fit a phone screen', async ({ page }) => {
+test('privacy policy and terms are public, versioned, final and fit a phone screen', async ({ page }) => {
   for (const [path, title] of [
     ['/privacy', 'Privacy Policy'],
     ['/terms', 'Terms of Use'],
@@ -103,8 +105,9 @@ test('privacy policy and terms are public, dated, marked as drafts and fit a pho
     await expect(page).toHaveURL(new RegExp(`${path}$`));
     await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
     await expect(page.getByText(/Last updated:/)).toBeVisible();
-    await expect(page.getByRole('note')).toContainText('has not been reviewed by a lawyer');
-    await expect(page.getByText('Still to be confirmed by the operator')).toBeVisible();
+    await expect(page.getByText(/Version 1\.2/)).toBeVisible();
+    await expect(page.getByText(/Draft|For legal review|Still to be confirmed/)).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'kingsleyanaab99@gmail.com' }).first()).toHaveAttribute('href', 'mailto:kingsleyanaab99@gmail.com');
     await noHorizontalScroll(page);
   }
 });

@@ -41,6 +41,7 @@ export const ADMIN_ACTIONS = [
   'user_deletion_scheduled',
   'user_restored',
   'user_purged',
+  'retention_cleanup',
   'user_approved',
   'user_unapproved',
   'request_approved',

@@ -65,13 +65,35 @@ function createDb(): Firestore {
 }
 export const db = createDb();
 
-/** Analytics is optional and only loaded in production when supported. */
+/** Whether this build has Google Analytics configured at all. */
+export const analyticsAvailable = Boolean(config.measurementId) && firebaseConfigured;
+let analytics: import('firebase/analytics').Analytics | null = null;
+
+/**
+ * Google Analytics. Only ever called after the visitor allowed analytics
+ * (src/lib/analyticsConsent.ts); production builds only, when supported.
+ */
 export async function initAnalytics() {
-  if (!import.meta.env.PROD || !config.measurementId || !firebaseConfigured) return;
+  if (!import.meta.env.PROD || !analyticsAvailable) return;
   try {
-    const { getAnalytics, isSupported } = await import('firebase/analytics');
-    if (await isSupported()) getAnalytics(app);
+    const m = await import('firebase/analytics');
+    if (analytics) {
+      m.setAnalyticsCollectionEnabled(analytics, true);
+      return;
+    }
+    if (await m.isSupported()) analytics = m.getAnalytics(app);
   } catch {
     /* analytics is non-essential */
+  }
+}
+
+/** Stop collection on this page (after consent is withdrawn); cookies are removed by the caller. */
+export async function stopAnalytics() {
+  if (!analytics) return;
+  try {
+    const m = await import('firebase/analytics');
+    m.setAnalyticsCollectionEnabled(analytics, false);
+  } catch {
+    /* nothing loaded */
   }
 }

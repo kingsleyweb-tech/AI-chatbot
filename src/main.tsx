@@ -2,7 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { startMonitoring } from './lib/api';
-import { initAnalytics } from './lib/firebase';
+import { startAnalyticsIfAllowed } from './lib/analyticsConsent';
 import { reloadForNewBuild } from './lib/reload';
 import './index.css';
 
@@ -19,8 +19,8 @@ createRoot(document.getElementById('root')!).render(
   </StrictMode>,
 );
 
-// Analytics is non-essential: load it after the app has rendered.
-window.setTimeout(() => void initAnalytics(), 4000);
+// Analytics loads only if this browser allowed it, after the app has rendered.
+window.setTimeout(startAnalyticsIfAllowed, 4000);
 
 // Service worker (PWA). Auto-updates in the background.
 if ('serviceWorker' in navigator && import.meta.env.PROD) {

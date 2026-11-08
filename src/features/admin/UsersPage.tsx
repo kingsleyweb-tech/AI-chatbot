@@ -89,6 +89,7 @@ const ACTION_LABELS: Record<string, string> = {
   user_deletion_scheduled: 'Scheduled deletion',
   user_restored: 'Restored',
   user_purged: 'Permanently deleted',
+  retention_cleanup: 'Old records deleted (30-day retention)',
   user_approved: 'Approved',
   user_unapproved: 'Access removed',
   request_approved: 'Access request approved',

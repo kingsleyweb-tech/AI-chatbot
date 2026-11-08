@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { accountBlock } from '../server/access.js';
 import { purgeAccount, purgeDue, reactivateAccount, restoreAccount, scheduleDeletion, suspendAccount } from '../server/account/lifecycle.js';
+import { cleanupPurgedRecords, eventTime } from '../server/account/retention.js';
 import { setAccountAdmin } from '../server/admin.js';
 import { phoneKey } from '../server/auth/otp.js';
 import { stats, type AdminUserRow } from '../api/admin.js';
@@ -133,5 +134,44 @@ describe('admin statistics', () => {
       now,
     );
     expect(s).toMatchObject({ total: 3, active: 1, suspended: 1, pendingDeletion: 1, newUsers: 1, google: 2, password: 2, phoneVerified: 1, phoneUnverified: 2, phoneRequiredPending: 2 });
+  });
+});
+
+describe('retention after permanent deletion', () => {
+  const DAY = 86_400_000;
+  it('keeps the access request and admin logs for 30 days after the purge, then deletes them', async () => {
+    db.docs.set('accessRequests/u1', { emailNorm: 'kofi@example.com', status: 'approved' });
+    db.docs.set('accessRequests/u2', { emailNorm: 'ama@example.com', status: 'approved' });
+    db.docs.set('adminLogs/00000000000001_aaaa', { action: 'user_approved', targetUid: 'u1', targetEmail: 'kofi@example.com' });
+    db.docs.set('adminLogs/00000000000002_bbbb', { action: 'user_approved', targetUid: 'u2', targetEmail: 'ama@example.com' });
+    const t0 = Date.now();
+    await purgeAccount(db.asFirestore(), admin, (await accounts.get('u1'))!);
+
+    expect(await cleanupPurgedRecords(db.asFirestore(), t0 + 29 * DAY)).toEqual({ accounts: 0, removed: 0 });
+    expect(db.docs.has('accessRequests/u1')).toBe(true);
+
+    const r = await cleanupPurgedRecords(db.asFirestore(), t0 + 31 * DAY);
+    expect(r.accounts).toBe(1);
+    expect(db.docs.has('accessRequests/u1')).toBe(false);
+    const remaining = [...db.docs.entries()].filter(([p]) => p.startsWith('adminLogs/')).map(([, e]) => e);
+    expect(remaining.some((e) => e.targetUid === 'u1' || e.targetEmail === 'kofi@example.com')).toBe(false);
+    // other accounts untouched, and the cleanup itself is logged without personal details
+    expect(db.docs.has('accessRequests/u2')).toBe(true);
+    expect(remaining.some((e) => e.targetUid === 'u2')).toBe(true);
+    expect(remaining.find((e) => e.action === 'retention_cleanup')).toMatchObject({ adminUid: 'system', targetEmail: null });
+  });
+
+  it('leaves the records alone if the account exists again', async () => {
+    db.docs.set('accessRequests/u1', { status: 'approved' });
+    const t0 = Date.now();
+    await purgeAccount(db.asFirestore(), admin, (await accounts.get('u1'))!);
+    db.docs.set('users/u1', { accountStatus: 'active' });
+    expect((await cleanupPurgedRecords(db.asFirestore(), t0 + 31 * DAY)).removed).toBe(0);
+    expect(db.docs.has('accessRequests/u1')).toBe(true);
+  });
+
+  it('reads the time from an event id', () => {
+    expect(eventTime('00001731024000000_ab12cd34')).toBe(1731024000000);
+    expect(eventTime('nonsense')).toBeNull();
   });
 });

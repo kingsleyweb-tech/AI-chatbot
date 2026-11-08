@@ -1,3 +1,4 @@
+import { cleanupPurgedRecords } from '../server/account/retention.js';
 import { z } from 'zod';
 import { CONSENT_METHOD_LABEL, consentCurrent, type ConsentMethod, type ConsentRecord } from '../server/shared/legal.js';
 import { approvalConfig, clearAccessCache, requireAllowedUser, type AccessConfig, type ApprovalConfig } from '../server/access.js';
@@ -219,15 +220,22 @@ async function usageSummary(db: Firestore, targetUid: string) {
 
 /**
  * Daily job (Vercel Cron, see vercel.json): permanently delete accounts whose
- * recovery period has ended. Vercel sends "Authorization: Bearer $CRON_SECRET".
+ * recovery period has ended, then delete the records kept after a purge once
+ * they are 30 days old (server/account/retention.ts). Vercel sends "Authorization: Bearer $CRON_SECRET".
  */
 export const GET = handle(async (request) => {
   const secret = process.env.CRON_SECRET ?? '';
   if (new URL(request.url).searchParams.get('job') !== 'purge') throw new HttpError(404, 'not_found', 'Not found.');
   if (secret.length < 16 || request.headers.get('authorization') !== `Bearer ${secret}`) throw new HttpError(401, 'unauthenticated', 'Not allowed.');
   if (!adminConfigured()) throw new HttpError(503, 'admin_unconfigured', 'Service account not configured.');
-  const result = await purgeDue(await adminDb());
-  return json({ ok: true, purged: result.purged.length, failed: result.failed.length });
+  const db = await adminDb();
+  const result = await purgeDue(db);
+  // Records kept after a purge (admin log entries, access request) go 30 days later.
+  const retention = await cleanupPurgedRecords(db).catch((err) => {
+    console.error('[retention] cleanup failed', err instanceof Error ? err.message : err);
+    return { accounts: 0, removed: 0 };
+  });
+  return json({ ok: true, purged: result.purged.length, failed: result.failed.length, retentionRemoved: retention.removed });
 });
 
 /**
