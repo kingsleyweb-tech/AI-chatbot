@@ -38,11 +38,16 @@ function scrollParent(el: HTMLElement): HTMLElement | null {
 export function revealFocused(top: number, bottom: number, margin = 16) {
   const el = document.activeElement as HTMLElement | null;
   if (!el || !el.matches?.(FIELD)) return;
-  const r = el.getBoundingClientRect();
   const sp = scrollParent(el);
   if (!sp) return;
-  if (r.bottom > bottom - margin) sp.scrollTop += r.bottom - (bottom - margin);
-  else if (r.top < top + margin) sp.scrollTop -= top + margin - r.top;
+  // Visible part of the scroll container: inside both the viewport above the
+  // keyboard and the container itself (a dialog's footer sits below it).
+  const c = sp.getBoundingClientRect();
+  const visTop = Math.max(top, c.top);
+  const visBottom = Math.min(bottom, c.bottom);
+  const r = el.getBoundingClientRect();
+  if (r.bottom > visBottom - margin) sp.scrollTop += r.bottom - (visBottom - margin);
+  else if (r.top < visTop + margin) sp.scrollTop -= visTop + margin - r.top;
 }
 
 /**
