@@ -8,7 +8,7 @@ import {
 import { doc, getDoc } from 'firebase/firestore';
 import { ArrowLeft, CheckCircle2, Clock, Eye, EyeOff, Mail, ShieldAlert, Smartphone, UserPlus } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { LogoMark, TAGLINE } from '@/components/Logo';
 import { Button, Input, Label, Spinner, Textarea } from '@/components/ui';
 import { api, ApiError, publicApi } from '@/lib/api';
@@ -23,10 +23,11 @@ import { useAuth, type AccessState } from '@/state/auth';
 type Mode = 'login' | 'register' | 'reset' | 'verify' | 'phone' | 'denied' | 'request';
 
 /** Where each access state belongs. */
-function routeFor(access: AccessState, from = '/'): string | null {
+function routeFor(access: AccessState): string | null {
   switch (access) {
     case 'allowed':
-      return from;
+      // Every sign-in opens New Chat; the page before sign-out is never restored.
+      return '/';
     case 'phone':
       return '/verify-phone';
     case 'unverified':
@@ -188,6 +189,17 @@ function Login() {
   const [busy, setBusy] = useState(false);
   const regOpen = useRegistrationOpen();
   const shown = error || signInError || '';
+  // Why the last session ended (set by the sign-out redirect); shown once, then removed from the URL.
+  const [ended] = useState(() => new URLSearchParams(window.location.search).get('reason'));
+  useEffect(() => {
+    if (ended) window.history.replaceState(null, '', '/login');
+  }, [ended]);
+  const endedText =
+    ended === 'inactivity'
+      ? 'You were signed out after 60 minutes of inactivity. Please sign in again.'
+      : ended === 'revoked'
+        ? 'Your session ended. Please sign in again.'
+        : '';
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -209,6 +221,11 @@ function Login() {
   return (
     <Shell>
       <Heading title="Welcome to Atlas AI" subtitle="Your intelligent assistant for thinking, creating and discovering." />
+      {endedText && !shown && (
+        <p role="status" className="mb-5 flex items-start gap-2 rounded-xl border border-border bg-surface-2 px-3.5 py-3 text-sm text-muted">
+          <Clock className="mt-0.5 size-4 shrink-0" /> {endedText}
+        </p>
+      )}
       <div className="space-y-5">
         <SocialButtons
           onError={(m) => {
@@ -1169,16 +1186,14 @@ function AccessRequest() {
 export default function AuthPages({ mode }: { mode: Mode }) {
   const { access } = useAuth();
   const navigate = useNavigate();
-  const location = useLocation();
-  const from = (location.state as { from?: string } | null)?.from ?? '/';
   const entry = mode === 'login' || mode === 'register' || mode === 'reset';
 
   // Sign-in, register and reset pages follow the auth state once a user exists.
   useEffect(() => {
     if (!entry || access === 'signed-out' || access === 'loading') return;
-    const to = routeFor(access, from);
+    const to = routeFor(access);
     if (to) navigate(to, { replace: true });
-  }, [access, entry, navigate, from]);
+  }, [access, entry, navigate]);
 
   // Signed in (or returning from Google) while access is checked: never flash the form.
   if (entry && access === 'loading' && (auth.currentUser || redirectPending())) return <Checking />;

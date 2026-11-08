@@ -11,6 +11,7 @@ import { decideSearch, type SearchDecision, type SearchMode } from './decide.js'
 import { extractUrls, looksLikeFollowUp, toSearchQuery } from './heuristics.js';
 import { runResearch } from './research.js';
 import { searchService } from './router.js';
+import { trustedDb } from '../admin.js';
 import { FirestoreSearchStore } from './store.js';
 import type { SearchProviderId, SearchResult } from './types.js';
 
@@ -119,7 +120,7 @@ export async function gatherWebContext(args: {
   }
 
   const limits = await loadLimits(args.db);
-  const store = new FirestoreSearchStore(args.db, args.uid);
+  const store = new FirestoreSearchStore(args.db, args.uid, await trustedDb(args.db));
   const sources: Source[] = [];
   const blocks: string[] = [];
   const add = (r: SearchResult, provider: SearchProviderId) => {

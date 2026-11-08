@@ -5,6 +5,7 @@ import { ACCOUNT_BLOCK_EVENT, api } from '@/lib/api';
 import { completeRedirect, redirectPending } from '@/lib/authProviders';
 import { auth, db, firebaseConfigured } from '@/lib/firebase';
 import { paths } from '@/lib/db';
+import { endSession } from '@/lib/session';
 import { DEFAULT_SETTINGS, type UserProfile } from '@/lib/types';
 
 /** Keep in sync with firestore.rules isBootstrapAdmin() and ADMIN_EMAILS. */
@@ -388,9 +389,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(auth.currentUser);
         await evaluate(auth.currentUser, true, true);
       },
-      signOut: async () => {
-        await fbSignOut(auth);
-      },
+      // Full sign-out: security log, other tabs, Firebase, local session data, then a fresh /login.
+      signOut: () => endSession('user'),
     }),
     [user, profile, access, admin, provider, accessError, accessInfo, signInError, evaluate],
   );

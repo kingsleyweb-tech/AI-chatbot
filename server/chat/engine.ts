@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { Ctx } from '../access.js';
+import { trustedDb } from '../admin.js';
 import { modelConfig } from '../config/models.js';
 import { retrieveDocuments } from '../docs/documents.js';
 import { retrieveKnowledge, type KnowledgeContext } from '../knowledge/retrieve.js';
@@ -632,14 +633,16 @@ export async function runChat(
           },
         ];
         if (routeInfo) count(['routing', 'switched']);
+        // Usage counters are server-written (read-only for users in the rules).
+        const usageWrites: Write[] = [];
         if (Object.keys(counters).length) {
           const day = new Date().toISOString().slice(0, 10);
-          writes.push({ op: 'increment', path: `${base}/usage/${day}`, data: { date: day, updatedAt: SERVER_TIME }, increments: counters });
+          usageWrites.push({ op: 'increment', path: `${base}/usage/${day}`, data: { date: day, updatedAt: SERVER_TIME }, increments: counters });
         }
         if (usage) {
           const day = new Date().toISOString().slice(0, 10);
           const modelKey = usedModel.replace(/[^A-Za-z0-9_]/g, '_');
-          writes.push({
+          usageWrites.push({
             op: 'increment',
             path: `${base}/usage/${day}`,
             data: { date: day, updatedAt: SERVER_TIME },
@@ -662,6 +665,13 @@ export async function runChat(
             '[chat] failed to persist assistant message',
             err instanceof Error ? err.message : err,
           );
+        }
+        if (usageWrites.length) {
+          try {
+            await (await trustedDb(db)).commit(usageWrites);
+          } catch (err) {
+            console.warn('[chat] usage write failed', err instanceof Error ? err.message : err);
+          }
         }
 
         // ---- Background jobs: title, memory, summary ----

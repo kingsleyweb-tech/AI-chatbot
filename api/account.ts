@@ -24,6 +24,7 @@ const schema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('providerLinked'), provider: z.enum(['password', 'google.com']) }),
   z.object({ action: z.literal('revokeSessions') }),
   z.object({ action: z.literal('exported') }),
+  z.object({ action: z.literal('signedOut'), reason: z.enum(['user', 'inactivity']) }),
 ]);
 
 interface Profile {
@@ -48,7 +49,7 @@ export const POST = handle(async (request) => {
   if (!parsed.success) throw new HttpError(400, 'bad_request', 'Invalid request.');
   const b = parsed.data;
   if (!adminConfigured()) {
-    if (b.action === 'status' || b.action === 'session' || b.action === 'exported' || b.action === 'access') return json({ ok: true, configured: false, accountStatus: 'active' });
+    if (b.action === 'status' || b.action === 'session' || b.action === 'exported' || b.action === 'access' || b.action === 'signedOut') return json({ ok: true, configured: false, accountStatus: 'active' });
     throw new HttpError(503, 'admin_unconfigured', 'This needs the server service account, which is not configured yet.');
   }
   const db = await adminDb();
@@ -104,6 +105,12 @@ export const POST = handle(async (request) => {
     await db.set(profilePath, { lastAuthTime: user.authTime, lastLoginAt: SERVER_TIME }, true);
     await recordSecurityEvent(db, user.uid, 'login', { provider: user.provider, device }, user.authTime * 1000);
     return json({ ok: true, recorded: true });
+  }
+
+  if (b.action === 'signedOut') {
+    // Security log only; the sign-out itself happens on the device. Nothing here can keep a session alive.
+    await recordSecurityEvent(db, user.uid, b.reason === 'inactivity' ? 'logout_inactivity' : 'logout', { provider: user.provider, device, by: b.reason === 'inactivity' ? 'system' : 'user' });
+    return json({ ok: true });
   }
 
   if (b.action === 'exported') {

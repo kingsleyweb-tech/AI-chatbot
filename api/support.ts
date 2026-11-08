@@ -3,6 +3,7 @@ import { requireAllowedUser, type AccessConfig } from '../server/access.js';
 import { adminConfigured, adminDb } from '../server/admin.js';
 import { env } from '../server/env.js';
 import type { Firestore } from '../server/firestore.js';
+import { noteUnauthorizedAccess } from '../server/account/events.js';
 import { handle, HttpError, json, readJson } from '../server/http.js';
 import { CATEGORY_IDS, STATUS_IDS, SUPPORT_LIMITS, SUPPORT_PRIORITIES } from '../server/shared/support.js';
 import { removeArticle, saveArticle } from '../server/support/help.js';
@@ -92,7 +93,10 @@ export const POST = handle(async (request) => {
   const parsed = schema.safeParse(await readJson(request, 3_200_000));
   if (!parsed.success) throw new HttpError(400, 'bad_request', 'Invalid request.');
   const b = parsed.data;
-  if (ADMIN_ONLY.has(b.action) && !ctx.admin) throw new HttpError(403, 'not_admin', 'Administrator access is required.');
+  if (ADMIN_ONLY.has(b.action) && !ctx.admin) {
+    await noteUnauthorizedAccess(ctx.user.uid, 'Administrator support desk', request.headers.get('user-agent'));
+    throw new HttpError(403, 'not_admin', 'Administrator access is required.');
+  }
   if (!adminConfigured()) throw new HttpError(503, 'admin_unconfigured', 'Support needs FIREBASE_SERVICE_ACCOUNT on the server.');
   const db = await adminDb();
 

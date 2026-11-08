@@ -217,6 +217,15 @@ describe('search limits, cache and document subcollections', () => {
     denied(await read(BOB, 'users/alice/searchCache/k1'));
   });
 
+  it('usage counters (search budgets) are readable by their owner but written only by the server', async () => {
+    ok(await write(OWNER, 'users/alice/usage/2026-11-08', { search: { serpapi: { credits: 8 } } }));
+    ok(await read(ALLOWED, 'users/alice/usage/2026-11-08'));
+    denied(await write(ALLOWED, 'users/alice/usage/2026-11-08', { search: { serpapi: { credits: 0 } } }));
+    denied(await del(ALLOWED, 'users/alice/usage/2026-11-08'));
+    denied(await write(ALLOWED, 'users/alice/usage/2026-11', { search: {} }));
+    denied(await read(BOB, 'users/alice/usage/2026-11-08'));
+  });
+
   it('allows only known document subcollections', async () => {
     ok(await write(ALLOWED, 'users/alice/documents/d1', { name: 'deck.pptx' }));
     ok(await write(ALLOWED, 'users/alice/documents/d1/images/1', { ref: 'Slide 2' }));

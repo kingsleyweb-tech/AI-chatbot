@@ -170,6 +170,19 @@ All user data is under `users/{uid}`:
 
 Secrets: `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `SERPAPI_API_KEY`, `TAVILY_API_KEY`, `VYNFY_API_KEY`, `OTP_HMAC_SECRET` and `FIREBASE_SERVICE_ACCOUNT` are read only in `server/env.ts`. They are never logged and never sent to the browser.
 
+## Sessions (`src/lib/session.ts`, `src/lib/idle.ts`, `src/features/shell/SessionGuard.tsx`)
+
+- **Sign-out** (button, inactivity, another tab, revoked session) always goes through `endSession`: it logs the event on the server (`/api/account` `signedOut`; best effort, 2.5 s cap), tells the other tabs (BroadcastChannel, with a storage-event fallback), signs out of Firebase, clears session storage and the per-session keys, clears the offline Firestore cache (IndexedDB), then does a full page load of `/login`. Stored data (conversations, projects, memory, files, preferences) is not touched.
+- **Sign-in always opens New Chat.** Route guards never remember the page that was open (no `from` state), and the full reload at sign-out drops all in-memory state.
+- **Route guards** (`src/App.tsx`): public pages (login, register, reset, privacy, terms); `Protected` for signed-in pages (shows the loading screen while auth and the server access check run, then routes pending, rejected, suspended, phone and email states to their pages); `AdminOnly` for `/admin/*` (only `access === 'allowed'` and the server's admin decision). The server re-checks everything: `requireAllowedUser` on every API, the admin decision for admin APIs (non-admin calls are logged as `unauthorized_access`), and the Firestore rules.
+- **Website inactivity:** 60 minutes without real input (pointer, keys, touch, wheel, scroll; network activity never counts) signs out; a warning with a countdown and "Stay signed in" appears at 55 minutes. All tabs share one timestamp in localStorage, so there is one deadline. Coming back after the deadline (sleep, closed browser) signs out at once.
+- **Installed app (PWA):** no inactivity sign-out. Detected with `display-mode: standalone` / `window-controls-overlay` or `navigator.standalone`, never the user agent. Account checks (suspension, revocation, approval) and explicit sign-out apply as usual. On desktop Chrome/Edge the installed app and the browser share one Firebase session, so while an installed-app window is open (heartbeat every 30 s, stale after 90 s) website tabs on that device do not sign out for inactivity either; otherwise they would sign the app out too.
+- Firebase limitation: client sign-out does not revoke the ID token already issued (valid for up to an hour). "Sign out of all devices" (`revokeSessions`) revokes server-side: the server and rules reject tokens issued before `sessionsValidAfter`.
+
+## Security headers (`vercel.json`)
+
+CSP (scripts: self, the inline theme script by SHA-256 hash, Google sign-in and Analytics; no `unsafe-inline`/`unsafe-eval` for scripts; `object-src 'none'`, `base-uri 'self'`, `form-action 'self'`, `frame-ancestors 'self'`), HSTS, `nosniff`, `Referrer-Policy`, `Permissions-Policy`, `X-Frame-Options: SAMEORIGIN` and `Cross-Origin-Opener-Policy: same-origin-allow-popups` (needed for the Google popup). The proxied Firebase auth handler (`/__/auth/*`) keeps Firebase's own policy, and `frame-ancestors` is `'self'` because the app frames that handler from its own domain. **If the inline script in `index.html` changes, update its hash** (`tests/session.test.ts` fails until you do). `e2e/security.spec.ts` loads the public pages under the production CSP and fails on any violation.
+
 ## Known limitations
 
 - **No OCR.** Scanned PDFs without a text layer are flagged with a clear message.
@@ -178,4 +191,5 @@ Secrets: `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `SERPAPI_API_KEY`, `TAVILY_API_
 - **60-second function limit** on Vercel Hobby (see `vercel.json`). Very long generations may be cut off. Partial text is saved and can be continued.
 - **Vector search is in-process,** fine for one person's data (hundreds of memories, thousands of chunks). Larger scale would need Firestore vector indexes or a vector database.
 - **Free models are rate-limited** by OpenRouter. With no credits on the key, paid models fall back to free ones.
+- **Multi-factor authentication is not offered.** Firebase MFA (SMS or TOTP second factor) needs the Identity Platform upgrade of the Firebase project. Phone verification here is a one-time check of the number, not a second factor at each sign-in.
 - **App Check is not enabled.** It needs a reCAPTCHA Enterprise site key; add `VITE_APPCHECK_SITE_KEY` and enforcement in the console if wanted.

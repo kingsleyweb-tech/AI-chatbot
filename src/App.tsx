@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, type ReactNode } from 'react';
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { SessionGuard } from './features/shell/SessionGuard';
 import { LogoMark } from './components/Logo';
 import { useVisualViewport } from './lib/viewport';
 import { AuthProvider, useAuth } from './state/auth';
@@ -38,16 +39,35 @@ export function Splash() {
   );
 }
 
+/**
+ * Central guard for every signed-in page. The server and the Firestore rules
+ * enforce the same conditions on every request; this decides what to show.
+ * Signed-out visitors go to /login without remembering the page: every new
+ * sign-in starts on New Chat.
+ */
 function Protected({ children }: { children: ReactNode }) {
   const { access } = useAuth();
-  const location = useLocation();
   if (access === 'loading') return <Splash />;
-  if (access === 'signed-out') return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  if (access === 'signed-out') return <Navigate to="/login" replace />;
   if (access === 'phone') return <Navigate to="/verify-phone" replace />;
   if (access === 'unverified') return <Navigate to="/verify" replace />;
   if (access === 'request' || access === 'pending' || access === 'rejected') return <Navigate to="/request-access" replace />;
   if (access === 'denied' || access === 'error' || access === 'suspended' || access === 'deleted') return <Navigate to="/denied" replace />;
   return <>{children}</>;
+}
+
+/** Administrator pages: verified administrators only (the server re-checks every admin request). */
+function AdminOnly({ children }: { children: ReactNode }) {
+  const { access, admin } = useAuth();
+  if (access === 'loading') return <Splash />;
+  if (access !== 'allowed' || !admin) return <Navigate to="/" replace />;
+  return <>{children}</>;
+}
+
+/** Inactivity timeout and cross-tab sign-out, for anyone signed in. */
+function Session() {
+  const { user } = useAuth();
+  return user ? <SessionGuard /> : null;
 }
 
 /**
@@ -102,11 +122,12 @@ function Routed() {
               <Route path="documents" element={<DocumentsPage />} />
               <Route path="knowledge" element={<KnowledgePage />} />
               <Route path="settings/:section?" element={<SettingsPage />} />
-              <Route path="admin/users" element={<UsersPage />} />
-              <Route path="admin/requests" element={<AccessRequestsPage />} />
-              <Route path="admin/support" element={<SupportAdminPage />} />
-              <Route path="admin/support/:ref" element={<SupportReportAdminPage />} />
-              <Route path="admin/sms" element={<SmsAdminPage />} />
+              <Route path="admin/users" element={<AdminOnly><UsersPage /></AdminOnly>} />
+              <Route path="admin/requests" element={<AdminOnly><AccessRequestsPage /></AdminOnly>} />
+              <Route path="admin/support" element={<AdminOnly><SupportAdminPage /></AdminOnly>} />
+              <Route path="admin/support/:ref" element={<AdminOnly><SupportReportAdminPage /></AdminOnly>} />
+              <Route path="admin/sms" element={<AdminOnly><SmsAdminPage /></AdminOnly>} />
+              <Route path="admin/*" element={<Navigate to="/" replace />} />
               <Route path="support" element={<MyReportsPage />} />
               <Route path="support/new" element={<ReportIssuePage />} />
               <Route path="support/:ref" element={<ReportThreadPage />} />
@@ -116,6 +137,7 @@ function Routed() {
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
+          <Session />
         </Suspense>
       </ErrorBoundary>
     </div>

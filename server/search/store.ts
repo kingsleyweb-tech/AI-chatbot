@@ -117,9 +117,15 @@ export const monthKey = (d = new Date()) => `m-${d.toISOString().slice(0, 7)}`;
 const empty = (): ProviderCount => ({ serpapi: 0, tavily: 0 });
 
 export class FirestoreSearchStore implements SearchStore {
+  /**
+   * `usageDb` writes the budget counters (users/{uid}/usage): the server
+   * identity in production, because the rules make those counters read-only
+   * for the user, so nobody can reset their own search budget.
+   */
   constructor(
     private db: Firestore,
     private uid: string,
+    private usageDb: Firestore = db,
   ) {}
 
   private get base() {
@@ -147,8 +153,8 @@ export class FirestoreSearchStore implements SearchStore {
   async getUsage(): Promise<UsageSnapshot> {
     type U = { search?: Partial<Record<SearchProviderId, { credits?: number }>> };
     const [day, month] = await Promise.all([
-      this.db.get<U>(`${this.base}/usage/${dayKey()}`).catch(() => null),
-      this.db.get<U>(`${this.base}/usage/${monthKey()}`).catch(() => null),
+      this.usageDb.get<U>(`${this.base}/usage/${dayKey()}`).catch(() => null),
+      this.usageDb.get<U>(`${this.base}/usage/${monthKey()}`).catch(() => null),
     ]);
     const pick = (u: U | undefined): ProviderCount => ({
       serpapi: u?.search?.serpapi?.credits ?? 0,
@@ -176,7 +182,7 @@ export class FirestoreSearchStore implements SearchStore {
         increments: inc,
       },
     ];
-    await this.db.commit(writes).catch((err) => {
+    await this.usageDb.commit(writes).catch((err) => {
       console.warn('[search] usage write failed', err instanceof Error ? err.message : err);
     });
   }

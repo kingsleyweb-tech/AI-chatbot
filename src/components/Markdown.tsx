@@ -46,8 +46,16 @@ function makeComponents(streaming: boolean, highlight: boolean): Components {
   return {
     a({ href, children, ...props }) {
       if (href?.startsWith('cite:')) {
-        const target = decodeURIComponent(href.slice(5));
+        let target = '';
+        try {
+          target = decodeURIComponent(href.slice(5));
+        } catch {
+          /* malformed escape */
+        }
         if (target === 'doc') return <span className="cite">{children}</span>;
+        // The target comes from model output: only safe protocols (no javascript: and the like).
+        target = defaultUrlTransform(target);
+        if (!target) return <span className="cite">{children}</span>;
         return (
           <a className="cite" href={target} target="_blank" rel="noopener noreferrer" title={target}>
             {children}

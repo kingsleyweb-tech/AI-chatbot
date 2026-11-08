@@ -8,6 +8,7 @@ import { SERVER_TIME, type Firestore } from '../firestore.js';
 import { HttpError } from '../http.js';
 import type { Section } from '../docs/chunk.js';
 import { searchService } from '../search/router.js';
+import { trustedDb } from '../admin.js';
 import { FirestoreSearchStore } from '../search/store.js';
 import { fetchPage } from './fetch.js';
 import { retrieveKnowledge } from './retrieve.js';
@@ -44,7 +45,7 @@ async function readPage(ctx: KbCtx, url: string, viaTavily: boolean): Promise<{ 
   // Pages that block bots or need JavaScript: Tavily reads them (1 credit per 5 pages, within budget).
   const ex = await searchService().extract({
     uid: ctx.uid,
-    store: new FirestoreSearchStore(ctx.db, ctx.uid),
+    store: new FirestoreSearchStore(ctx.db, ctx.uid, await trustedDb(ctx.db)),
     limits: await loadLimits(ctx.db),
     urls: [url],
     priority: 'explicit',

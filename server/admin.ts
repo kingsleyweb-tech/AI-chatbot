@@ -151,6 +151,20 @@ async function signInAsServer(): Promise<string> {
  * requests, account status). It signs in as the server identity, which the
  * rules allow everywhere; against the emulators it uses the admin bypass.
  */
+/**
+ * Server identity when configured, otherwise the given (caller's) database.
+ * For records users may read but must not change themselves, such as the
+ * usage counters that enforce per-user search budgets.
+ */
+export async function trustedDb(fallback: Firestore): Promise<Firestore> {
+  if (!adminConfigured()) return fallback;
+  try {
+    return await adminDb();
+  } catch {
+    return fallback;
+  }
+}
+
 export async function adminDb(): Promise<Firestore> {
   if (dbOverride) return dbOverride;
   const db = new Firestore(emulated() ? 'owner' : await serverIdToken());

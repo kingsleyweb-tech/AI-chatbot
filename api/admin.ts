@@ -15,6 +15,7 @@ import { accountAdmin, adminConfigured, adminDb, SERVER_UID, type AuthAccount } 
 import { maskPhone } from '../server/auth/phone.js';
 import { env } from '../server/env.js';
 import type { Firestore } from '../server/firestore.js';
+import { noteUnauthorizedAccess } from '../server/account/events.js';
 import { handle, HttpError, json, readJson } from '../server/http.js';
 import { smsOverview } from '../server/sms/log.js';
 import { getOtpGateway, getSmsProvider, vynfyBalances } from '../server/sms/provider.js';
@@ -192,7 +193,10 @@ export const GET = handle(async (request) => {
  */
 export const POST = handle(async (request) => {
   const ctx = await requireAllowedUser(request);
-  if (!ctx.admin) throw new HttpError(403, 'not_admin', 'Administrator access is required.');
+  if (!ctx.admin) {
+    await noteUnauthorizedAccess(ctx.user.uid, 'Administrator user management', request.headers.get('user-agent'));
+    throw new HttpError(403, 'not_admin', 'Administrator access is required.');
+  }
   if (!adminConfigured()) throw new HttpError(503, 'admin_unconfigured', 'User management needs FIREBASE_SERVICE_ACCOUNT on the server.');
   const parsed = schema.safeParse(await readJson(request, 5_000));
   if (!parsed.success) throw new HttpError(400, 'bad_request', 'Invalid request.');

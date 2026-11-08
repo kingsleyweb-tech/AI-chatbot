@@ -233,10 +233,17 @@ service cloud.firestore {
         }
       }
 
-      // projects, savedResponses, usage, memoryVectors, convVectors, ...
+      // Usage counters enforce the per-user web-search budgets: the owner may
+      // read them (usage dashboard); only the server writes them.
+      match /usage/{day} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+
+      // projects, savedResponses, memoryVectors, convVectors, ...
       match /{collection}/{docId} {
         allow read, write: if isOwner(uid)
-          && collection in ['projects', 'savedResponses', 'usage', 'memoryVectors', 'convVectors', 'searchCache', 'projectMemory', 'convIndex'];
+          && collection in ['projects', 'savedResponses', 'memoryVectors', 'convVectors', 'searchCache', 'projectMemory', 'convIndex'];
       }
     }
 

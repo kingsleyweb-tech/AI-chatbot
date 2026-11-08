@@ -13,6 +13,8 @@ import type { Firestore } from '../firestore.js';
 export const SECURITY_EVENTS = [
   'login',
   'login_failed',
+  'logout',
+  'logout_inactivity',
   'password_reset',
   'password_changed',
   'phone_verified',
@@ -28,6 +30,7 @@ export const SECURITY_EVENTS = [
   'access_requested',
   'access_approved',
   'access_rejected',
+  'unauthorized_access',
 ] as const;
 export type SecurityEventType = (typeof SECURITY_EVENTS)[number];
 
@@ -95,4 +98,20 @@ export async function recordAdminAction(
     detail: entry.detail?.slice(0, 300) ?? null,
     at: new Date(now),
   });
+}
+
+/**
+ * A signed-in, non-administrator account called an administrator-only API.
+ * Logged (best effort, never blocking the 403) so repeated probing is visible;
+ * the account is not suspended automatically.
+ */
+export async function noteUnauthorizedAccess(uid: string, area: string, userAgent: string | null): Promise<void> {
+  console.warn('[security] unauthorized access attempt', { uid, area });
+  try {
+    const { adminConfigured, adminDb } = await import('../admin.js');
+    if (!adminConfigured()) return;
+    await recordSecurityEvent(await adminDb(), uid, 'unauthorized_access', { device: deviceLabel(userAgent), by: 'system', detail: area });
+  } catch (err) {
+    console.warn('[security] unauthorized access log skipped', err instanceof Error ? err.message : err);
+  }
 }

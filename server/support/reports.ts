@@ -86,6 +86,17 @@ export const SUPPORT_NAME = 'Atlas Support';
 const reportPath = (ref: string) => `supportReports/${ref}`;
 export const REF_PATTERN = /^ATL-\d{4}-[2-9A-HJKMNP-Z]{5}$/;
 
+let lastStamp = 0;
+/**
+ * Strictly increasing timestamps for thread entries written by this instance:
+ * two messages in the same millisecond (a reply right after a report) must
+ * still list in the order they were written, since the thread sorts by time.
+ */
+function stamp(now: number): number {
+  lastStamp = Math.max(now, lastStamp + 1);
+  return lastStamp;
+}
+
 export function newRef(now = Date.now()): string {
   const d = new Date(now);
   const yymm = String(d.getUTCFullYear() % 100).padStart(2, '0') + String(d.getUTCMonth() + 1).padStart(2, '0');
@@ -241,6 +252,7 @@ export async function createReport(
   input: { title: string; category: SupportCategory; description: string; attachments?: NewAttachment[]; submissionId: string },
   now = Date.now(),
 ): Promise<{ ref: string; duplicate: boolean }> {
+  now = stamp(now);
   const title = clean(input.title, SUPPORT_LIMITS.title);
   const description = clean(input.description, SUPPORT_LIMITS.description);
   if (title.length < 3) throw new HttpError(400, 'title_required', 'Add a short title (at least 3 characters).');
@@ -312,6 +324,7 @@ export async function getOwnReport(db: Firestore, user: Person, ref: string) {
 }
 
 export async function addUserMessage(db: Firestore, user: Person, ref: string, input: { text: string; attachments?: NewAttachment[] }, now = Date.now()) {
+  now = stamp(now);
   const r = await ownReport(db, user, ref);
   if (r.status === 'closed') throw new HttpError(400, 'closed', 'This report is closed. Reopen it to add more information.');
   const text = clean(input.text, SUPPORT_LIMITS.message);
@@ -340,6 +353,7 @@ async function setStatusInternal(db: Firestore, r: ReportDoc, status: SupportSta
 
 /** The user confirms an administrator's resolution; the report is then closed. */
 export async function confirmResolved(db: Firestore, user: Person, ref: string, now = Date.now()) {
+  now = stamp(now);
   const r = await ownReport(db, user, ref);
   if (r.status !== 'resolved') throw new HttpError(400, 'not_resolved', 'Only a report marked resolved by Atlas Support can be confirmed.');
   await setStatusInternal(db, r, 'closed', { uid: user.uid, email: user.email, role: 'user' }, now, { userConfirmedAt: now });
@@ -347,6 +361,7 @@ export async function confirmResolved(db: Firestore, user: Person, ref: string, 
 }
 
 export async function reopenOwn(db: Firestore, user: Person, ref: string, now = Date.now()) {
+  now = stamp(now);
   const r = await ownReport(db, user, ref);
   if (r.status !== 'resolved' && r.status !== 'closed') throw new HttpError(400, 'not_closed', 'This report is still open.');
   await setStatusInternal(db, r, 'pending', { uid: user.uid, email: user.email, role: 'user' }, now, { userConfirmedAt: null });
@@ -399,6 +414,7 @@ export async function adminDetail(db: Firestore, ref: string) {
 }
 
 export async function adminReply(db: Firestore, actor: AdminActor, ref: string, input: { text: string; attachments?: NewAttachment[]; requestInfo?: boolean }, now = Date.now()) {
+  now = stamp(now);
   const r = await loadReport(db, ref);
   const text = clean(input.text, SUPPORT_LIMITS.message);
   const files = checkAttachments(input.attachments);
@@ -434,6 +450,7 @@ export async function adminReply(db: Firestore, actor: AdminActor, ref: string, 
 }
 
 export async function adminSetStatus(db: Firestore, actor: AdminActor, ref: string, status: SupportStatus, now = Date.now()) {
+  now = stamp(now);
   const r = await loadReport(db, ref);
   if (r.status === status) return adminDetail(db, ref);
   await setStatusInternal(db, r, status, { ...actor, role: 'admin' }, now, status === 'resolved' || status === 'closed' ? {} : { userConfirmedAt: null });

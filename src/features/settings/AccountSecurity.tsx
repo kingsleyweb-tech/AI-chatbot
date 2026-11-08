@@ -482,6 +482,8 @@ interface SecurityEvent {
 const EVENT_LABELS: Record<string, string> = {
   login: 'Signed in',
   login_failed: 'Failed sign-in attempt',
+  logout: 'Signed out',
+  logout_inactivity: 'Signed out after 60 minutes of inactivity',
   password_reset: 'Password reset by text message',
   password_changed: 'Password changed',
   phone_verified: 'Phone number verified',
@@ -497,6 +499,7 @@ const EVENT_LABELS: Record<string, string> = {
   access_requested: 'Access requested',
   access_approved: 'Access approved',
   access_rejected: 'Access not approved',
+  unauthorized_access: 'Blocked attempt to open an administrator page',
 };
 
 function RecentActivity() {
