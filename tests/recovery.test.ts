@@ -50,13 +50,12 @@ beforeEach(() => {
 });
 
 describe('SMS password recovery', () => {
-  it('sends a code to the verified number and returns a masked number', async () => {
+  it('sends a code to the verified number without returning the number', async () => {
     eligibleUser();
     const r = await startRecovery(deps, ' Ama@Example.com ', '1.1.1.1');
     expect(sms.sent).toHaveLength(1);
     expect(sms.sent[0].to).toBe(PHONE);
-    expect(r.phoneMasked).toMatch(/4567$/);
-    expect(r.phoneMasked).not.toContain('24123');
+    expect(r.phoneMasked).toBeNull();
     expect(r.recoveryId).toMatch(/^[a-f0-9]{48}$/);
     expect(r).toMatchObject({ expiresIn: 300, resendIn: 60 });
     // the code itself is never stored
@@ -69,10 +68,9 @@ describe('SMS password recovery', () => {
     const real = await startRecovery(deps, 'ama@example.com', '1.1.1.1');
     const unknown = await startRecovery(deps, 'nobody@example.com', '1.1.1.2');
     expect(Object.keys(unknown).sort()).toEqual(Object.keys(real).sort());
-    expect(unknown.phoneMasked).toMatch(/^\+233 •• ••• \d{4}$/);
-    // same decoy for repeated requests
-    now += 61_000;
-    expect((await startRecovery(deps, 'nobody@example.com', '1.1.1.2')).phoneMasked).toBe(unknown.phoneMasked);
+    // no number at all (never a made-up one), exactly like a real request
+    expect(unknown.phoneMasked).toBeNull();
+    expect(real.phoneMasked).toBeNull();
     expect(sms.sent).toHaveLength(1);
     // a decoy request can never be verified
     expect(await code(verifyRecovery(deps, unknown.recoveryId, '123456'))).toBe('invalid_code');

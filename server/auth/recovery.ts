@@ -25,7 +25,6 @@ import { HttpError } from '../http.js';
 import { deliveryOf, logSms } from '../sms/log.js';
 import { SmsError, type SmsProvider } from '../sms/provider.js';
 import { CODE_TTL_MS, MAX_ATTEMPTS, phoneKey, RESEND_MS } from './otp.js';
-import { maskPhone } from './phone.js';
 
 export const RESET_TTL_MS = 10 * 60_000;
 const HOUR = 3_600_000;
@@ -89,11 +88,6 @@ export function passwordProblem(pw: string): string | null {
 }
 
 /** Deterministic fake last digits, so repeated requests for one address look the same. */
-function decoyMask(secret: string, email: string) {
-  const digits = String(parseInt(hmac(secret, `decoy|${email}`).slice(0, 8), 16) % 10000).padStart(4, '0');
-  return `+233 •• ••• ${digits}`;
-}
-
 async function limit(db: Firestore, path: string, now: number, perHour: number, perDay: number | null, cooldownMs: number | null) {
   const doc = await db.get<{ sends?: number[] }>(path);
   const recent = (doc?.data.sends ?? []).filter((t) => now - t < DAY);
@@ -136,14 +130,12 @@ export async function startRecovery(deps: RecoveryDeps, rawEmail: string, ip: st
     { op: 'set', path: ipLimit.path, data: { sends: ipLimit.sends } },
   ];
   const base = { createdAt: now, expiresAt: now + CODE_TTL_MS, attempts: 0 };
-  let phoneMasked = decoyMask(deps.secret, email);
   let send: { to: string; code: string } | null = null;
 
   if (target) {
     const pHash = phoneKey(deps.secret, target.phone);
     const perPhone = await deps.db.get<{ sends?: number[] }>(`otpPhones/${pHash}`);
     const phoneSends = (perPhone?.data.sends ?? []).filter((t) => now - t < DAY);
-    phoneMasked = maskPhone(target.phone);
     if (phoneSends.filter((t) => now - t < HOUR).length < PER_PHONE_HOUR) {
       const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
       send = { to: target.phone, code };
@@ -177,7 +169,10 @@ export async function startRecovery(deps: RecoveryDeps, rawEmail: string, ip: st
   } else if (deps.decoyDelayMs !== 0) {
     await new Promise((r) => setTimeout(r, (deps.decoyDelayMs ?? 400) + randomInt(0, 400)));
   }
-  return { recoveryId: rid, phoneMasked, expiresIn: CODE_TTL_MS / 1000, resendIn: RESEND_MS / 1000 };
+  // No number is returned, real or made up: the answer is identical for every address, so it
+  // reveals nothing, and nobody is shown a number that is not theirs (the old decoy confused
+  // people whose account cannot use text-message reset, such as Google sign-ins).
+  return { recoveryId: rid, phoneMasked: null, expiresIn: CODE_TTL_MS / 1000, resendIn: RESEND_MS / 1000 };
 }
 
 export async function verifyRecovery(deps: RecoveryDeps, rid: string, code: string): Promise<{ resetToken: string }> {

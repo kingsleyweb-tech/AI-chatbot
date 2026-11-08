@@ -394,7 +394,6 @@ function Reset() {
   const [step, setStep] = useState<ResetStep>('email');
   const [email, setEmail] = useState('');
   const [rid, setRid] = useState('');
-  const [masked, setMasked] = useState('');
   const [code, setCode] = useState('');
   const [resetToken, setResetToken] = useState('');
   const [password, setPassword] = useState('');
@@ -419,9 +418,8 @@ function Reset() {
 
   const start = () =>
     run(async () => {
-      const r = await publicApi<{ recoveryId: string; phoneMasked: string; expiresIn: number; resendIn: number }>('recovery', { action: 'start', email: email.trim() });
+      const r = await publicApi<{ recoveryId: string; expiresIn: number; resendIn: number }>('recovery', { action: 'start', email: email.trim() });
       setRid(r.recoveryId);
-      setMasked(r.phoneMasked);
       setCode('');
       resend.start(r.resendIn);
       expiry.start(r.expiresIn);
@@ -478,7 +476,8 @@ function Reset() {
         </button>
         <h1 className="mb-1 text-xl font-semibold tracking-tight">Enter the code</h1>
         <p className="mb-6 text-sm text-muted">
-          If <b className="font-medium text-fg">{email}</b> has a verified phone number, we sent a 6-digit code to <b className="font-medium text-fg">{masked}</b>.
+          If <b className="font-medium text-fg">{email}</b> signs in with a password and has a verified phone number, we texted a 6-digit code to that
+          number.
           {expiry.left > 0 ? ` It expires in ${Math.floor(expiry.left / 60)}:${String(expiry.left % 60).padStart(2, '0')}.` : ' The code has expired; request a new one.'}
         </p>
         <form
@@ -556,7 +555,10 @@ function Reset() {
     <Shell>
       {back}
       <h1 className="mb-1 text-xl font-semibold tracking-tight">Reset your password</h1>
-      <p className="mb-6 text-sm text-muted">Enter your account email. If it has a verified phone number, we will text you a 6-digit code.</p>
+      <p className="mb-6 text-sm text-muted">
+        Enter your account email. If it signs in with a password and has a verified phone number, we will text you a 6-digit code. Signed up with
+        Google? There is no password to reset: use Continue with Google on the sign-in page.
+      </p>
       <form
         className="space-y-3.5"
         onSubmit={(e) => {
