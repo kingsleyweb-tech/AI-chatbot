@@ -119,7 +119,7 @@ export const PRIVACY: LegalDoc = {
       bullets: [
         'The Atlas AI database (Cloud Firestore) is in Google’s "nam5" multi-region location in the United States.',
         'Atlas AI’s server functions run on Vercel in the United States (Washington, D.C. region).',
-        'Firebase Authentication and Google Analytics are operated on Google’s infrastructure; AI, search and SMS providers process data in their own locations ([VYNFY PROCESSING LOCATION TO BE CONFIRMED]).',
+        'Firebase Authentication and Google Analytics are operated on Google’s infrastructure; AI, search and SMS providers process data in their own locations (Vynfy processes SMS in Accra, Ghana).',
         'This means information you provide in Ghana is transferred to and stored in the United States and other countries whose data protection laws may differ from Ghana’s.',
       ],
     },
@@ -191,7 +191,6 @@ export const PRIVACY: LegalDoc = {
     'Registration status with Ghana’s Data Protection Commission. Until confirmed, the documents make no registration or compliance claim.',
     'Whether other privacy laws apply to users outside Ghana, and the legal bases for processing, with legal counsel.',
     'Retention periods for administrator logs and access requests after an account is deleted, for Vercel logs and for Google Analytics (check the Analytics data-retention setting).',
-    'Where Vynfy processes and stores phone numbers and messages.',
     'Google’s Gemini API terms say the API is for developers building for professional or business purposes, not for consumer use. Check with counsel whether a paid Gemini plan, a different provider or other changes are needed for a consumer app.',
     'Whether OpenRouter’s account setting allows routing to providers that train on prompts (Settings → Privacy at openrouter.ai); turning that off would let this policy say less is used for training.',
     'Whether to add a cookie or analytics consent banner.',
