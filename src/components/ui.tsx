@@ -264,12 +264,6 @@ export function Dialog({
           className="vv-overlay z-50 flex items-end justify-center sm:items-center sm:p-4"
           role="dialog"
           aria-modal="true"
-          onFocus={(e) => {
-            // Once the keyboard has opened, keep the focused field visible inside the dialog.
-            const el = e.target as HTMLElement;
-            if (!el.matches('input, textarea, select')) return;
-            setTimeout(() => el.scrollIntoView({ block: 'nearest' }), 350);
-          }}
         >
           <motion.div
             className="absolute inset-0 bg-black/30 backdrop-blur-[2px] dark:bg-black/50"

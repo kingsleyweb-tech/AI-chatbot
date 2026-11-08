@@ -19,6 +19,32 @@ export function frameFor(vv: { height: number; offsetTop: number; scale: number 
   };
 }
 
+const FIELD = 'input:not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit]), textarea, select, [contenteditable="true"]';
+
+function scrollParent(el: HTMLElement): HTMLElement | null {
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    const oy = getComputedStyle(p).overflowY;
+    if ((oy === 'auto' || oy === 'scroll') && p.scrollHeight > p.clientHeight) return p;
+  }
+  return null;
+}
+
+/**
+ * Keep the focused field inside the visible area (top..bottom, in layout
+ * viewport coordinates). The app frame and dialogs shrink when the iOS
+ * keyboard opens, but Safari does not scroll the inner scroll container
+ * that holds the field, so the field could end up under the keyboard.
+ */
+export function revealFocused(top: number, bottom: number, margin = 16) {
+  const el = document.activeElement as HTMLElement | null;
+  if (!el || !el.matches?.(FIELD)) return;
+  const r = el.getBoundingClientRect();
+  const sp = scrollParent(el);
+  if (!sp) return;
+  if (r.bottom > bottom - margin) sp.scrollTop += r.bottom - (bottom - margin);
+  else if (r.top < top + margin) sp.scrollTop -= top + margin - r.top;
+}
+
 /**
  * Track the visual viewport (what is actually visible above the iOS
  * keyboard) and expose it as CSS variables used by `.app-frame`.
@@ -41,16 +67,30 @@ export function useVisualViewport() {
         root.style.setProperty('--app-height', `${f.height}px`);
         root.style.setProperty('--app-top', `${f.top}px`);
         root.classList.toggle('keyboard-open', f.keyboard);
+        // After the frame has been resized above the keyboard, bring the field into view.
+        if (f.keyboard) requestAnimationFrame(() => revealFocused(f.top, f.top + f.height));
         // iOS may scroll the layout viewport when focusing an input; undo it (only at normal zoom).
         if (!f.keyboard && window.scrollY !== 0) window.scrollTo(0, 0);
       });
     };
+    // Moving between fields while the keyboard is already open.
+    let focusTimer = 0;
+    const onFocusIn = () => {
+      window.clearTimeout(focusTimer);
+      focusTimer = window.setTimeout(() => {
+        const f = frameFor(vv, window.innerHeight);
+        if (f?.keyboard) revealFocused(f.top, f.top + f.height);
+      }, 300);
+    };
+    document.addEventListener('focusin', onFocusIn);
     update();
     vv.addEventListener('resize', update);
     vv.addEventListener('scroll', update);
     window.addEventListener('orientationchange', update);
     return () => {
       cancelAnimationFrame(frame);
+      window.clearTimeout(focusTimer);
+      document.removeEventListener('focusin', onFocusIn);
       vv.removeEventListener('resize', update);
       vv.removeEventListener('scroll', update);
       window.removeEventListener('orientationchange', update);
