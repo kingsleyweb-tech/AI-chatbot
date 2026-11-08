@@ -98,12 +98,24 @@ export function startMonitoring() {
 /** POST /api/chat and yield normalized stream events. */
 export async function* streamChat(body: ChatRequestBody, signal: AbortSignal): AsyncGenerator<StreamEvent> {
   if (!navigator.onLine) throw new ApiError(0, 'offline', 'You are offline. Your message was saved; retry when connected.');
-  const res = await fetch('/api/chat', {
-    method: 'POST',
-    headers: { authorization: `Bearer ${await token()}`, 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-    signal,
-  });
+  const post = async () =>
+    fetch('/api/chat', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${await token()}`, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal,
+    });
+  let res: Response;
+  try {
+    res = await post();
+  } catch (err) {
+    // The request did not get through (dropped connection): try once more. Safe, because the
+    // reply ID is the same and the server refuses a second run of a reply it is still generating.
+    if (signal.aborted || !(err instanceof TypeError)) throw err;
+    await new Promise((r) => setTimeout(r, 1500));
+    if (signal.aborted) throw err;
+    res = await post();
+  }
   if (!res.ok || !res.body) throw await toError(res);
   for await (const data of parseSSE(res.body, signal)) {
     try {

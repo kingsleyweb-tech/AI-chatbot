@@ -12,4 +12,6 @@ interface ImportMetaEnv {
   readonly VITE_FIREBASE_APP_ID?: string;
   readonly VITE_FIREBASE_MEASUREMENT_ID?: string;
   readonly VITE_APPCHECK_SITE_KEY?: string;
+  /** local end-to-end tests: '1' connects to the Firebase emulators (dev server only) */
+  readonly VITE_FIREBASE_EMULATORS?: string;
 }

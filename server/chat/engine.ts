@@ -237,10 +237,33 @@ export async function runChat(
   };
 
   activeRequests.add(requestKey);
+
+  // The reply is stored as 'processing' straight away, so it exists in the
+  // conversation even if this function is stopped before it finishes.
+  // A retry reuses the failed reply's ID: that overwrites it (no duplicate)
+  // and does not count it twice.
+  const msgPath = `${convPath}/messages/${body.assistantMessageId}`;
+  const placeholderDoc = { role: 'assistant', content: '', status: 'processing', model: body.model, error: null, createdAt: SERVER_TIME };
+  const placeholder: Promise<boolean> = (async () => {
+    try {
+      await db.commit([
+        { op: 'set', path: msgPath, data: placeholderDoc, precondition: { exists: false } },
+        { op: 'increment', path: convPath, increments: { messageCount: 1 }, data: { updatedAt: SERVER_TIME } },
+      ]);
+      return true;
+    } catch (err) {
+      if ((err as { status?: number }).status === 409) {
+        return db.set(msgPath, placeholderDoc).then(() => true, () => false);
+      }
+      console.warn('[chat] could not create the reply placeholder', err instanceof Error ? err.message : err);
+      return false;
+    }
+  })();
+
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       controllerRef = controller;
-      void (async () => {
+      const job = (async () => {
         let content = '';
         let reasoning = '';
         let usage: UsageInfo | null = null;
@@ -585,22 +608,20 @@ export async function runChat(
             errorEvent = friendlyError(err);
             send(errorEvent);
           }
-        } finally {
-          closed = true;
-          try {
-            controller.close();
-          } catch {
-            /* already closed */
-          }
         }
 
         activeRequests.delete(requestKey);
-        // ---- Persist the assistant message (even if the client disconnected) ----
-        const msgPath = `${convPath}/messages/${body.assistantMessageId}`;
+        // ---- Persist the assistant message BEFORE the response ends ----
+        // Work after the response has closed is not guaranteed to run on
+        // Vercel (the function can be frozen), which lost replies before.
+        // The whole job is also registered with waitUntil (below), so it
+        // completes when the browser disconnects.
+        const created = await placeholder;
         const writes: Write[] = [
           {
             op: 'set',
             path: msgPath,
+            merge: true,
             data: {
               role: 'assistant',
               content,
@@ -622,15 +643,19 @@ export async function runChat(
                     suggestion: errorEvent.suggestion ?? null,
                   }
                 : null,
-              createdAt: SERVER_TIME,
+              // keep the placeholder's time, so the order matches when the message was sent
+              ...(created ? {} : { createdAt: SERVER_TIME }),
             },
           },
-          {
-            op: 'increment',
-            path: convPath,
-            increments: { messageCount: 1 },
-            data: { updatedAt: SERVER_TIME, lastModel: usedModel },
-          },
+          created
+            ? // only if the chat still exists: a chat deleted while its reply was generating stays deleted
+              { op: 'set', path: convPath, merge: true, data: { updatedAt: SERVER_TIME, lastModel: usedModel }, precondition: { exists: true } }
+            : {
+                op: 'increment',
+                path: convPath,
+                increments: { messageCount: 1 },
+                data: { updatedAt: SERVER_TIME, lastModel: usedModel },
+              },
         ];
         if (routeInfo) count(['routing', 'switched']);
         // Usage counters are server-written (read-only for users in the rules).
@@ -658,13 +683,30 @@ export async function runChat(
             },
           });
         }
+        let saved = false;
+        for (let attempt = 0; attempt < 2 && !saved; attempt++) {
+          try {
+            await db.commit(writes);
+            saved = true;
+          } catch (err) {
+            if ((err as { status?: number }).status === 409) {
+              // the conversation was deleted meanwhile: nothing to store, and the browser must not store it either
+              saved = true;
+              break;
+            }
+            console.error(
+              `[chat] failed to persist assistant message (attempt ${attempt + 1})`,
+              err instanceof Error ? err.message : err,
+            );
+          }
+        }
+        // tell the browser, which stores the reply itself if the server could not
+        send({ type: 'saved', ok: saved });
+        closed = true;
         try {
-          await db.commit(writes);
-        } catch (err) {
-          console.error(
-            '[chat] failed to persist assistant message',
-            err instanceof Error ? err.message : err,
-          );
+          controller.close();
+        } catch {
+          /* already closed */
         }
         if (usageWrites.length) {
           try {
@@ -771,6 +813,19 @@ export async function runChat(
           );
         }
       })();
+      // keep the function alive until the reply is stored, even if the browser disconnects
+      background(
+        job.catch((err) => {
+          console.error('[chat] reply job failed', err instanceof Error ? err.message : err);
+          activeRequests.delete(requestKey);
+          closed = true;
+          try {
+            controller.close();
+          } catch {
+            /* already closed */
+          }
+        }),
+      );
     },
     cancel() {
       closed = true;

@@ -7,6 +7,7 @@ import type { Plugin, ViteDevServer } from 'vite';
  * so `npm run dev` runs the full stack locally without the Vercel CLI.
  */
 export function apiDevPlugin(): Plugin {
+  let emulatorVerifierSet = false;
   return {
     name: 'tessera-api-dev',
     apply: 'serve',
@@ -20,6 +21,24 @@ export function apiDevPlugin(): Plugin {
             string,
             ((r: Request) => Promise<Response>) | undefined
           >;
+          // Local end-to-end tests against the Firebase emulators: emulator ID tokens are
+          // unsigned, so they are decoded instead of verified (dev server only, never deployed).
+          if (process.env.FIREBASE_AUTH_EMULATOR_HOST && !emulatorVerifierSet) {
+            const auth = (await server.ssrLoadModule('/server/auth.ts')) as typeof import('../server/auth.js');
+            const { decodeJwt } = await import('jose');
+            auth.setTokenVerifier(async (token) => decodeJwt(token));
+            emulatorVerifierSet = true;
+            // scripted AI instead of Gemini/OpenRouter generation (no provider quota is used)
+            if (process.env.E2E_FAKE_AI === '1') {
+              const registry = (await server.ssrLoadModule('/server/providers/registry.ts')) as typeof import('../server/providers/registry.js');
+              const { fakeProvider } = (await server.ssrLoadModule('/dev/fakeAi.ts')) as typeof import('./fakeAi.js');
+              for (const model of ['gemini:any', 'openrouter/any']) {
+                const provider = registry.providerFor(model);
+                Object.assign(provider, fakeProvider(provider.id));
+              }
+              console.log('[api-dev] E2E_FAKE_AI: scripted replies, no provider calls');
+            }
+          }
           const handler = mod[req.method ?? 'GET'];
           if (!handler) {
             res.statusCode = 405;

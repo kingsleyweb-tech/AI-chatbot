@@ -1,6 +1,7 @@
 import { initializeApp, type FirebaseOptions } from 'firebase/app';
-import { browserLocalPersistence, getAuth, indexedDBLocalPersistence, initializeAuth, browserPopupRedirectResolver } from 'firebase/auth';
+import { browserLocalPersistence, connectAuthEmulator, getAuth, indexedDBLocalPersistence, initializeAuth, browserPopupRedirectResolver } from 'firebase/auth';
 import {
+  connectFirestoreEmulator,
   initializeFirestore,
   persistentLocalCache,
   persistentMultipleTabManager,
@@ -58,12 +59,22 @@ function createDb(): Firestore {
     return initializeFirestore(app, {
       localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
       ignoreUndefinedProperties: true,
+      // the local test browser (WebKit on Windows) cannot hold Firestore's streaming channel open
+      ...(EMULATORS ? { experimentalForceLongPolling: true } : {}),
     });
   } catch {
     return initializeFirestore(app, { localCache: memoryLocalCache(), ignoreUndefinedProperties: true });
   }
 }
+const EMULATORS = import.meta.env.DEV && import.meta.env.VITE_FIREBASE_EMULATORS === '1';
 export const db = createDb();
+
+// Local end-to-end tests only: `vite` started with VITE_FIREBASE_EMULATORS=1 talks to the
+// Auth and Firestore emulators (never the live project). Production builds drop this code.
+if (EMULATORS) {
+  connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
+  connectFirestoreEmulator(db, '127.0.0.1', 8080);
+}
 
 /** Whether this build has Google Analytics configured at all. */
 export const analyticsAvailable = Boolean(config.measurementId) && firebaseConfigured;

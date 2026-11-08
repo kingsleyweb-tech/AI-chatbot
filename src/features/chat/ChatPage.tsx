@@ -27,12 +27,33 @@ import { uploadDocument } from '../documents/upload';
 import { useShell } from '../shell/AppShell';
 import { useDeleteConversation, useRenameDialog } from '../shell/Sidebar';
 import { Composer } from './Composer';
-import { clearLiveReply, generate, stopGeneration, toTurns, useLiveReply } from './engine';
+import { clearLiveReply, generate, setSending, stopGeneration, toTurns, useLiveReplies, useSending, type LiveReply } from './engine';
 import { AssistantMessage, UserMessage, type MessageActions } from './MessageItem';
 import { ModelPicker } from './ModelPicker';
 import { Welcome } from './Welcome';
 
 const PAGE = 60;
+/** A reply still 'processing' this long after it started was interrupted (longer than the server may run). */
+const STALE_PROCESSING_MS = 2 * 60_000;
+
+const isActive = (r: LiveReply) => r.status === 'streaming' || r.status === 'connecting';
+
+/** A live reply as a message, for the history sent to the model. */
+function replyAsMessage(r: LiveReply): Message {
+  return { id: r.id, role: 'assistant', content: r.content, model: r.model, sources: r.sources, status: r.status === 'error' ? 'error' : 'complete' };
+}
+
+/** Show a reply whose generation died without a final status as interrupted, with Retry. */
+function withInterruption(m: Message): Message {
+  if (m.role !== 'assistant' || m.status !== 'processing') return m;
+  const started = m.createdAt?.toMillis?.() ?? 0;
+  if (!started || Date.now() - started < STALE_PROCESSING_MS) return m;
+  return {
+    ...m,
+    status: m.content ? 'stopped' : 'error',
+    error: m.content ? null : { code: 'interrupted', message: 'This response was interrupted before it finished.', suggestion: null },
+  };
+}
 
 function LibraryPicker({
   open,
@@ -95,7 +116,6 @@ export default function ChatPage() {
   const del = useDeleteConversation();
 
   // ----- draft state for a brand-new chat -----
-  const [draftId, setDraftId] = useState(() => newId());
   const [draftModel, setDraftModel] = useState<string | null>(null);
   const [draftDocs, setDraftDocs] = useState<string[]>([]);
   const [webSearch, setWebSearch] = useState(settings.webSearchDefault);
@@ -110,10 +130,7 @@ export default function ChatPage() {
   const docParam = params.get('doc');
 
   useEffect(() => {
-    if (!conversationId) {
-      setDraftId(newId());
-      setDraftDocs(docParam ? [docParam] : []);
-    }
+    if (!conversationId) setDraftDocs(docParam ? [docParam] : []);
     setCount(PAGE);
   }, [conversationId, docParam]);
 
@@ -124,16 +141,38 @@ export default function ChatPage() {
     [uid, conversationId, count],
   );
   const messages = useMemo(() => [...messagesState.data].reverse(), [messagesState.data]);
-  const live = useLiveReply(conversationId);
-  const generating = Boolean(live && (live.status === 'streaming' || live.status === 'connecting'));
+  // Replies being generated or not yet confirmed by Firestore (oldest first).
+  // Each stays visible until its stored copy arrives: a new message never hides an earlier reply.
+  const liveReplies = useLiveReplies(conversationId);
+  const live = liveReplies[liveReplies.length - 1];
+  const generating = Boolean(live && isActive(live));
+  const liveById = new Map(liveReplies.map((r) => [r.id, r]));
+  const storedIds = new Set(messages.map((m) => m.id));
+  const unsavedReplies = liveReplies.filter((r) => !storedIds.has(r.id));
+  // a user message is on its way to Firestore (shown from the local copy until confirmed)
+  const sending = useSending(conversationId);
+  const sendingRef = useRef(false);
 
-  // once the server-persisted message arrives, drop the live copy
+  // once a reply's final stored copy arrives, show that instead of the live copy
   useEffect(() => {
-    if (!live || !conversationId) return;
-    if (live.status !== 'streaming' && live.status !== 'connecting' && messages.some((m) => m.id === live.id)) {
-      clearLiveReply(conversationId);
+    if (!conversationId) return;
+    for (const r of liveReplies) {
+      if (isActive(r)) continue;
+      const m = messages.find((x) => x.id === r.id);
+      if (m && m.status !== 'processing' && (r.status === 'error' || (m.content ?? '').length >= r.content.length)) {
+        clearLiveReply(conversationId, r.id);
+      }
     }
-  }, [live, messages, conversationId]);
+  }, [liveReplies, live?.status, messages, conversationId]);
+
+  /** The whole conversation as the user sees it: stored messages, live replies in place, unsaved replies last. */
+  const currentThread = (): Message[] => [
+    ...messages.map((m) => {
+      const r = liveById.get(m.id);
+      return r ? { ...m, ...replyAsMessage(r) } : m;
+    }),
+    ...unsavedReplies.map(replyAsMessage),
+  ];
 
   const { data: savedList } = useQuery<SavedResponse>(query(paths.saved(uid), limit(500)), [uid]);
   const savedIds = useMemo(() => new Set(savedList.map((s) => s.messageId)), [savedList]);
@@ -194,10 +233,11 @@ export default function ChatPage() {
 
   // ----- actions -----
   const runGeneration = useCallback(
-    (cid: string, history: Message[], extraDocs?: string[], approvedPaidModel?: string) => {
+    (cid: string, history: Message[], extraDocs?: string[], approvedPaidModel?: string, replyId?: string) => {
       void generate({
         uid,
         conversationId: cid,
+        replyId,
         model: modelId,
         history: toTurns(history),
         options: {
@@ -223,55 +263,84 @@ export default function ChatPage() {
       toast('You are offline. Reconnect to send messages.', 'error');
       return;
     }
-    let cid = conversationId;
+    // one message at a time: a double tap must not send twice or start two replies
+    if (sendingRef.current || sending || generating) return;
+    sendingRef.current = true;
+    const isNew = !conversationId;
+    // a new conversation gets its ID now, so it can never reuse the previous conversation's ID
+    const cid = conversationId ?? newId();
+    setSending(cid, true);
     try {
-      if (!cid) {
-        cid = await createConversation(uid, {
-          id: draftId,
-          title: text.split('\n')[0].slice(0, 60) || (images.length ? 'Image' : 'New chat'),
-          projectId: projectParam,
-          model: draftModel ?? settings.defaultModel ?? fallbackDefault,
-          documentIds: draftDocs,
-        });
-        navigate(`/c/${cid}`, { replace: false });
+      // Both writes go to the local cache first, so the conversation and the message appear at
+      // once, even on a slow connection. The reply is requested only after the server confirms them.
+      const writes: Promise<unknown>[] = [];
+      if (isNew) {
+        writes.push(
+          createConversation(uid, {
+            id: cid,
+            title: text.split('\n')[0].slice(0, 60) || (images.length ? 'Image' : 'New chat'),
+            projectId: projectParam,
+            model: draftModel ?? settings.defaultModel ?? fallbackDefault,
+            documentIds: draftDocs,
+          }),
+        );
       }
       const docAttachments = attachedDocs
         .filter((d) => d.status === 'ready')
         .map((d) => ({ kind: 'document' as const, documentId: d.id, name: d.name, mime: d.mime }));
       const isFirstDocMention = messages.length === 0;
       const attachments = [...images, ...(isFirstDocMention ? docAttachments : [])];
-      const mid = await addUserMessage(uid, cid, text, attachments);
+      const mid = newId();
+      writes.push(addUserMessage(uid, cid, text, attachments, mid));
+      if (isNew) navigate(`/c/${cid}`, { replace: false });
       stick.current = true;
+      await Promise.all(writes);
       const userMsg: Message = { id: mid, role: 'user', content: text, attachments };
-      runGeneration(cid, [...messages, userMsg], docIds);
+      runGeneration(cid, [...currentThread(), userMsg], docIds);
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Could not send the message.', 'error');
+    } finally {
+      sendingRef.current = false;
+      setSending(cid, false);
     }
   };
 
+  /** Explicit "Regenerate" or "Retry" on a stored reply: the new reply replaces it under the same ID. */
   const regenerate = async (m: Message, approvedPaidModel?: string) => {
-    if (!conversationId) return;
-    const idx = messages.findIndex((x) => x.id === m.id);
+    if (!conversationId || generating) return;
+    const thread = currentThread();
+    const idx = thread.findIndex((x) => x.id === m.id);
     if (idx < 0) return;
-    const after = messages.slice(idx).map((x) => x.id);
-    await deleteMessages(uid, conversationId, after).catch(() => undefined);
-    clearLiveReply(conversationId);
-    runGeneration(conversationId, messages.slice(0, idx), undefined, approvedPaidModel);
+    // only replies after this one are removed (Regenerate is offered on the last reply, so normally none)
+    const after = thread.slice(idx + 1).map((x) => x.id);
+    const storedAfter = after.filter((id) => storedIds.has(id));
+    if (storedAfter.length) await deleteMessages(uid, conversationId, storedAfter).catch(() => undefined);
+    after.forEach((id) => clearLiveReply(conversationId, id));
+    runGeneration(conversationId, thread.slice(0, idx), undefined, approvedPaidModel, m.id);
   };
 
+  /** Retry a reply that failed while live: same ID, so the failed copy is replaced, never duplicated. */
   const retry = () => {
-    if (!conversationId) return;
-    clearLiveReply(conversationId);
-    runGeneration(conversationId, messages);
+    if (!conversationId || !live || generating) return;
+    const id = live.id;
+    runGeneration(conversationId, currentThread().filter((x) => x.id !== id), undefined, undefined, id);
+  };
+
+  /** A user message whose reply was never stored: generate one without adding the message again. */
+  const generateMissing = () => {
+    if (!conversationId || generating || sending || sendingRef.current) return;
+    runGeneration(conversationId, currentThread());
   };
 
   const edit = async (m: Message, text: string) => {
     if (!conversationId) return;
-    const idx = messages.findIndex((x) => x.id === m.id);
-    const after = messages.slice(idx + 1).map((x) => x.id);
+    const thread = currentThread();
+    const idx = thread.findIndex((x) => x.id === m.id);
+    const after = thread.slice(idx + 1).map((x) => x.id);
     await editUserMessage(uid, conversationId, m.id, text);
-    await deleteMessages(uid, conversationId, after).catch(() => undefined);
-    runGeneration(conversationId, [...messages.slice(0, idx), { ...m, content: text }]);
+    await deleteMessages(uid, conversationId, after.filter((id) => storedIds.has(id))).catch(() => undefined);
+    after.forEach((id) => clearLiveReply(conversationId, id));
+    runGeneration(conversationId, [...thread.slice(0, idx), { ...m, content: text }]);
   };
 
   const quickAction = (action: QuickAction) => {
@@ -318,9 +387,11 @@ export default function ChatPage() {
   };
 
   const notFound = conversationId && !convState.loading && !convState.exists;
-  const showWelcome = !conversationId || (!messagesState.loading && messages.length === 0 && !live);
-  const lastAssistantId = [...messages].reverse().find((m) => m.role === 'assistant')?.id;
-  const liveIsNew = live && !messages.some((m) => m.id === live.id);
+  const showWelcome = !conversationId || (!messagesState.loading && messages.length === 0 && !liveReplies.length);
+  const threadOrder = [...messages.map((m) => ({ id: m.id, role: m.role })), ...unsavedReplies.map((r) => ({ id: r.id, role: 'assistant' as const }))];
+  const lastAssistantId = [...threadOrder].reverse().find((m) => m.role === 'assistant')?.id;
+  // the last message is the user's and no reply is on its way (e.g. the browser closed before it was sent)
+  const missingReply = Boolean(conversationId && !messagesState.loading && threadOrder.at(-1)?.role === 'user' && !generating && !sending);
 
   return (
     <div className="flex h-full flex-col">
@@ -414,29 +485,40 @@ export default function ChatPage() {
               </div>
             )}
             <div className="space-y-7">
-              {messages.map((m) =>
-                m.role === 'user' ? (
-                  <UserMessage key={m.id} m={m} actions={actions} canEdit={!generating} />
-                ) : (
+              {messages.map((m) => {
+                if (m.role === 'user') return <UserMessage key={m.id} m={m} actions={actions} canEdit={!generating} />;
+                const r = liveById.get(m.id);
+                return (
                   <AssistantMessage
                     key={m.id}
-                    m={m}
-                    isLast={m.id === lastAssistantId && !liveIsNew}
+                    m={r ? { ...m, content: r.content } : withInterruption(m)}
+                    live={r}
+                    isLast={m.id === lastAssistantId}
                     saved={savedIds.has(m.id)}
                     actions={actions}
                     busy={generating}
                   />
-                ),
-              )}
-              {live && liveIsNew && (
+                );
+              })}
+              {unsavedReplies.map((r) => (
                 <AssistantMessage
-                  m={{ id: live.id, role: 'assistant', content: live.content }}
-                  live={live}
-                  isLast
+                  key={r.id}
+                  m={{ id: r.id, role: 'assistant', content: r.content }}
+                  live={r}
+                  isLast={r.id === lastAssistantId}
                   saved={false}
                   actions={actions}
                   busy={generating}
                 />
+              ))}
+              {sending && <p className="animate-pulse text-right text-xs text-subtle">Sending…</p>}
+              {missingReply && (
+                <div className="flex flex-wrap items-center gap-2 text-sm text-muted">
+                  <span>No response was saved for this message.</span>
+                  <Button size="sm" variant="outline" onClick={generateMissing} disabled={!online}>
+                    Generate response
+                  </Button>
+                </div>
               )}
             </div>
           </div>
@@ -456,7 +538,7 @@ export default function ChatPage() {
         )}
         {!notFound && (
           <Composer
-            key={conversationId ?? draftId}
+            key={conversationId ?? 'new'}
             onSend={send}
             onStop={() => conversationId && stopGeneration(conversationId)}
             generating={generating}

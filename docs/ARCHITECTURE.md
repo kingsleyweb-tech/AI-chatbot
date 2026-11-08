@@ -28,10 +28,27 @@ Firestore SDK (offline) ──┼─ realtime reads/writes ───────
 3. Gather context in parallel: relevant memories, related past conversations, attached-document excerpts and web results.
 4. Build the system prompt (`server/chat/prompt.ts`) and trim history to the model's context budget.
 5. Stream from the provider and re-emit normalized SSE events: `start`, `notice`, `sources`, `context`, `reasoning`, `delta`, `usage`, `error`, `done`. If a model fails **before** producing text (rate limit, unavailable, empty answer), the next model in the chain is tried and the UI shows a notice.
-6. Persist the assistant message even if the client disconnected, plus usage counters.
+6. Persist the assistant message (see **Message persistence** below), plus usage counters.
 7. After the response, in the background via `waitUntil`: generate a title, extract memories, and update the conversation summary.
 
 The browser keeps live replies in a module-level store (`src/features/chat/engine.ts`). Navigating away doesn't interrupt a stream, and **Stop** aborts the fetch, which aborts the upstream request.
+
+### Message persistence
+
+Each message is its own document (`…/messages/{mid}`); nothing is ever rewritten as an array, so a new message can't overwrite an earlier one.
+
+1. The browser stores the **user message** (`addUserMessage`) before it calls `/api/chat`. A failed reply never loses the question.
+2. The server creates the **reply document** right away, with status `processing` and an ID chosen by the browser (`assistantMessageId`). A retry reuses that ID, so it replaces the failed reply instead of adding a second one.
+3. When generation ends, the server writes the final content with status `complete`, `stopped` (interrupted, partial text kept) or `error`. It does this **before** closing the response stream, inside the `waitUntil` job, and retries once. It then sends a final `saved` event. (Before this fix the write ran after the stream closed and outside `waitUntil`; Vercel froze the function, the write timed out, and replies vanished when the next message replaced the live copy.)
+4. If the browser doesn't get `saved: true`, it stores the reply itself (`saveAssistantFallback`). This backup is a transaction that writes only while the stored reply is missing or still `processing`, and only if the conversation still exists. It never overwrites a finished server copy or brings back a deleted conversation. When offline, it waits for the connection.
+5. If `/api/chat` can't be reached at all (dropped connection before the request got through), the browser retries once with the same reply ID. The server refuses a second run of a reply it's still generating (`duplicate_request`), so a retry can't produce two replies.
+6. The browser keeps every live reply (up to 20 per conversation, keyed by ID) until its stored copy arrives, so a new message never hides an earlier reply.
+7. A reply still `processing` after 2 minutes (longer than a function may run) shows as interrupted, with Retry. A trailing user message without a reply offers **Generate response**.
+8. A reply for a conversation deleted meanwhile is dropped (the precondition `exists: true` on the conversation fails), so deletion stays final.
+
+The user message is written to the local Firestore cache first, so a new conversation opens and shows the message immediately, even on a slow connection ("Sending…" until the server confirms). The reply is requested only after that confirmation. A new conversation's ID is created at send time.
+
+Signed-in persistence is tested end to end against the Firebase emulators with a scripted AI (`dev/fakeAi.ts`, dev server only): `e2e-emulator/` and `playwright.emulator.config.ts`, which describes the setup.
 
 ## Providers and model routing (`server/providers`, `server/router`)
 

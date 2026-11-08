@@ -207,9 +207,15 @@ export type StreamEvent =
   | { type: 'delta'; text: string }
   | { type: 'usage'; usage: UsageInfo }
   | { type: 'error'; code: string; message: string; retryable: boolean; suggestion?: string }
-  | { type: 'done'; finishReason: string | null; model: string };
+  | { type: 'done'; finishReason: string | null; model: string }
+  /** sent last: whether the reply was stored in Firestore (the client stores it itself when not) */
+  | { type: 'saved'; ok: boolean };
 
-export type MessageStatus = 'complete' | 'streaming' | 'stopped' | 'error';
+/**
+ * 'processing': created when generation starts, replaced by the final status.
+ * A 'processing' message that is no longer being generated was interrupted.
+ */
+export type MessageStatus = 'processing' | 'complete' | 'streaming' | 'stopped' | 'error';
 
 export const MEMORY_CATEGORIES = [
   'preference',

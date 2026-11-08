@@ -433,7 +433,8 @@ export const AssistantMessage = memo(function AssistantMessage({
             <Markdown content={content} sources={sources} streaming={streaming} />
           </div>
         )}
-        {status === 'stopped' && <p className="mt-2 text-xs text-subtle">Stopped</p>}
+        {!live && status === 'processing' && <p className="animate-pulse py-1.5 text-sm text-muted">Generating…</p>}
+        {status === 'stopped' && <p className="mt-2 text-xs text-subtle">Stopped before it finished</p>}
         {approval && (
           <ApprovalCard
             approval={approval}

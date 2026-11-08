@@ -9,6 +9,7 @@ import {
   limit,
   orderBy,
   query,
+  runTransaction,
   serverTimestamp,
   setDoc,
   updateDoc,
@@ -126,8 +127,8 @@ export async function addUserMessage(
   cid: string,
   content: string,
   attachments: Attachment[],
+  id: string = newId(),
 ): Promise<string> {
-  const id = newId();
   const batch = writeBatch(db);
   batch.set(paths.message(uid, cid, id), {
     role: 'user',
@@ -141,17 +142,33 @@ export async function addUserMessage(
   return id;
 }
 
-export async function savePartialAssistant(
+/**
+ * Store a reply from the browser when the server could not (connection lost,
+ * server write failed, stopped). Merges into the server's 'processing' copy,
+ * so nothing else in the conversation is touched.
+ */
+export async function saveAssistantFallback(
   uid: string,
   cid: string,
   id: string,
-  data: Pick<Message, 'content' | 'model' | 'sources' | 'reasoning'>,
+  data: Pick<Message, 'content' | 'model' | 'sources' | 'reasoning'> & {
+    status: 'complete' | 'stopped' | 'error';
+    error: Message['error'];
+  },
 ) {
-  await setDoc(
-    paths.message(uid, cid, id),
-    { role: 'assistant', status: 'stopped', createdAt: serverTimestamp(), ...data },
-    { merge: true },
-  );
+  const ref = paths.message(uid, cid, id);
+  const conv = paths.conversation(uid, cid);
+  // A transaction (not a blind write), so this backup can never overwrite a reply the server has
+  // already stored, nor bring back a conversation that was deleted meanwhile.
+  return runTransaction(db, async (tx) => {
+    const c = await tx.get(conv);
+    const m = await tx.get(ref);
+    if (!c.exists()) return 'skipped' as const;
+    const stored = m.exists() ? (m.data().status as string | undefined) : undefined;
+    if (stored && stored !== 'processing') return 'skipped' as const;
+    tx.set(ref, m.exists() ? { role: 'assistant', ...data } : { role: 'assistant', createdAt: serverTimestamp(), ...data }, { merge: true });
+    return 'saved' as const;
+  });
 }
 
 export async function editUserMessage(uid: string, cid: string, mid: string, content: string) {
