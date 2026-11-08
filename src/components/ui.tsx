@@ -46,7 +46,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     <button
       ref={ref}
       className={cn(
-        'inline-flex select-none items-center justify-center font-medium whitespace-nowrap transition-colors duration-150 disabled:pointer-events-none disabled:opacity-50',
+        'tap inline-flex select-none items-center justify-center font-medium whitespace-nowrap transition-colors duration-150 disabled:pointer-events-none disabled:opacity-50',
         variants[variant],
         sizes[size],
         className,
@@ -71,8 +71,8 @@ export const IconButton = forwardRef<
       aria-label={label}
       title={label}
       className={cn(
-        'inline-flex shrink-0 items-center justify-center rounded-lg text-muted transition-colors duration-150 hover:bg-surface-2 hover:text-fg disabled:pointer-events-none disabled:opacity-40',
-        size === 'sm' && 'size-7',
+        'tap inline-flex shrink-0 items-center justify-center rounded-lg text-muted transition-colors duration-150 hover:bg-surface-2 hover:text-fg disabled:pointer-events-none disabled:opacity-40',
+        size === 'sm' && 'tap-sm size-7',
         size === 'md' && 'size-9',
         size === 'lg' && 'size-11',
         active && 'bg-accent-soft text-accent hover:bg-accent-soft hover:text-accent',
@@ -183,7 +183,7 @@ export function Switch({
       disabled={disabled}
       onClick={() => onChange(!checked)}
       className={cn(
-        'relative inline-flex h-6 w-10 shrink-0 items-center rounded-full transition-colors duration-200 disabled:opacity-50',
+        'tap tap-sm inline-flex h-6 w-10 shrink-0 items-center rounded-full transition-colors duration-200 disabled:opacity-50',
         checked ? 'bg-accent' : 'bg-border-strong',
       )}
     >
@@ -451,7 +451,7 @@ export function Menu({
                       item.onSelect();
                     }}
                     className={cn(
-                      'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors hover:bg-surface-2 disabled:opacity-40 sm:py-1.5',
+                      'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2.5 text-left text-sm transition-colors hover:bg-surface-2 disabled:opacity-40 sm:py-1.5',
                       item.danger ? 'text-danger' : 'text-fg',
                     )}
                   >

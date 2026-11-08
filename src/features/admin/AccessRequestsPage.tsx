@@ -60,7 +60,7 @@ function Stat({ label, value }: { label: string; value: number }) {
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="grid grid-cols-[8.5rem_minmax(0,1fr)] gap-3 py-1.5 text-sm">
+    <div className="grid grid-cols-[6.5rem_minmax(0,1fr)] gap-3 py-1.5 text-sm sm:grid-cols-[8.5rem_minmax(0,1fr)]">
       <span className="text-muted">{label}</span>
       <span className="min-w-0 break-words">{children}</span>
     </div>

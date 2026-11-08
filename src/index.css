@@ -143,6 +143,16 @@ body {
   }
 }
 
+/* Touch screens: buttons keep their look but get a finger-sized (~44px) hit
+   area. In the components layer so a utility such as `absolute` still wins. */
+@layer components {
+  .tap { position: relative; }
+}
+@media (pointer: coarse) {
+  .tap::after { content: ''; position: absolute; inset: -6px -2px; }
+  .tap-sm::after { inset: -8px -3px; }
+}
+
 /* iOS zooms into inputs below 16px; keep form controls at 16px on touch devices. */
 @media (pointer: coarse) {
   input, textarea, select { font-size: 16px !important; }

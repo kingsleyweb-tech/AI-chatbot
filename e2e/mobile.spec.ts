@@ -50,6 +50,17 @@ test('form inputs are at least 16px so iOS Safari does not zoom on focus', async
   }
 });
 
+test('buttons get a finger-sized hit area beyond their visible edge on touch screens', async ({ page }) => {
+  await page.goto('/login');
+  const button = page.getByRole('button', { name: 'Sign in', exact: true });
+  const box = (await button.boundingBox())!;
+  const hit = await page.evaluate(
+    ({ x, y }) => (document.elementFromPoint(x, y) as HTMLElement | null)?.closest('button')?.textContent?.trim() ?? null,
+    { x: box.x + box.width / 2, y: box.y + box.height + 4 },
+  );
+  expect(hit).toBe('Sign in');
+});
+
 test('deep links to protected pages also require sign-in', async ({ page }) => {
   await page.goto('/settings/models');
   await expect(page).toHaveURL(/\/login$/);
