@@ -261,7 +261,8 @@ export function Dialog({
     <AnimatePresence>
       {open && (
         <div
-          className="vv-overlay z-50 flex items-end justify-center sm:items-center sm:p-4"
+          // Phones: anchored near the top so the keyboard (which rises from the bottom) never covers it.
+          className="vv-overlay z-50 flex items-start justify-center px-3 pt-[calc(env(safe-area-inset-top)+16px)] sm:items-center sm:p-4"
           role="dialog"
           aria-modal="true"
         >
@@ -274,12 +275,12 @@ export function Dialog({
             onClick={onClose}
           />
           <motion.div
-            initial={{ opacity: 0, y: 24 }}
+            initial={{ opacity: 0, y: -12 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 24 }}
+            exit={{ opacity: 0, y: -12 }}
             transition={{ type: 'spring', damping: 30, stiffness: 380 }}
             className={cn(
-              'relative flex max-h-[min(calc(var(--app-height,100dvh)*0.92),760px)] w-full flex-col overflow-hidden rounded-t-2xl border border-border bg-elevated shadow-2xl sm:rounded-2xl',
+              'relative flex max-h-[min(calc(var(--app-height,100dvh)-env(safe-area-inset-top)-32px),760px)] w-full flex-col overflow-hidden rounded-2xl border border-border bg-elevated shadow-2xl',
               size === 'sm' && 'sm:max-w-sm',
               size === 'md' && 'sm:max-w-lg',
               size === 'lg' && 'sm:max-w-2xl',
@@ -298,7 +299,7 @@ export function Dialog({
             )}
             <div className="scroll-thin touch-scroll min-h-0 flex-1 overflow-y-auto px-5 pb-5">{children}</div>
             {footer && (
-              <div className="flex justify-end gap-2 border-t border-border bg-surface px-5 py-3 pb-[max(12px,env(safe-area-inset-bottom))] sm:pb-3">
+              <div className="flex justify-end gap-2 border-t border-border bg-surface px-5 py-3">
                 {footer}
               </div>
             )}
