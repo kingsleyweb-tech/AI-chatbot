@@ -256,7 +256,7 @@ export function ModelPicker({
                 {content}
               </motion.div>
             ) : (
-              <div className="fixed inset-0 z-[60] flex items-end">
+              <div className="vv-overlay z-[60] flex items-end">
                 <motion.div
                   className="absolute inset-0 bg-black/30 dark:bg-black/50"
                   initial={{ opacity: 0 }}
@@ -269,7 +269,7 @@ export function ModelPicker({
                   animate={{ y: 0 }}
                   exit={{ y: '100%' }}
                   transition={{ type: 'spring', damping: 32, stiffness: 340 }}
-                  className="relative flex h-[78dvh] w-full flex-col overflow-hidden rounded-t-2xl border border-border bg-elevated pb-safe shadow-2xl"
+                  className="relative flex h-[min(78dvh,calc(var(--app-height,100dvh)-16px))] w-full flex-col overflow-hidden rounded-t-2xl border border-border bg-elevated pb-safe shadow-2xl"
                 >
                   <div className="mx-auto mt-2 h-1 w-9 rounded-full bg-border-strong" />
                   <div className="px-4 pt-3 text-base font-semibold">Choose a model</div>

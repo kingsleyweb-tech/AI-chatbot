@@ -115,6 +115,16 @@ body {
   overflow: hidden;
 }
 
+/* Overlays (dialogs, sheets) are portaled outside .app-frame; they must also
+   follow the visual viewport or the iOS keyboard covers their inputs. */
+.vv-overlay {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: var(--app-top, 0px);
+  height: var(--app-height, 100dvh);
+}
+
 .pt-safe { padding-top: env(safe-area-inset-top); }
 .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
 .pl-safe { padding-left: env(safe-area-inset-left); }

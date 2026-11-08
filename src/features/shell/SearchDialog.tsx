@@ -73,7 +73,7 @@ export function SearchDialog({ open, onClose }: { open: boolean; onClose: () => 
   return createPortal(
     <AnimatePresence>
       {open && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center px-3 pt-[max(env(safe-area-inset-top),12px)] sm:pt-[12vh]">
+        <div className="vv-overlay z-50 flex items-start justify-center px-3 pt-[max(env(safe-area-inset-top),12px)] sm:pt-[12vh]">
           <motion.div
             className="absolute inset-0 bg-black/30 dark:bg-black/50"
             initial={{ opacity: 0 }}
@@ -114,7 +114,7 @@ export function SearchDialog({ open, onClose }: { open: boolean; onClose: () => 
                 Esc
               </button>
             </div>
-            <div className="scroll-thin max-h-[60dvh] overflow-y-auto p-1.5">
+            <div className="scroll-thin max-h-[min(60dvh,calc(var(--app-height,100dvh)-140px))] overflow-y-auto p-1.5">
               {!all ? (
                 <div className="flex justify-center py-8">
                   <Spinner />

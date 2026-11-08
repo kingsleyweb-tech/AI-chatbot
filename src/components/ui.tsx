@@ -260,7 +260,17 @@ export function Dialog({
   return createPortal(
     <AnimatePresence>
       {open && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4" role="dialog" aria-modal="true">
+        <div
+          className="vv-overlay z-50 flex items-end justify-center sm:items-center sm:p-4"
+          role="dialog"
+          aria-modal="true"
+          onFocus={(e) => {
+            // Once the keyboard has opened, keep the focused field visible inside the dialog.
+            const el = e.target as HTMLElement;
+            if (!el.matches('input, textarea, select')) return;
+            setTimeout(() => el.scrollIntoView({ block: 'nearest' }), 350);
+          }}
+        >
           <motion.div
             className="absolute inset-0 bg-black/30 backdrop-blur-[2px] dark:bg-black/50"
             initial={{ opacity: 0 }}
@@ -275,7 +285,7 @@ export function Dialog({
             exit={{ opacity: 0, y: 24 }}
             transition={{ type: 'spring', damping: 30, stiffness: 380 }}
             className={cn(
-              'relative flex max-h-[min(88dvh,760px)] w-full flex-col overflow-hidden rounded-t-2xl border border-border bg-elevated shadow-2xl sm:rounded-2xl',
+              'relative flex max-h-[min(calc(var(--app-height,100dvh)*0.92),760px)] w-full flex-col overflow-hidden rounded-t-2xl border border-border bg-elevated shadow-2xl sm:rounded-2xl',
               size === 'sm' && 'sm:max-w-sm',
               size === 'md' && 'sm:max-w-lg',
               size === 'lg' && 'sm:max-w-2xl',
