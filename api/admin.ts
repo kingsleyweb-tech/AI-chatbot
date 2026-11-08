@@ -11,7 +11,7 @@ import {
   type Actor,
   type ProfileStatus,
 } from '../server/account/lifecycle.js';
-import { accountAdmin, adminConfigured, adminDb, type AuthAccount } from '../server/admin.js';
+import { accountAdmin, adminConfigured, adminDb, SERVER_UID, type AuthAccount } from '../server/admin.js';
 import { maskPhone } from '../server/auth/phone.js';
 import { env } from '../server/env.js';
 import type { Firestore } from '../server/firestore.js';
@@ -122,6 +122,8 @@ export function stats(rows: AdminUserRow[], now = Date.now()) {
 }
 
 async function loadTarget(db: Firestore, targetUid: string) {
+  // The server's own sign-in identity is not a user and must never be moderated.
+  if (targetUid === SERVER_UID) throw new HttpError(404, 'not_found', 'User not found.');
   const account = await accountAdmin().get(targetUid);
   if (!account) throw new HttpError(404, 'not_found', 'User not found.');
   const access = (await db.get<AccessConfig>('config/access'))?.data ?? null;
@@ -203,7 +205,7 @@ export const POST = handle(async (request) => {
       db.get<AccessConfig>('config/access').then((d) => d?.data ?? null),
     ]);
     const byUid = new Map(profiles.map((p) => [p.id, p.data]));
-    const rows = accounts.map((a) => row(a, byUid.get(a.uid), access)).sort((x, y) => (y.createdAt ?? 0) - (x.createdAt ?? 0));
+    const rows = accounts.filter((a) => a.uid !== SERVER_UID).map((a) => row(a, byUid.get(a.uid), access)).sort((x, y) => (y.createdAt ?? 0) - (x.createdAt ?? 0));
     return json({ users: rows, stats: stats(rows), generatedAt: Date.now() });
   }
 

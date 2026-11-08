@@ -19,7 +19,7 @@
  * nothing is left behind elsewhere.
  */
 import type { AccessConfig } from '../access.js';
-import { accountAdmin, type AuthAccount } from '../admin.js';
+import { accountAdmin, SERVER_UID, type AuthAccount } from '../admin.js';
 import { phoneKey } from '../auth/otp.js';
 import { env } from '../env.js';
 import type { Firestore, Write } from '../firestore.js';
@@ -141,7 +141,7 @@ export async function purgeDue(db: Firestore, now = Date.now()): Promise<{ purge
   const purged: string[] = [];
   const failed: string[] = [];
   for (const d of due) {
-    if (!d.data.purgeAfter || d.data.purgeAfter > now) continue;
+    if (d.id === SERVER_UID || !d.data.purgeAfter || d.data.purgeAfter > now) continue;
     try {
       const account = (await accountAdmin().get(d.id)) ?? ({ uid: d.id, email: d.data.email ?? null } as AuthAccount);
       if (account.disabled === false) continue; // restored in Auth but profile not updated: leave it alone

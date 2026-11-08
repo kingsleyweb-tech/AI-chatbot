@@ -84,6 +84,37 @@ let serverCached: { token: string; exp: number } | null = null;
  */
 export async function serverIdToken(): Promise<string> {
   if (serverCached && serverCached.exp - 5 * 60_000 > Date.now()) return serverCached.token;
+  try {
+    return await signInAsServer();
+  } catch (err) {
+    // The server account is infrastructure, not a person. If it was ever
+    // disabled (for example suspended from an older Users page, where it was
+    // listed), re-enable it once and sign in again instead of taking every
+    // database feature down with it.
+    if (!(err instanceof ServerSignInError) || err.reason !== 'USER_DISABLED') throw err;
+    console.error('[admin] server account was disabled; re-enabling it');
+    await reenableServerAccount();
+    return signInAsServer();
+  }
+}
+
+class ServerSignInError extends HttpError {
+  constructor(readonly reason: string) {
+    super(503, 'admin_unavailable', 'The server could not sign in to the database. Please try again shortly.');
+  }
+}
+
+async function reenableServerAccount(): Promise<void> {
+  const res = await fetch(`${identityBase()}/accounts:update`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${await adminToken()}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ localId: SERVER_UID, disableUser: false }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) console.error(`[admin] could not re-enable the server account: ${res.status}`);
+}
+
+async function signInAsServer(): Promise<string> {
   const sa = parseServiceAccount(env().serviceAccount);
   if (!sa) throw new HttpError(503, 'admin_unconfigured', 'The server service account is not configured yet.');
   const apiKey = env().firebaseApiKey;
@@ -106,8 +137,9 @@ export async function serverIdToken(): Promise<string> {
   });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
-    console.error(`[admin] server sign-in failed: ${res.status} ${body.error?.message ?? ''}`);
-    throw new HttpError(503, 'admin_unavailable', 'The server could not sign in to the database. Please try again shortly.');
+    const reason = body.error?.message ?? '';
+    console.error(`[admin] server sign-in failed: ${res.status} ${reason}`);
+    throw new ServerSignInError(reason);
   }
   const body = (await res.json()) as { idToken: string; expiresIn: string };
   serverCached = { token: body.idToken, exp: Date.now() + Number(body.expiresIn) * 1000 };
