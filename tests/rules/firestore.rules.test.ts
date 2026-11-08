@@ -387,4 +387,26 @@ describe('administrator approval (accessStatus) and access requests', () => {
     denied(await write(FAKE_SERVER, 'accessRequests/carol', { status: 'approved' }));
     denied(await read(STRANGER, 'otp/carol'));
   });
+
+  it('the server identity can permanently delete an account tree under the rules (no IAM listing calls)', async () => {
+    const { Firestore } = await import('../../server/firestore.js');
+    const { deleteTree } = await import('../../server/account/lifecycle.js');
+    process.env.FIREBASE_PROJECT_ID = PROJECT;
+    ok(await write(OWNER, 'users/carol', { email: 'carol@example.com' }));
+    ok(await write(OWNER, 'users/carol/conversations/c1', { title: 'x' }));
+    ok(await write(OWNER, 'users/carol/conversations/c1/messages/m1', { role: 'user' }));
+    // a message whose conversation document is already gone
+    ok(await write(OWNER, 'users/carol/conversations/c2/messages/m2', { role: 'user' }));
+    ok(await write(OWNER, 'users/carol/documents/d1/chunks/k1', { text: 't' }));
+    ok(await write(OWNER, 'users/carol/usage/2026-11-08', { requests: 1 }));
+    ok(await write(OWNER, 'users/dave/conversations/c9', { title: 'keep' }));
+
+    const db = new Firestore(SERVER, PROJECT);
+    db.admin = true;
+    expect(await deleteTree(db, 'users/carol')).toBe(6); // 5 documents under the profile + the profile
+    for (const p of ['users/carol', 'users/carol/conversations/c1/messages/m1', 'users/carol/conversations/c2/messages/m2', 'users/carol/documents/d1/chunks/k1']) {
+      expect(await read(OWNER, p)).toBe(404);
+    }
+    ok(await read(OWNER, 'users/dave/conversations/c9'));
+  });
 });

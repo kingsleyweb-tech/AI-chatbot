@@ -1,4 +1,19 @@
 {
+  // Solution file: `tsc -b` builds the referenced projects and ignores the
+  // options below (this file lists no sources of its own). Vercel's Node
+  // builder reads this root file when it type-checks api/*.ts, so it carries
+  // the same server settings as tsconfig.node.json (Node types, strict).
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "types": ["node"]
+  },
   "files": [],
   "references": [{ "path": "./tsconfig.app.json" }, { "path": "./tsconfig.node.json" }]
 }

@@ -197,35 +197,22 @@ export class Firestore {
     return Number(rows[0]?.result?.aggregateFields?.n?.integerValue ?? 0);
   }
 
-  /** Names of the subcollections directly under a document. */
-  async listCollectionIds(docPath: string): Promise<string[]> {
-    const out: string[] = [];
-    let pageToken: string | undefined;
-    do {
-      const res = await this.request(`${this.base}/${docPath}:listCollectionIds`, {
-        method: 'POST',
-        body: JSON.stringify({ pageSize: 100, ...(pageToken ? { pageToken } : {}) }),
-      });
-      if (!res.ok) return this.fail(res, 'listCollectionIds');
-      const body = (await res.json()) as { collectionIds?: string[]; nextPageToken?: string };
-      out.push(...(body.collectionIds ?? []));
-      pageToken = body.nextPageToken;
-    } while (pageToken);
-    return out;
-  }
-
   /**
-   * Paths of up to `pageSize` documents in a collection, including "missing"
-   * documents that only exist because they have subcollections (a query would
-   * skip those and leave orphaned data behind on deletion).
+   * Paths of up to `limit` documents in every `collectionId` collection at any
+   * depth under `parentDoc`, including those whose parent document was already
+   * deleted. One query (allDescendants), which the rules allow for the server
+   * identity; unlike listCollectionIds/listDocuments it needs no IAM role.
    */
-  async listDocumentPaths(collectionPath: string, pageSize = 300): Promise<string[]> {
-    const qs = new URLSearchParams({ showMissing: 'true', pageSize: String(pageSize), 'mask.fieldPaths': '__name__' });
-    const res = await this.request(`${this.base}/${collectionPath}?${qs}`);
-    if (res.status === 404) return [];
-    if (!res.ok) return this.fail(res, 'listDocuments');
-    const body = (await res.json()) as { documents?: { name: string }[] };
-    return (body.documents ?? []).map((d) => d.name.slice(this.dbRoot.length + 1));
+  async descendantPaths(parentDoc: string, collectionId: string, limit = 300): Promise<string[]> {
+    const res = await this.request(`${this.base}/${parentDoc}:runQuery`, {
+      method: 'POST',
+      body: JSON.stringify({
+        structuredQuery: { select: { fields: [{ fieldPath: '__name__' }] }, from: [{ collectionId, allDescendants: true }], limit },
+      }),
+    });
+    if (!res.ok) return this.fail(res, `query ${collectionId}`);
+    const rows = (await res.json()) as { document?: { name: string } }[];
+    return rows.filter((r) => r.document).map((r) => r.document!.name.slice(this.dbRoot.length + 1));
   }
 
   async set(path: string, data: object, merge = false): Promise<void> {

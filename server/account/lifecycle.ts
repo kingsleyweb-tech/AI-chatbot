@@ -89,15 +89,44 @@ export async function restoreAccount(db: Firestore, actor: Actor, target: AuthAc
 }
 
 /** Delete a document and everything nested under it (including "missing" parents). */
-export async function deleteTree(db: Firestore, docPath: string): Promise<number> {
+/**
+ * Every subcollection name that can exist under users/{uid}, at any depth.
+ * Mirrors the match blocks in firebase/firestore.rules (a test keeps the two
+ * in sync): clients cannot write anywhere else, and neither does the server.
+ */
+export const USER_COLLECTIONS = [
+  'securityEvents',
+  'conversations',
+  'messages',
+  'memories',
+  'documents',
+  'chunks',
+  'images',
+  'summaries',
+  'tables',
+  'kbCollections',
+  'kbSources',
+  'index',
+  'projects',
+  'savedResponses',
+  'usage',
+  'memoryVectors',
+  'convVectors',
+  'searchCache',
+  'projectMemory',
+  'convIndex',
+] as const;
+
+/** Delete a user document and everything under it. Returns the number of documents removed. */
+export async function deleteTree(db: Firestore, docPath: string, collections: readonly string[] = USER_COLLECTIONS): Promise<number> {
   let deleted = 0;
-  for (const coll of await db.listCollectionIds(docPath)) {
-    const collPath = `${docPath}/${coll}`;
-    // Pages shrink as documents are deleted; stop when a page comes back empty.
+  for (const coll of collections) {
+    // Each pass deletes what the query returned; stop when nothing is left.
     for (let guard = 0; guard < 1000; guard++) {
-      const paths = await db.listDocumentPaths(collPath, 300);
+      const paths = await db.descendantPaths(docPath, coll, 400);
       if (!paths.length) break;
-      for (const p of paths) deleted += await deleteTree(db, p);
+      await db.commit(paths.map((path) => ({ op: 'delete' as const, path })));
+      deleted += paths.length;
     }
   }
   await db.delete(docPath);

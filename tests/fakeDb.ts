@@ -71,24 +71,14 @@ export class FakeDb {
   async count(coll: string, where: [string, string, unknown][] = []) {
     return (await this.list(coll, { where })).length;
   }
-  async listCollectionIds(docPath: string) {
-    const depth = docPath.split('/').length;
-    const ids = new Set<string>();
-    for (const p of this.docs.keys()) {
-      const parts = p.split('/');
-      if (p.startsWith(docPath + '/') && parts.length > depth + 1) ids.add(parts[depth]);
-    }
-    return [...ids];
-  }
-  /** includes "missing" parents of nested documents, like listDocuments?showMissing=true */
-  async listDocumentPaths(coll: string, pageSize = 300) {
-    const depth = coll.split('/').length + 1;
-    const out = new Set<string>();
-    for (const p of this.docs.keys()) {
-      if (!p.startsWith(coll + '/')) continue;
-      out.add(p.split('/').slice(0, depth).join('/'));
-    }
-    return [...out].slice(0, pageSize);
+  /** like an allDescendants query: documents in `coll` collections at any depth under `parent` */
+  async descendantPaths(parent: string, coll: string, limit = 300) {
+    return [...this.docs.keys()]
+      .filter((p) => {
+        const parts = p.split('/');
+        return p.startsWith(parent + '/') && parts[parts.length - 2] === coll;
+      })
+      .slice(0, limit);
   }
   /** paths under a prefix */
   under(prefix: string) {
