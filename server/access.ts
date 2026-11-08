@@ -1,4 +1,4 @@
-import { requireUser, type AuthUser } from './auth.js';
+import { needsPhone, requireUser, type AuthUser } from './auth.js';
 import { env } from './env.js';
 import { Firestore } from './firestore.js';
 import { HttpError } from './http.js';
@@ -37,6 +37,9 @@ export interface Ctx {
  */
 export async function requireAllowedUser(request: Request): Promise<Ctx> {
   const user = await requireUser(request);
+  if (needsPhone(user)) {
+    throw new HttpError(403, 'phone_unverified', 'Please verify your phone number first.');
+  }
   const db = new Firestore(user.token);
   const cached = cache.get(user.uid);
   if (cached && Date.now() - cached.at < TTL) {

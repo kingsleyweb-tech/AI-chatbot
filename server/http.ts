@@ -5,6 +5,8 @@ export class HttpError extends Error {
     public status: number,
     public code: string,
     message: string,
+    /** extra machine-readable fields returned to the client (never secrets) */
+    public details?: Record<string, unknown>,
   ) {
     super(message);
   }
@@ -19,7 +21,7 @@ export function json(data: unknown, init: ResponseInit = {}): Response {
 
 export function errorResponse(err: unknown): Response {
   if (err instanceof HttpError) {
-    return json({ error: { code: err.code, message: err.message } }, { status: err.status });
+    return json({ error: { code: err.code, message: err.message, ...(err.details ?? {}) } }, { status: err.status });
   }
   console.error('[api] unexpected error:', err instanceof Error ? err.message : String(err));
   return json({ error: { code: 'internal', message: 'Unexpected server error.' } }, { status: 500 });

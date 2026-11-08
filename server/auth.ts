@@ -10,6 +10,10 @@ export interface AuthUser {
   uid: string;
   email: string | null;
   emailVerified: boolean;
+  /** sign-in method of this session: 'password', 'google.com', 'apple.com', ... */
+  provider: string;
+  /** set by the server (custom claim) once the account's phone number is verified */
+  phoneVerified: boolean;
   /** raw Firebase ID token; forwarded to Firestore REST so security rules apply */
   token: string;
 }
@@ -34,6 +38,11 @@ async function verify(token: string): Promise<JWTPayload> {
   return payload;
 }
 
+/** Email/password accounts must verify a phone number; Google and Apple sign-ins do not. */
+export function needsPhone(user: Pick<AuthUser, 'provider' | 'phoneVerified'>): boolean {
+  return user.provider === 'password' && !user.phoneVerified;
+}
+
 /** Verifies the Firebase ID token in the Authorization header. */
 export async function requireUser(request: Request): Promise<AuthUser> {
   const header = request.headers.get('authorization') ?? '';
@@ -50,6 +59,8 @@ export async function requireUser(request: Request): Promise<AuthUser> {
     uid: payload.sub,
     email: typeof payload.email === 'string' ? payload.email.toLowerCase() : null,
     emailVerified: payload.email_verified === true,
+    provider: String((payload.firebase as { sign_in_provider?: string } | undefined)?.sign_in_provider ?? ''),
+    phoneVerified: payload.phoneVerified === true,
     token: match[1],
   };
 }

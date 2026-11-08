@@ -23,7 +23,12 @@ export interface FsDoc<T = Record<string, unknown>> {
   id: string;
   path: string;
   data: T;
+  /** server update time; pass back as a write precondition for optimistic concurrency */
+  updateTime?: string;
 }
+
+/** Write precondition: the document must (not) exist, or must be unchanged since it was read. */
+export type Precondition = { exists: boolean } | { updateTime: string };
 
 /** Marker for server timestamps in writes. */
 export const SERVER_TIME = Symbol('serverTime');
@@ -80,8 +85,8 @@ export function fieldPath(...segments: string[]): string {
 }
 
 export type Write =
-  | { op: 'set'; path: string; data: object; merge?: boolean }
-  | { op: 'delete'; path: string }
+  | { op: 'set'; path: string; data: object; merge?: boolean; precondition?: Precondition }
+  | { op: 'delete'; path: string; precondition?: Precondition }
   | { op: 'increment'; path: string; increments: Record<string, number>; data?: object };
 
 export class Firestore {
@@ -116,6 +121,9 @@ export class Firestore {
     const body = await res.text().catch(() => '');
     if (res.status === 403) throw new HttpError(403, 'forbidden', `Access denied (${what}).`);
     if (res.status === 401) throw new HttpError(401, 'invalid_token', 'Session expired.');
+    if (res.status === 409 || (res.status === 400 && body.includes('FAILED_PRECONDITION'))) {
+      throw new HttpError(409, 'conflict', 'The record changed while it was being updated. Please try again.');
+    }
     console.error(`[firestore] ${what} failed: ${res.status} ${body.slice(0, 300)}`);
     throw new HttpError(502, 'firestore_error', `Database request failed (${what}).`);
   }
@@ -124,13 +132,13 @@ export class Firestore {
     const res = await this.request(`${this.base}/${path}`);
     if (res.status === 404) return null;
     if (!res.ok) return this.fail(res, `get ${path.split('/')[0]}`);
-    const doc = (await res.json()) as { name: string; fields?: Fields };
+    const doc = (await res.json()) as { name: string; fields?: Fields; updateTime?: string };
     return this.toDoc<T>(doc);
   }
 
-  private toDoc<T>(doc: { name: string; fields?: Fields }): FsDoc<T> {
+  private toDoc<T>(doc: { name: string; fields?: Fields; updateTime?: string }): FsDoc<T> {
     const path = doc.name.slice(this.dbRoot.length + 1);
-    return { id: path.split('/').pop()!, path, data: decodeFields(doc.fields ?? {}) as T };
+    return { id: path.split('/').pop()!, path, data: decodeFields(doc.fields ?? {}) as T, updateTime: doc.updateTime };
   }
 
   /** List a collection (optionally ordered). */
@@ -187,7 +195,7 @@ export class Firestore {
 
   private toWrite(w: Write): object {
     const name = `${this.dbRoot}/${w.path}`;
-    if (w.op === 'delete') return { delete: name };
+    if (w.op === 'delete') return w.precondition ? { delete: name, currentDocument: w.precondition } : { delete: name };
     if (w.op === 'increment') {
       const data = w.data ?? {};
       const fields = encodeFields(data);
@@ -206,6 +214,7 @@ export class Firestore {
     const fields = encodeFields(w.data);
     const write: Record<string, unknown> = { update: { name, fields } };
     if (w.merge) write.updateMask = { fieldPaths: Object.keys(fields).map((k) => fieldPath(k)) };
+    if (w.precondition) write.currentDocument = w.precondition;
     const times = serverTimeFields(w.data);
     if (times.length) {
       write.updateTransforms = times.map((f) => ({ fieldPath: fieldPath(f), setToServerValue: 'REQUEST_TIME' }));

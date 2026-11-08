@@ -4,6 +4,8 @@ import type { Firestore } from '../server/firestore.js';
 /** In-memory stand-in for the server Firestore client (enough for unit tests). */
 export class FakeDb {
   docs = new Map<string, Record<string, unknown>>();
+  times = new Map<string, string>();
+  private clock = 0;
   reads = 0;
   denyPrefix: string[] = [];
 
@@ -19,7 +21,7 @@ export class FakeDb {
     this.check(path);
     this.reads++;
     const d = this.docs.get(path);
-    return d ? { id: path.split('/').pop()!, path, data: structuredClone(d) as T } : null;
+    return d ? { id: path.split('/').pop()!, path, data: structuredClone(d) as T, updateTime: this.times.get(path) } : null;
   }
   async list<T>(
     coll: string,
@@ -46,8 +48,17 @@ export class FakeDb {
     await this.commit([{ op: 'delete', path }]);
   }
   async commit(writes: Write[]) {
+    // all-or-nothing, like a Firestore commit
     for (const w of writes) {
       this.check(w.path);
+      const pre = w.op !== 'increment' ? w.precondition : undefined;
+      if (!pre) continue;
+      const exists = this.docs.has(w.path);
+      const ok = 'exists' in pre ? pre.exists === exists : exists && this.times.get(w.path) === pre.updateTime;
+      if (!ok) throw Object.assign(new Error('conflict'), { status: 409, code: 'conflict' });
+    }
+    for (const w of writes) {
+      this.times.set(w.path, `t${++this.clock}`);
       if (w.op === 'delete') this.docs.delete(w.path);
       else if (w.op === 'set') this.docs.set(w.path, w.merge ? { ...(this.docs.get(w.path) ?? {}), ...this.clean(w.data) } : this.clean(w.data));
       else {

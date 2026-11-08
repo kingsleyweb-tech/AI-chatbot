@@ -1,10 +1,16 @@
 rules_version = '2';
 
-// Tessera Firestore security rules.
+// Atlas AI Firestore security rules.
 //
 // Access model:
 // - Only users with a VERIFIED email that is a bootstrap admin or listed in
 //   config/access.allowedEmails can read/write any data.
+// - Email/password sign-ins additionally need the phoneVerified custom claim,
+//   which only the server sets after a correct SMS code. Google and Apple
+//   sign-ins do not need it.
+// - One-time-code records (otp, otpPhones, otpStats) and phone ownership
+//   (phoneNumbers) are server-only: no client rule matches them, so the
+//   catch-all at the bottom denies every read and write.
 // - Every user-owned record lives under users/{uid}/... and is only
 //   accessible to that uid. Admins cannot read other users' data.
 // - The backend talks to Firestore with the caller's own ID token, so these
@@ -15,8 +21,12 @@ service cloud.firestore {
     function signedIn() {
       return request.auth != null;
     }
+    function phoneOk() {
+      return request.auth.token.firebase.sign_in_provider != 'password'
+        || request.auth.token.get('phoneVerified', false) == true;
+    }
     function verified() {
-      return signedIn() && request.auth.token.email_verified == true;
+      return signedIn() && request.auth.token.email_verified == true && phoneOk();
     }
     function email() {
       return request.auth.token.email.lower();
@@ -113,8 +123,12 @@ service cloud.firestore {
     }
 
     match /users/{uid} {
+      // Phone fields and account status are written only by the server.
       allow read, delete: if isOwner(uid);
-      allow create, update: if isOwner(uid);
+      allow create: if isOwner(uid)
+        && !request.resource.data.keys().hasAny(['phoneNumber', 'phoneVerified', 'phoneVerifiedAt', 'accountStatus']);
+      allow update: if isOwner(uid)
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['phoneNumber', 'phoneVerified', 'phoneVerifiedAt', 'accountStatus']);
 
       match /conversations/{cid} {
         allow read, delete: if isOwner(uid);

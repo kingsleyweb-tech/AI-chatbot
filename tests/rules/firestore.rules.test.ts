@@ -9,7 +9,8 @@ const PROJECT = process.env.GCLOUD_PROJECT ?? 'demo-tessera';
 const BASE = `http://${HOST}/v1/projects/${PROJECT}/databases/(default)/documents`;
 
 const b64 = (o: object) => Buffer.from(JSON.stringify(o)).toString('base64url');
-function token(uid: string, email: string, verified = true) {
+function token(uid: string, email: string, verified = true, opts: { provider?: string; phoneVerified?: boolean } = {}) {
+  const { provider = 'password', phoneVerified = true } = opts;
   const now = Math.floor(Date.now() / 1000);
   return `${b64({ alg: 'none', typ: 'JWT' })}.${b64({
     iss: `https://securetoken.google.com/${PROJECT}`,
@@ -21,7 +22,8 @@ function token(uid: string, email: string, verified = true) {
     iat: now,
     exp: now + 3600,
     auth_time: now,
-    firebase: { sign_in_provider: 'password' },
+    firebase: { sign_in_provider: provider },
+    ...(phoneVerified ? { phoneVerified: true } : {}),
   })}.`;
 }
 
@@ -220,5 +222,43 @@ describe('search limits, cache and document subcollections', () => {
     ok(await write(ALLOWED, 'users/alice/documents/d1/summaries/s0', { text: 'x' }));
     denied(await write(ALLOWED, 'users/alice/documents/d1/other/1', { a: 1 }));
     denied(await read(BOB, 'users/alice/documents/d1/images/1'));
+  });
+});
+
+describe('phone verification', () => {
+  const NO_PHONE = token('alice', 'alice@example.com', true, { phoneVerified: false });
+  const GOOGLE = token('alice', 'alice@example.com', true, { provider: 'google.com', phoneVerified: false });
+  const APPLE = token('alice', 'alice@example.com', true, { provider: 'apple.com', phoneVerified: false });
+  const ADMIN_NO_PHONE = token('admin-uid', 'kingsleyanaab604@gmail.com', true, { phoneVerified: false });
+
+  it('email/password users without a verified phone are locked out, even admins', async () => {
+    denied(await read(NO_PHONE, 'users/alice/conversations/c1'));
+    denied(await write(NO_PHONE, 'users/alice/conversations/c9', { title: 'x', projectId: null, saved: false }));
+    denied(await read(NO_PHONE, 'config/access'));
+    denied(await read(ADMIN_NO_PHONE, 'config/access'));
+  });
+
+  it('Google and Apple sign-ins do not need the phone claim', async () => {
+    ok(await read(GOOGLE, 'users/alice/conversations/c1'));
+    ok(await read(APPLE, 'users/alice/conversations/c1'));
+  });
+
+  it('clients cannot set phone fields or account status on their profile', async () => {
+    denied(await write(ALLOWED, 'users/alice', { displayName: 'Alice', phoneVerified: true }));
+    denied(await write(ALLOWED, 'users/alice', { displayName: 'Alice', phoneNumber: '+233241234567' }));
+    denied(await write(ALLOWED, 'users/alice', { displayName: 'Alice', accountStatus: 'active' }));
+    ok(await write(ALLOWED, 'users/alice', { displayName: 'Alice', provider: 'password' }));
+  });
+
+  it('server-only verification records are unreadable and unwritable', async () => {
+    ok(await write(OWNER, 'otp/alice', { codeHash: 'h', attempts: 0 }));
+    ok(await write(OWNER, 'phoneNumbers/abc', { uid: 'alice' }));
+    for (const who of [ALLOWED, ADMIN, NO_PHONE, null]) {
+      denied(await read(who, 'otp/alice'));
+      denied(await write(who, 'otp/alice', { codeHash: 'mine', attempts: 0 }));
+      denied(await read(who, 'phoneNumbers/abc'));
+      denied(await write(who, 'phoneNumbers/abc', { uid: 'mallory' }));
+      denied(await write(who, 'otpStats/2026-11-08', { sent: 0 }));
+    }
   });
 });
