@@ -15,7 +15,7 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:rules": "firebase emulators:exec --only firestore --project demo-tessera \"vitest run --config vitest.rules.config.ts\"",
+    "test:rules": "firebase emulators:exec --only firestore,auth --project demo-tessera \"vitest run --config vitest.rules.config.ts\"",
     "test:e2e": "playwright test",
     "check": "npm run lint && npm run typecheck && npm test && npm run build"
   },

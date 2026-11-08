@@ -1,8 +1,30 @@
 import { updateProfile } from 'firebase/auth';
 import { doc, limit, orderBy, query, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
-import { BarChart3, Brain, Info, KeyRound, LogOut, Palette, Plus, Sparkles, User, Users, X, type LucideIcon } from 'lucide-react';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Link, NavLink, useNavigate, useParams } from 'react-router-dom';
+import {
+  ArrowLeft,
+  AtSign,
+  BarChart3,
+  Brain,
+  ChevronRight,
+  Cpu,
+  Globe,
+  Info,
+  KeyRound,
+  Library,
+  LogOut,
+  Palette,
+  Phone,
+  Plus,
+  Settings2,
+  ShieldCheck,
+  Sparkles,
+  SunMoon,
+  Users,
+  X,
+  type LucideIcon,
+} from 'lucide-react';
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Button, ConfirmDialog, Input, Label, Select, Spinner, Switch, Textarea } from '@/components/ui';
 import { paths } from '@/lib/db';
 import { db } from '@/lib/firebase';
@@ -18,23 +40,27 @@ import { useToast } from '@/state/toast';
 import { ModelPicker } from '../chat/ModelPicker';
 import { Page } from '../shell/Page';
 
-type SectionId = 'account' | 'appearance' | 'personalization' | 'models' | 'memory' | 'usage' | 'access' | 'about';
-const SECTIONS: { id: SectionId; label: string; icon: LucideIcon; admin?: boolean }[] = [
-  { id: 'account', label: 'Account', icon: User },
-  { id: 'appearance', label: 'Appearance', icon: Palette },
-  { id: 'personalization', label: 'Personalization', icon: Sparkles },
-  { id: 'models', label: 'Models', icon: KeyRound },
-  { id: 'memory', label: 'Memory', icon: Brain },
-  { id: 'usage', label: 'Usage', icon: BarChart3 },
-  { id: 'access', label: 'Access', icon: Users, admin: true },
-  { id: 'about', label: 'About', icon: Info },
+type SectionId = 'account' | 'appearance' | 'personalization' | 'general' | 'models' | 'memory' | 'usage' | 'access' | 'about';
+const SECTIONS: { id: SectionId; label: string; admin?: boolean }[] = [
+  { id: 'account', label: 'Account' },
+  { id: 'appearance', label: 'Appearance' },
+  { id: 'personalization', label: 'Personalization' },
+  { id: 'general', label: 'General' },
+  { id: 'models', label: 'Models and search' },
+  { id: 'memory', label: 'Memory' },
+  { id: 'usage', label: 'Usage' },
+  { id: 'access', label: 'Access', admin: true },
+  { id: 'about', label: 'About' },
 ];
+
+/** Title of the open sub-page; a group with the same title does not repeat it. */
+const PageTitle = createContext('');
 
 function Row({ title, description, children }: { title: string; description?: ReactNode; children: ReactNode }) {
   return (
-    <div className="flex flex-col gap-2 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+    <div className="flex flex-col gap-2 py-3 sm:min-h-12 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
       <div className="min-w-0">
-        <div className="text-sm font-medium">{title}</div>
+        <div className="text-[15px]">{title}</div>
         {description && <div className="mt-0.5 text-xs text-muted">{description}</div>}
       </div>
       <div className="shrink-0 sm:max-w-[60%]">{children}</div>
@@ -42,14 +68,49 @@ function Row({ title, description, children }: { title: string; description?: Re
   );
 }
 
+/** Grouped, inset list section: small header above a rounded card. */
 function Section({ title, children }: { title: string; children: ReactNode }) {
+  const page = useContext(PageTitle);
   return (
-    <section>
-      <h2 className="mb-1 text-lg font-semibold tracking-tight">{title}</h2>
-      <div className="divide-y divide-border">{children}</div>
+    <section className="mb-7">
+      {title !== page && <h2 className="mb-1.5 px-4 text-[13px] font-medium text-muted">{title}</h2>}
+      <div className="divide-y divide-border overflow-hidden rounded-2xl bg-elevated [&>*]:px-4">{children}</div>
     </section>
   );
 }
+
+/** A tappable row in the main list: icon, label, value and chevron. */
+function NavRow({ to, icon: Icon, label, value }: { to?: string; icon: LucideIcon; label: string; value?: ReactNode }) {
+  const inner = (
+    <>
+      <Icon className="size-5 shrink-0 text-fg/80" strokeWidth={1.75} />
+      <span className="min-w-0 flex-1 truncate text-[15px]">{label}</span>
+      {value !== undefined && <span className="max-w-[55%] truncate text-right text-[15px] text-muted">{value}</span>}
+      {to && <ChevronRight className="size-4 shrink-0 text-subtle" />}
+    </>
+  );
+  const cls = 'flex min-h-12 w-full items-center gap-3 px-4 py-2.5 text-left transition-colors';
+  if (!to) return <div className={cls}>{inner}</div>;
+  return (
+    <Link to={to} className={cn(cls, 'hover:bg-surface-2 active:bg-surface-2')}>
+      {inner}
+    </Link>
+  );
+}
+
+function Group({ title, children }: { title?: string; children: ReactNode }) {
+  return (
+    <section className="mb-7">
+      {title && <h2 className="mb-1.5 px-4 text-[13px] font-medium text-muted">{title}</h2>}
+      <div className="divide-y divide-border overflow-hidden rounded-2xl bg-elevated">{children}</div>
+    </section>
+  );
+}
+
+function providerLabel(id: string) {
+  return id === 'google.com' ? 'Google' : id === 'apple.com' ? 'Apple' : id === 'password' ? 'Email and password' : id;
+}
+const maskPhone = (p: string) => (p.length > 8 ? `${p.slice(0, 4)} ${'\u2022'.repeat(p.length - 8)} ${p.slice(-4)}` : p);
 
 /** Text setting that saves on blur, so typing doesn't write on every keystroke. */
 function useDraft(value: string, save: (v: string) => Promise<void>) {
@@ -69,7 +130,7 @@ function useDraft(value: string, save: (v: string) => Promise<void>) {
 }
 
 function AccountSection() {
-  const { user, profile, admin, signOut } = useAuth();
+  const { user, profile, admin, provider, signOut } = useAuth();
   const uid = useUid();
   const toast = useToast();
   const name = useDraft(profile?.displayName ?? user?.displayName ?? '', async (v) => {
@@ -80,17 +141,21 @@ function AccountSection() {
   return (
     <Section title="Account">
       <Row title="Email" description={admin ? 'Administrator' : 'Approved user'}>
-        <span className="text-sm text-muted">{user?.email}</span>
+        <span className="break-all text-sm text-muted">{user?.email}</span>
       </Row>
       <Row title="Display name" description="Used to greet you.">
         <div className="flex gap-2">
           <Input value={name.draft} maxLength={80} onChange={(e) => name.setDraft(e.target.value)} onBlur={name.commit} className="sm:w-60" />
         </div>
       </Row>
-      <Row title="Sign-in method">
-        <span className="text-sm text-muted">
-          {user?.providerData.map((p) => (p.providerId === 'google.com' ? 'Google' : p.providerId === 'password' ? 'Email and password' : p.providerId)).join(', ')}
+      <Row title="Phone number" description={profile?.phoneVerified ? 'Verified by text message.' : provider === 'password' ? undefined : 'Not needed when you sign in with Google or Apple.'}>
+        <span className="inline-flex items-center gap-1.5 text-sm text-muted">
+          {profile?.phoneVerified && <ShieldCheck className="size-4 text-accent" />}
+          {profile?.phoneNumber ? maskPhone(profile.phoneNumber) : 'Not added'}
         </span>
+      </Row>
+      <Row title="Sign-in method">
+        <span className="text-sm text-muted">{user?.providerData.map((p) => providerLabel(p.providerId)).join(', ')}</span>
       </Row>
       <Row title="Sign out" description="Signs out on this device. Cached chats remain until the browser storage is cleared.">
         <Button variant="outline" icon={<LogOut className="size-4" />} onClick={() => void signOut()}>
@@ -148,9 +213,41 @@ function AppearanceSection() {
           ))}
         </div>
       </Row>
+    </Section>
+  );
+}
+
+function GeneralSection() {
+  const { settings, update } = useSettings();
+  const lang = useDraft(settings.language === 'auto' ? '' : settings.language, async (v) => {
+    await update({ language: v.trim() || 'auto' });
+  });
+  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+  useEffect(() => {
+    if (!ttsSupported()) return;
+    const load = () => setVoices(window.speechSynthesis.getVoices());
+    load();
+    window.speechSynthesis.addEventListener('voiceschanged', load);
+    return () => window.speechSynthesis.removeEventListener('voiceschanged', load);
+  }, []);
+  return (
+    <Section title="General">
+      <Row title="App language" description="Atlas AI replies in this language. Leave empty to reply in the language you write in.">
+        <Input className="sm:w-48" placeholder="Automatic" value={lang.draft} maxLength={40} onChange={(e) => lang.setDraft(e.target.value)} onBlur={lang.commit} />
+      </Row>
       <Row title="Send with Enter" description="On a keyboard, Enter sends and Shift+Enter adds a line. On touch screens, use the send button.">
         <Switch label="Send with Enter" checked={settings.sendOnEnter} onChange={(v) => update({ sendOnEnter: v })} />
       </Row>
+      {ttsSupported() && voices.length > 0 && (
+        <Row title="Read-aloud voice">
+          <Select
+            className="sm:w-60"
+            value={settings.voiceName ?? ''}
+            onChange={(v) => update({ voiceName: v || null })}
+            options={[{ value: '', label: 'System default' }, ...voices.map((v) => ({ value: v.name, label: `${v.name} (${v.lang})` }))]}
+          />
+        </Row>
+      )}
     </Section>
   );
 }
@@ -166,17 +263,6 @@ function PersonalizationSection() {
     await update({ customInstructions: v.slice(0, 8000) });
     toast('Saved.', 'success');
   });
-  const lang = useDraft(settings.language === 'auto' ? '' : settings.language, async (v) => {
-    await update({ language: v.trim() || 'auto' });
-  });
-  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
-  useEffect(() => {
-    if (!ttsSupported()) return;
-    const load = () => setVoices(window.speechSynthesis.getVoices());
-    load();
-    window.speechSynthesis.addEventListener('voiceschanged', load);
-    return () => window.speechSynthesis.removeEventListener('voiceschanged', load);
-  }, []);
   const set = <K extends keyof UserSettings>(k: K) => (v: UserSettings[K]) => void update({ [k]: v } as Partial<UserSettings>);
 
   return (
@@ -229,26 +315,6 @@ function PersonalizationSection() {
           ]}
         />
       </Row>
-      <Row title="Preferred language" description="Leave empty to reply in the language you write in.">
-        <Input
-          className="sm:w-48"
-          placeholder="Automatic"
-          value={lang.draft}
-          maxLength={40}
-          onChange={(e) => lang.setDraft(e.target.value)}
-          onBlur={lang.commit}
-        />
-      </Row>
-      {ttsSupported() && voices.length > 0 && (
-        <Row title="Read-aloud voice">
-          <Select
-            className="sm:w-60"
-            value={settings.voiceName ?? ''}
-            onChange={(v) => update({ voiceName: v || null })}
-            options={[{ value: '', label: 'System default' }, ...voices.map((v) => ({ value: v.name, label: `${v.name} (${v.lang})` }))]}
-          />
-        </Row>
-      )}
     </Section>
   );
 }
@@ -258,7 +324,7 @@ function ModelsSection() {
   const { catalog, caps, getModel, reload, loading } = useCatalog();
   const def = settings.defaultModel ?? catalog?.defaultModel ?? '';
   return (
-    <Section title="Models">
+    <Section title="Models and search">
       <Row title="Default model" description="Used for new chats. You can switch per chat from the header.">
         <div className="-mx-2.5">
           <ModelPicker value={def} onChange={(id) => update({ defaultModel: id })} align="end" />
@@ -348,7 +414,7 @@ function AdminAiRows() {
   };
   return (
     <>
-      <h3 className="mt-6 text-xs font-medium uppercase tracking-wide text-muted">Admin: AI routing (all users)</h3>
+      <h3 className="bg-surface-2/50 py-2 text-xs font-medium uppercase tracking-wide text-muted">Admin: AI routing (all users)</h3>
       <Row title="Preferred provider" description="Tried first whenever Atlas AI picks a model automatically. A model a user chose is always kept when it can answer.">
         <Select
           className="sm:w-48"
@@ -779,49 +845,154 @@ function AboutSection() {
   );
 }
 
+function SettingsHome() {
+  const { user, profile, admin, provider, signOut } = useAuth();
+  const { settings, update } = useSettings();
+  const { catalog, getModel, caps } = useCatalog();
+  const name = profile?.displayName || user?.displayName || user?.email?.split('@')[0] || 'You';
+  const photo = profile?.photoURL ?? user?.photoURL;
+  const accent = ACCENTS.find((a) => a.id === settings.accent) ?? ACCENTS[0];
+  const model = settings.defaultModel ?? catalog?.defaultModel ?? '';
+  const autoSearch = (settings.searchMode ?? (settings.autoSearch === false ? 'manual' : 'auto')) !== 'manual';
+  const [confirmOut, setConfirmOut] = useState(false);
+
+  return (
+    <div className="mx-auto max-w-xl">
+      <div className="mb-8 flex flex-col items-center text-center">
+        {photo ? (
+          <img src={photo} alt="" referrerPolicy="no-referrer" className="size-20 rounded-full object-cover" />
+        ) : (
+          <div className="flex size-20 items-center justify-center rounded-full bg-accent text-3xl font-semibold text-white">{name.slice(0, 1).toUpperCase()}</div>
+        )}
+        <div className="mt-3 text-xl font-semibold tracking-tight">{name}</div>
+        <div className="mt-0.5 text-sm text-muted">{user?.email}</div>
+      </div>
+
+      <Group title="Customize">
+        <NavRow to="/settings/personalization" icon={Sparkles} label="Personalization" />
+        <NavRow to="/settings/memory" icon={Brain} label="Memory" value={settings.memoryEnabled ? 'On' : 'Off'} />
+        <NavRow to="/knowledge" icon={Library} label="Knowledge base" />
+      </Group>
+
+      <Group title="Account">
+        <NavRow to="/settings/account" icon={AtSign} label="Email" value={user?.email ?? ''} />
+        <NavRow
+          to="/settings/account"
+          icon={Phone}
+          label="Phone number"
+          value={profile?.phoneNumber ? maskPhone(profile.phoneNumber) : provider === 'password' ? 'Not added' : 'Not required'}
+        />
+        <NavRow to="/settings/account" icon={KeyRound} label="Sign-in method" value={provider ? providerLabel(provider) : ''} />
+        <NavRow to="/settings/usage" icon={BarChart3} label="Usage" />
+        {admin && <NavRow to="/settings/access" icon={Users} label="Access" value="Admin" />}
+      </Group>
+
+      <Group title="Theme">
+        <NavRow to="/settings/appearance" icon={SunMoon} label="Appearance" value={settings.theme[0].toUpperCase() + settings.theme.slice(1)} />
+        <NavRow
+          to="/settings/appearance"
+          icon={Palette}
+          label="Accent color"
+          value={
+            <span className="inline-flex items-center gap-1.5">
+              <span className="size-3 rounded-full" style={{ backgroundColor: accent.swatch }} />
+              {accent.label}
+            </span>
+          }
+        />
+      </Group>
+
+      <Group>
+        <NavRow to="/settings/general" icon={Settings2} label="General" />
+      </Group>
+
+      <Group title="Intelligence">
+        <NavRow to="/settings/models" icon={Cpu} label="Default model" value={model ? (getModel(model)?.name ?? modelShortName(model)) : 'Automatic'} />
+      </Group>
+
+      <Group title="Automatically use">
+        <div className="flex min-h-12 items-center gap-3 px-4 py-2.5">
+          <Globe className="size-5 shrink-0 text-fg/80" strokeWidth={1.75} />
+          <div className="min-w-0 flex-1">
+            <div className="text-[15px]">Web search</div>
+            {!caps?.searchAvailable && <div className="text-xs text-muted">Not configured on the server</div>}
+          </div>
+          <Switch
+            label="Search the web automatically"
+            checked={autoSearch}
+            disabled={!caps?.searchAvailable}
+            onChange={(v) => update({ searchMode: v ? 'auto' : 'manual', autoSearch: v })}
+          />
+        </div>
+      </Group>
+
+      <Group>
+        <NavRow to="/settings/about" icon={Info} label="About" value={`Version ${__APP_VERSION__}`} />
+        <button
+          onClick={() => setConfirmOut(true)}
+          className="flex min-h-12 w-full items-center gap-3 px-4 py-2.5 text-left text-danger transition-colors hover:bg-surface-2"
+        >
+          <LogOut className="size-5 shrink-0" strokeWidth={1.75} />
+          <span className="text-[15px]">Sign out</span>
+        </button>
+      </Group>
+
+      <ConfirmDialog
+        open={confirmOut}
+        onClose={() => setConfirmOut(false)}
+        title="Sign out?"
+        message="You will need to sign in again on this device."
+        confirmLabel="Sign out"
+        onConfirm={() => void signOut()}
+      />
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const { section } = useParams();
   const navigate = useNavigate();
   const { admin } = useAuth();
   const visible = SECTIONS.filter((s) => !s.admin || admin);
-  const current = (visible.find((s) => s.id === section)?.id ?? 'account') as SectionId;
+  const current = visible.find((s) => s.id === section);
 
   useEffect(() => {
-    if (section && !visible.some((s) => s.id === section)) navigate('/settings', { replace: true });
-  }, [section, visible, navigate]);
+    if (section && !current) navigate('/settings', { replace: true });
+  }, [section, current, navigate]);
+
+  if (!current) {
+    return (
+      <Page title="Settings" className="bg-surface-2/60">
+        <h1 className="mb-6 hidden text-center text-xl font-semibold tracking-tight lg:block">Settings</h1>
+        <SettingsHome />
+      </Page>
+    );
+  }
 
   return (
-    <Page title="Settings" wide>
-      <h1 className="mb-5 hidden text-xl font-semibold tracking-tight lg:block">Settings</h1>
-      <div className="flex flex-col gap-6 md:flex-row md:gap-10">
-        <nav className="-mx-4 flex shrink-0 gap-1 overflow-x-auto px-4 scroll-thin md:mx-0 md:w-48 md:flex-col md:px-0" aria-label="Settings sections">
-          {visible.map((s) => (
-            <NavLink
-              key={s.id}
-              to={`/settings/${s.id}`}
-              replace
-              className={() =>
-                cn(
-                  'flex h-9 shrink-0 items-center gap-2.5 rounded-lg px-3 text-sm transition-colors',
-                  current === s.id ? 'bg-surface-2 font-medium text-fg' : 'text-muted hover:bg-surface-2 hover:text-fg',
-                )
-              }
-            >
-              <s.icon className="size-4" />
-              {s.label}
-            </NavLink>
-          ))}
-        </nav>
-        <div className="min-w-0 flex-1">
-          {current === 'account' && <AccountSection />}
-          {current === 'appearance' && <AppearanceSection />}
-          {current === 'personalization' && <PersonalizationSection />}
-          {current === 'models' && <ModelsSection />}
-          {current === 'memory' && <MemorySection />}
-          {current === 'usage' && <UsageSection />}
-          {current === 'access' && <AccessSection />}
-          {current === 'about' && <AboutSection />}
+    <Page title={current.label} back="/settings" className="bg-surface-2/60">
+      <div className="mx-auto max-w-2xl">
+        <div className="mb-5 hidden items-center gap-2 lg:flex">
+          <Link
+            to="/settings"
+            className="flex size-8 items-center justify-center rounded-full text-muted hover:bg-surface-2 hover:text-fg"
+            aria-label="Back to settings"
+          >
+            <ArrowLeft className="size-5" />
+          </Link>
+          <h1 className="text-xl font-semibold tracking-tight">{current.label}</h1>
         </div>
+        <PageTitle.Provider value={current.label}>
+          {current.id === 'account' && <AccountSection />}
+          {current.id === 'appearance' && <AppearanceSection />}
+          {current.id === 'personalization' && <PersonalizationSection />}
+          {current.id === 'general' && <GeneralSection />}
+          {current.id === 'models' && <ModelsSection />}
+          {current.id === 'memory' && <MemorySection />}
+          {current.id === 'usage' && <UsageSection />}
+          {current.id === 'access' && <AccessSection />}
+          {current.id === 'about' && <AboutSection />}
+        </PageTitle.Provider>
       </div>
     </Page>
   );

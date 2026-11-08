@@ -12,7 +12,7 @@
 
 In the Firebase console for your project:
 
-1. **Authentication > Sign-in method:** enable **Email/Password** and **Google**.
+1. **Authentication > Sign-in method:** enable **Email/Password**, **Google** and **Apple**. Apple needs the extra setup in [DEPLOY.md](DEPLOY.md#sign-in-with-apple); until then the Apple button shows "Sign in with Apple is not set up yet".
 2. **Authentication > Settings > Authorized domains:** make sure `localhost` is listed, and add your Vercel domain (for example `your-app.vercel.app`) once you deploy.
 3. **Firestore Database:** create a database in production mode, in the region closest to you.
 4. **Project settings > General > Your apps:** register a Web app if there isn't one, and copy its config into the `VITE_FIREBASE_*` variables below.
@@ -34,6 +34,13 @@ Copy `.env.example` to `.env.local`. It is gitignored, so never commit it.
 | `FIREBASE_PROJECT_ID` | server | no | Used to verify ID tokens and call Firestore. |
 | `ADMIN_EMAILS` | server | no | Optional, comma separated. Defaults to the owner email. Keep in sync with `firebase/firestore.rules`. |
 | `DEFAULT_MODEL`, `FALLBACK_MODELS`, `UTILITY_MODELS`, `EMBEDDING_MODELS` | server | no | Optional overrides, comma-separated model IDs. Defaults are in `server/config/models.ts`. |
+| `FIREBASE_SERVICE_ACCOUNT` | server | **yes** | Required for phone verification. Service account JSON (raw or base64) from Firebase **Project settings > Service accounts > Generate new private key**. Used only to write server-only verification records and set the `phoneVerified` custom claim. Never commit the file; paste it into `.env.local` / Vercel and delete the download. |
+| `OTP_HMAC_SECRET` | server | **yes** | Required for phone verification. 32+ random bytes, e.g. `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. Codes are stored only as HMACs with this key. |
+| `SMS_PROVIDER` | server | no | `vynfy` (default). New providers implement `SmsProvider` in `server/sms/provider.ts`. |
+| `VYNFY_API_KEY`, `VYNFY_SENDER_ID` | server | key: **yes** | Vynfy SMS (Ghana). The sender ID must be approved in Vynfy. |
+| `VYNFY_SANDBOX` | server | no | `1` sends to Vynfy's sandbox: nothing is delivered or charged. Use it for testing. |
+| `OTP_DAILY_CAP` | server | no | App-wide maximum verification texts per day (default 200). |
+| `VITE_FIREBASE_AUTH_DOMAIN` | browser | no | `ai-app-6efa7.firebaseapp.com`, or `auto` in production to serve sign-in from the app's own domain (needed for reliable Google/Apple sign-in in Safari and installed apps; see DEPLOY.md). |
 | `VITE_FIREBASE_*` | browser | no | Firebase web config, public by design. |
 
 ## 3. Security rules and indexes

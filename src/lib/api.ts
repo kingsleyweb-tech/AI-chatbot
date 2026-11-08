@@ -7,6 +7,8 @@ export class ApiError extends Error {
     public status: number,
     public code: string,
     message: string,
+    /** extra fields from the error body, e.g. retryAfter, attemptsLeft */
+    public details: Record<string, unknown> = {},
   ) {
     super(message);
   }
@@ -21,14 +23,16 @@ async function token(): Promise<string> {
 async function toError(res: Response): Promise<ApiError> {
   let code = 'http_' + res.status;
   let message = res.statusText || 'Request failed.';
+  let details: Record<string, unknown> = {};
   try {
-    const body = (await res.json()) as { error?: { code?: string; message?: string } };
+    const body = (await res.json()) as { error?: { code?: string; message?: string } & Record<string, unknown> };
     code = body.error?.code ?? code;
     message = body.error?.message ?? message;
+    details = body.error ?? {};
   } catch {
     if (res.status === 404) message = 'The server API is not available. Is the backend running?';
   }
-  return new ApiError(res.status, code, message);
+  return new ApiError(res.status, code, message, details);
 }
 
 export async function api<T>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {

@@ -131,17 +131,33 @@ All user data is under `users/{uid}`:
 | `config/public` | `registrationOpen` (public read, admin-write) |
 | `config/limits` | search budgets, Deep Research budget, cache lifetimes (approved read, admin-write) |
 
+## Knowledge base (`server/knowledge`, `src/features/knowledge`)
+
+- Personal base under `users/{uid}` and a shared base under `kb/shared` (approved users read, admins write): `kbCollections/{id}`, `kbSources/{id}` with `chunks/{n}` and a packed `index/{n}`.
+- Sources: files (text extracted in the browser), web pages (fetched by the server, or through Tavily), and typed notes. URL sources can refresh on a schedule.
+- Retrieval is hybrid: BM25 keyword scoring plus cosine similarity over int8-quantised embeddings, merged with reciprocal rank fusion. Confidential sources are keyword-only and are sent to an AI provider only when the owner allows it per source.
+- Answers cite knowledge excerpts as `[K#]`. Vector search runs in-process, which is fine at personal scale (thousands of chunks); a vector database would only pay off far beyond that.
+
+## Authentication (`src/state/auth.tsx`, `src/lib/authProviders.ts`, `api/phone.ts`)
+
+- Sign-in: Google, Apple and email/password (Firebase Auth). Popups in the browser; a full-page redirect in installed apps or when a popup is blocked, completed by `getRedirectResult` at start-up. `onAuthStateChanged` is the only source of truth; access checks run with a sequence guard, and the UI shows a loading state (never the login form) while they run.
+- Access states: `loading`, `signed-out`, `phone` (password account without a verified phone), `unverified` (email), `denied`, `error` (with retry), `allowed`. Flow for email sign-ups: register, verify phone, verify email, approval check, app.
+- **Phone verification** (password accounts only): `/api/phone` sends a 6-digit code (crypto random, 5-minute expiry, single use) through a swappable `SmsProvider` (Vynfy). Codes are stored only as HMACs in server-only `otp/{uid}`; limits are 60 s between sends, 5 per hour and 10 per day per account and per number, an app-wide daily cap, and 5 attempts per code counted with optimistic concurrency. `phoneNumbers/{hash}` keeps one account per number. On success the server sets the `phoneVerified` custom claim (service account) and writes `phoneNumber`, `phoneVerified`, `phoneVerifiedAt` to the profile.
+- Enforcement is server-side: the Firestore rules' `verified()` and every API (`requireAllowedUser`) reject password sign-ins without the claim. Only allowlisted accounts can trigger texts.
+- Profiles (`users/{uid}`) hold `uid`, `email`, `displayName`, `photoURL`, `provider`, `emailVerified`, `accountCreatedAt`, `lastLoginAt` and the server-written phone fields and `accountStatus`. Name and photo are filled in, never overwritten. One Firebase account per email prevents duplicate profiles; a sign-in with a different provider for an existing email shows how to sign in instead.
+
 ## Security model (`firebase/firestore.rules`)
 
-- Every read and write requires a **verified email** that is a bootstrap admin or on the allowlist.
+- Every read and write requires a **verified email** that is a bootstrap admin or on the allowlist, plus the `phoneVerified` claim for email/password sign-ins.
+- `otp`, `otpPhones`, `otpStats` and `phoneNumbers` match no client rule, so clients can never read or write them. Clients cannot set `phoneNumber`, `phoneVerified`, `phoneVerifiedAt` or `accountStatus` on their profile.
 - `users/{uid}/**` is readable and writable only by that uid. Admins cannot read other users' data.
 - Message roles are restricted to `user` or `assistant`, and content and title sizes are bounded.
 - `config/access` is admin-write only, with a validated shape.
 - Everything else is denied.
 - `config/limits` is admin-write only, with a validated shape.
-- Covered by `tests/rules/firestore.rules.test.ts` (15 cases, run in the emulator).
+- Covered by `tests/rules/` (22 rules cases plus 4 end-to-end phone-verification cases, run in the Firestore and Auth emulators).
 
-Secrets: `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `SERPAPI_API_KEY` and `TAVILY_API_KEY` are read only in `server/env.ts`. They are never logged and never sent to the browser.
+Secrets: `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `SERPAPI_API_KEY`, `TAVILY_API_KEY`, `VYNFY_API_KEY`, `OTP_HMAC_SECRET` and `FIREBASE_SERVICE_ACCOUNT` are read only in `server/env.ts`. They are never logged and never sent to the browser.
 
 ## Known limitations
 

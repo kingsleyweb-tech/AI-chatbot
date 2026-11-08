@@ -1,99 +1,62 @@
 import {
   createUserWithEmailAndPassword,
-  GoogleAuthProvider,
   sendEmailVerification,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
-  signInWithPopup,
-  signInWithRedirect,
   updateProfile,
 } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
-import { ArrowLeft, Mail, ShieldAlert } from 'lucide-react';
-import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { ArrowLeft, Eye, EyeOff, Mail, ShieldAlert, Smartphone } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
-import { Logo } from '@/components/Logo';
-import { Button, Input, Label } from '@/components/ui';
+import { LogoMark, TAGLINE } from '@/components/Logo';
+import { Button, Input, Label, Spinner } from '@/components/ui';
+import { api, ApiError } from '@/lib/api';
+import { authErrorMessage, signInWithProvider, type SocialProvider } from '@/lib/authProviders';
 import { auth, db } from '@/lib/firebase';
-import { isIOS, isStandalone } from '@/lib/utils';
-import { useAuth } from '@/state/auth';
+import { cn } from '@/lib/utils';
+import { validateRegistration } from './validate';
+import { useAuth, type AccessState } from '@/state/auth';
 
-type Mode = 'login' | 'register' | 'reset' | 'verify' | 'denied';
+type Mode = 'login' | 'register' | 'reset' | 'verify' | 'phone' | 'denied';
 
-function friendlyAuthError(err: unknown): string {
-  const code = (err as { code?: string })?.code ?? '';
-  const map: Record<string, string> = {
-    'auth/invalid-credential': 'Incorrect email or password.',
-    'auth/invalid-email': 'Enter a valid email address.',
-    'auth/user-disabled': 'This account has been disabled.',
-    'auth/user-not-found': 'Incorrect email or password.',
-    'auth/wrong-password': 'Incorrect email or password.',
-    'auth/email-already-in-use': 'An account with this email already exists. Try signing in.',
-    'auth/weak-password': 'Use at least 8 characters for your password.',
-    'auth/too-many-requests': 'Too many attempts. Please wait a few minutes and try again.',
-    'auth/network-request-failed': 'Network error. Check your connection.',
-    'auth/popup-closed-by-user': 'The Google sign-in window was closed.',
-    'auth/operation-not-allowed': 'This sign-in method is not enabled in Firebase yet.',
-    'auth/unauthorized-domain': 'This domain is not authorized for sign-in in Firebase.',
-    'auth/configuration-not-found': 'Firebase Authentication is not set up for this project yet.',
-  };
-  return map[code] ?? (err instanceof Error ? err.message.replace(/^Firebase: /, '') : 'Something went wrong.');
+/** Where each access state belongs. */
+function routeFor(access: AccessState, from = '/'): string | null {
+  switch (access) {
+    case 'allowed':
+      return from;
+    case 'phone':
+      return '/verify-phone';
+    case 'unverified':
+      return '/verify';
+    case 'denied':
+    case 'error':
+      return '/denied';
+    case 'signed-out':
+      return '/login';
+    default:
+      return null;
+  }
 }
 
-function Shell({ children, footer }: { children: ReactNode; footer?: ReactNode }) {
+function Shell({ children, footer = TAGLINE }: { children: ReactNode; footer?: ReactNode }) {
   return (
     <div className="scroll-thin touch-scroll flex h-full flex-col overflow-y-auto bg-bg pt-safe pb-safe">
       <div className="flex flex-1 flex-col items-center justify-center px-5 py-10">
-        <div className="w-full max-w-[380px]">
-          <div className="mb-8 flex justify-center">
-            <Logo />
-          </div>
-          {children}
-        </div>
+        <div className="w-full max-w-[380px]">{children}</div>
       </div>
       {footer && <div className="pb-6 text-center text-xs text-subtle">{footer}</div>}
     </div>
   );
 }
 
-function GoogleButton({ onError }: { onError: (m: string) => void }) {
-  const [busy, setBusy] = useState(false);
+function Heading({ title, subtitle }: { title: string; subtitle?: ReactNode }) {
   return (
-    <Button
-      variant="outline"
-      size="lg"
-      className="w-full"
-      loading={busy}
-      onClick={async () => {
-        setBusy(true);
-        const provider = new GoogleAuthProvider();
-        provider.setCustomParameters({ prompt: 'select_account' });
-        try {
-          // Popups are unreliable in iOS home-screen apps; use a redirect there.
-          if (isStandalone() && isIOS()) await signInWithRedirect(auth, provider);
-          else await signInWithPopup(auth, provider);
-        } catch (err) {
-          const code = (err as { code?: string }).code;
-          if (code === 'auth/popup-blocked') {
-            await signInWithRedirect(auth, provider).catch((e) => onError(friendlyAuthError(e)));
-          } else if (code !== 'auth/cancelled-popup-request') {
-            onError(friendlyAuthError(err));
-          }
-        } finally {
-          setBusy(false);
-        }
-      }}
-      icon={
-        <svg viewBox="0 0 24 24" className="size-[18px]" aria-hidden="true">
-          <path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.4h6.5a5.6 5.6 0 0 1-2.4 3.6v3h3.9c2.2-2.1 3.5-5.1 3.5-8.7z" />
-          <path fill="#34A853" d="M12 24c3.2 0 6-1.1 8-2.9l-3.9-3c-1.1.7-2.5 1.2-4.1 1.2-3.1 0-5.8-2.1-6.7-5H1.3v3.1A12 12 0 0 0 12 24z" />
-          <path fill="#FBBC05" d="M5.3 14.3a7.2 7.2 0 0 1 0-4.6V6.6h-4a12 12 0 0 0 0 10.8l4-3.1z" />
-          <path fill="#EA4335" d="M12 4.8c1.8 0 3.3.6 4.6 1.8l3.4-3.4A12 12 0 0 0 1.3 6.6l4 3.1c.9-2.9 3.6-4.9 6.7-4.9z" />
-        </svg>
-      }
-    >
-      Continue with Google
-    </Button>
+    <div className="mb-7 flex flex-col items-center text-center">
+      <LogoMark className="mb-5 size-12" />
+      <h1 className="text-[22px] font-semibold tracking-tight">{title}</h1>
+      {subtitle && <p className="mt-1.5 text-sm text-muted">{subtitle}</p>}
+    </div>
   );
 }
 
@@ -103,6 +66,90 @@ function ErrorText({ children }: { children: ReactNode }) {
     <p role="alert" className="rounded-lg bg-danger-soft px-3 py-2 text-[13px] text-danger">
       {children}
     </p>
+  );
+}
+
+const GoogleIcon = (
+  <svg viewBox="0 0 24 24" className="size-[18px]" aria-hidden="true">
+    <path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.4h6.5a5.6 5.6 0 0 1-2.4 3.6v3h3.9c2.2-2.1 3.5-5.1 3.5-8.7z" />
+    <path fill="#34A853" d="M12 24c3.2 0 6-1.1 8-2.9l-3.9-3c-1.1.7-2.5 1.2-4.1 1.2-3.1 0-5.8-2.1-6.7-5H1.3v3.1A12 12 0 0 0 12 24z" />
+    <path fill="#FBBC05" d="M5.3 14.3a7.2 7.2 0 0 1 0-4.6V6.6h-4a12 12 0 0 0 0 10.8l4-3.1z" />
+    <path fill="#EA4335" d="M12 4.8c1.8 0 3.3.6 4.6 1.8l3.4-3.4A12 12 0 0 0 1.3 6.6l4 3.1c.9-2.9 3.6-4.9 6.7-4.9z" />
+  </svg>
+);
+
+const AppleIcon = (
+  <svg viewBox="0 0 24 24" className="size-[18px]" fill="currentColor" aria-hidden="true">
+    <path d="M16.37 12.6c-.02-2.3 1.88-3.4 1.96-3.46-1.07-1.56-2.73-1.78-3.32-1.8-1.41-.14-2.76.83-3.47.83-.72 0-1.82-.81-2.99-.79-1.54.02-2.96.9-3.75 2.27-1.6 2.78-.41 6.89 1.15 9.14.76 1.1 1.67 2.34 2.86 2.3 1.15-.05 1.58-.74 2.97-.74 1.38 0 1.77.74 2.98.72 1.23-.02 2.01-1.12 2.76-2.23.87-1.28 1.23-2.52 1.25-2.58-.03-.01-2.39-.92-2.4-3.66zM14.1 5.86c.63-.77 1.06-1.83.94-2.9-.91.04-2.02.61-2.67 1.37-.58.67-1.1 1.76-.96 2.8 1.02.08 2.06-.52 2.69-1.27z" />
+  </svg>
+);
+
+function SocialButtons({ onError }: { onError: (m: string) => void }) {
+  const [busy, setBusy] = useState<SocialProvider | null>(null);
+  const go = async (id: SocialProvider) => {
+    if (busy) return;
+    onError('');
+    setBusy(id);
+    try {
+      const r = await signInWithProvider(id);
+      // 'done': the auth listener takes over (it shows a loading state while access is checked).
+      // 'redirect': the page is navigating away; keep the spinner.
+      if (r !== 'redirect') setBusy(null);
+    } catch (err) {
+      onError(authErrorMessage(err, id));
+      setBusy(null);
+    }
+  };
+  return (
+    <div className="space-y-2.5">
+      <Button variant="outline" size="lg" className="w-full" loading={busy === 'google'} disabled={busy !== null} onClick={() => go('google')} icon={GoogleIcon}>
+        Continue with Google
+      </Button>
+      <button
+        type="button"
+        onClick={() => go('apple')}
+        disabled={busy !== null}
+        className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-fg px-4 text-[15px] font-medium text-bg transition-opacity hover:opacity-90 disabled:opacity-60"
+      >
+        {busy === 'apple' ? <Spinner className="size-4 text-bg" /> : AppleIcon}
+        Continue with Apple
+      </button>
+    </div>
+  );
+}
+
+function Divider() {
+  return (
+    <div className="flex items-center gap-3 text-[11px] font-medium tracking-wide text-subtle">
+      <div className="h-px flex-1 bg-border" />
+      OR CONTINUE WITH EMAIL
+      <div className="h-px flex-1 bg-border" />
+    </div>
+  );
+}
+
+function PasswordInput({ id, value, onChange, autoComplete, invalid }: { id: string; value: string; onChange: (v: string) => void; autoComplete: string; invalid?: boolean }) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="relative">
+      <Input
+        id={id}
+        type={show ? 'text' : 'password'}
+        autoComplete={autoComplete}
+        value={value}
+        aria-invalid={invalid || undefined}
+        onChange={(e) => onChange(e.target.value)}
+        className="pr-10"
+      />
+      <button
+        type="button"
+        onClick={() => setShow((s) => !s)}
+        className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-subtle hover:text-fg"
+        aria-label={show ? 'Hide password' : 'Show password'}
+      >
+        {show ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+      </button>
+    </div>
   );
 }
 
@@ -116,41 +163,56 @@ function useRegistrationOpen() {
   return open;
 }
 
+/** Signed in, waiting for the access check: never show the form again in the meantime. */
+function Checking() {
+  return (
+    <Shell>
+      <div className="flex flex-col items-center gap-3 text-sm text-muted">
+        <Spinner className="size-5" />
+        Signing you in…
+      </div>
+    </Shell>
+  );
+}
+
 function Login() {
+  const { signInError, clearSignInError } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const regOpen = useRegistrationOpen();
+  const shown = error || signInError || '';
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    clearSignInError();
     setError('');
+    if (!email.trim() || !password) return setError('Enter your email and password.');
     setBusy(true);
     try {
       await signInWithEmailAndPassword(auth, email.trim(), password);
     } catch (err) {
-      setError(friendlyAuthError(err));
-    } finally {
+      setError(authErrorMessage(err));
       setBusy(false);
     }
   };
 
   return (
-    <Shell footer="Private assistant · access by invitation">
-      <h1 className="mb-1 text-center text-xl font-semibold tracking-tight">Welcome back</h1>
-      <p className="mb-7 text-center text-sm text-muted">Sign in to continue to Atlas AI.</p>
-      <div className="space-y-4">
-        <GoogleButton onError={setError} />
-        <div className="flex items-center gap-3 text-xs text-subtle">
-          <div className="h-px flex-1 bg-border" />
-          or
-          <div className="h-px flex-1 bg-border" />
-        </div>
-        <form className="space-y-3.5" onSubmit={submit}>
+    <Shell>
+      <Heading title="Welcome to Atlas AI" subtitle="Your intelligent assistant for thinking, creating and discovering." />
+      <div className="space-y-5">
+        <SocialButtons
+          onError={(m) => {
+            clearSignInError();
+            setError(m);
+          }}
+        />
+        <Divider />
+        <form className="space-y-3.5" onSubmit={submit} noValidate>
           <div>
             <Label htmlFor="email">Email</Label>
-            <Input id="email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+            <Input id="email" type="email" autoComplete="email" inputMode="email" value={email} onChange={(e) => setEmail(e.target.value)} />
           </div>
           <div>
             <div className="flex items-baseline justify-between">
@@ -159,23 +221,16 @@ function Login() {
                 Forgot password?
               </Link>
             </div>
-            <Input
-              id="password"
-              type="password"
-              autoComplete="current-password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
+            <PasswordInput id="password" autoComplete="current-password" value={password} onChange={setPassword} />
           </div>
-          <ErrorText>{error}</ErrorText>
+          <ErrorText>{shown}</ErrorText>
           <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy}>
             Sign in
           </Button>
         </form>
         {regOpen && (
           <p className="text-center text-sm text-muted">
-            New here?{' '}
+            New to Atlas AI?{' '}
             <Link to="/register" className="font-medium text-accent hover:underline">
               Create an account
             </Link>
@@ -186,85 +241,91 @@ function Login() {
   );
 }
 
+function FieldError({ children }: { children?: string }) {
+  return children ? <p className="mt-1 text-xs text-danger">{children}</p> : null;
+}
+
 function Register() {
   const regOpen = useRegistrationOpen();
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [v, setV] = useState({ name: '', email: '', password: '', confirm: '' });
+  const [touched, setTouched] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const errors = validateRegistration(v);
+  const set = (k: keyof typeof v) => (value: string) => setV((s) => ({ ...s, [k]: value }));
 
-  if (regOpen === null) return <Shell>{null}</Shell>;
+  if (regOpen === null) return <Checking />;
   if (!regOpen) {
     return (
       <Shell>
-        <div className="rounded-2xl border border-border p-6 text-center">
-          <h1 className="text-lg font-semibold">Registration is closed</h1>
-          <p className="mt-2 text-sm text-muted">
-            Atlas AI is invitation-only. Ask the administrator to approve your email, or sign in with an approved Google account.
-          </p>
-          <Link to="/login" className="mt-5 inline-block text-sm font-medium text-accent hover:underline">
-            Back to sign in
-          </Link>
-        </div>
+        <Heading title="Registration is closed" subtitle="Atlas AI is invitation-only. Ask the administrator to approve your email, or sign in with an approved Google or Apple account." />
+        <Link to="/login" className="block text-center text-sm font-medium text-accent hover:underline">
+          Back to sign in
+        </Link>
       </Shell>
     );
   }
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    setTouched(true);
     setError('');
-    if (password.length < 8) return setError('Use at least 8 characters for your password.');
+    if (Object.keys(errors).length) return;
     setBusy(true);
     try {
-      const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
-      if (name.trim()) await updateProfile(cred.user, { displayName: name.trim() });
-      await sendEmailVerification(cred.user, { url: window.location.origin + '/' });
+      const cred = await createUserWithEmailAndPassword(auth, v.email.trim(), v.password);
+      await updateProfile(cred.user, { displayName: v.name.trim() });
+      await sendEmailVerification(cred.user, { url: window.location.origin + '/' }).catch(() => undefined);
+      // The auth listener moves on to phone verification.
     } catch (err) {
-      setError(friendlyAuthError(err));
-    } finally {
+      setError(authErrorMessage(err));
       setBusy(false);
     }
   };
 
+  const show = (k: keyof typeof v) => (touched ? errors[k] : undefined);
   return (
     <Shell>
-      <h1 className="mb-1 text-center text-xl font-semibold tracking-tight">Create your account</h1>
-      <p className="mb-7 text-center text-sm text-muted">Access still requires approval by the administrator.</p>
-      <form className="space-y-3.5" onSubmit={submit}>
-        <div>
-          <Label htmlFor="name">Name</Label>
-          <Input id="name" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} />
-        </div>
-        <div>
-          <Label htmlFor="email">Email</Label>
-          <Input id="email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
-        </div>
-        <div>
-          <Label htmlFor="password" hint="At least 8 characters.">
-            Password
-          </Label>
-          <Input
-            id="password"
-            type="password"
-            autoComplete="new-password"
-            required
-            minLength={8}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-        </div>
-        <ErrorText>{error}</ErrorText>
-        <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy}>
-          Create account
-        </Button>
-      </form>
-      <p className="mt-5 text-center text-sm text-muted">
-        Already have an account?{' '}
-        <Link to="/login" className="font-medium text-accent hover:underline">
-          Sign in
-        </Link>
-      </p>
+      <Heading title="Create your account" subtitle="Your intelligent assistant for thinking, creating and discovering." />
+      <div className="space-y-5">
+        <SocialButtons onError={setError} />
+        <Divider />
+        <form className="space-y-3.5" onSubmit={submit} noValidate>
+          <div>
+            <Label htmlFor="name">Full name</Label>
+            <Input id="name" autoComplete="name" value={v.name} aria-invalid={!!show('name') || undefined} onChange={(e) => set('name')(e.target.value)} />
+            <FieldError>{show('name')}</FieldError>
+          </div>
+          <div>
+            <Label htmlFor="email">Email</Label>
+            <Input id="email" type="email" autoComplete="email" inputMode="email" value={v.email} aria-invalid={!!show('email') || undefined} onChange={(e) => set('email')(e.target.value)} />
+            <FieldError>{show('email')}</FieldError>
+          </div>
+          <div>
+            <Label htmlFor="password" hint="At least 8 characters, with a number.">
+              Password
+            </Label>
+            <PasswordInput id="password" autoComplete="new-password" value={v.password} onChange={set('password')} invalid={!!show('password')} />
+            <FieldError>{show('password')}</FieldError>
+          </div>
+          <div>
+            <Label htmlFor="confirm">Confirm password</Label>
+            <PasswordInput id="confirm" autoComplete="new-password" value={v.confirm} onChange={set('confirm')} invalid={!!show('confirm')} />
+            <FieldError>{show('confirm')}</FieldError>
+          </div>
+          <ErrorText>{error}</ErrorText>
+          <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy}>
+            Create account
+          </Button>
+          <p className="text-center text-xs text-subtle">You will confirm your phone number with a text message next.</p>
+        </form>
+        <p className="text-center text-sm text-muted">
+          Already have an account?{' '}
+          <Link to="/login" className="font-medium text-accent hover:underline">
+            Sign in
+          </Link>
+        </p>
+      </div>
     </Shell>
   );
 }
@@ -301,7 +362,7 @@ function Reset() {
             } catch (err) {
               const code = (err as { code?: string }).code;
               if (code === 'auth/user-not-found') setSent(true);
-              else setError(friendlyAuthError(err));
+              else setError(authErrorMessage(err));
             } finally {
               setBusy(false);
             }
@@ -321,55 +382,350 @@ function Reset() {
   );
 }
 
+/* ----------------------------- phone verification ----------------------------- */
+
+interface PhoneStatus {
+  required: boolean;
+  verified: boolean;
+  configured: boolean;
+  pending?: boolean;
+  phoneMasked?: string | null;
+  expiresIn?: number;
+  resendIn?: number;
+  attemptsLeft?: number;
+}
+
+function useCountdown() {
+  const [until, setUntil] = useState(0);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (until <= now) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [until, now]);
+  const start = useCallback((s: number) => {
+    const t = Date.now();
+    setNow(t);
+    setUntil(t + s * 1000);
+  }, []);
+  return { left: Math.max(0, Math.ceil((until - now) / 1000)), start };
+}
+
+const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+
+function CodeBoxes({ value, onChange, disabled, invalid }: { value: string; onChange: (v: string) => void; disabled?: boolean; invalid?: boolean }) {
+  const refs = useRef<(HTMLInputElement | null)[]>([]);
+  const digits = Array.from({ length: 6 }, (_, i) => value[i] ?? '');
+  const put = (i: number, text: string) => {
+    const clean = text.replace(/\D/g, '');
+    if (!clean) return;
+    const next = (value.slice(0, i) + clean).slice(0, 6);
+    onChange(next);
+    refs.current[Math.min(next.length, 5)]?.focus();
+  };
+  return (
+    <div className="flex justify-between gap-2" role="group" aria-label="6-digit code">
+      {digits.map((d, i) => (
+        <input
+          key={i}
+          ref={(el) => {
+            refs.current[i] = el;
+          }}
+          value={d}
+          disabled={disabled}
+          inputMode="numeric"
+          autoComplete={i === 0 ? 'one-time-code' : 'off'}
+          maxLength={i === 0 ? 6 : 1}
+          aria-label={`Digit ${i + 1}`}
+          autoFocus={i === 0}
+          className={cn(
+            'h-13 w-full min-w-0 rounded-xl border bg-surface text-center text-xl font-semibold tabular-nums outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-accent/20',
+            invalid ? 'border-danger' : 'border-border',
+          )}
+          onChange={(e) => {
+            const t = e.target.value;
+            if (!t) onChange(value.slice(0, i) + value.slice(i + 1));
+            else put(i, t.length > 1 && t.startsWith(d) ? t.slice(d.length) || t : t);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Backspace' && !d && i > 0) {
+              onChange(value.slice(0, i - 1));
+              refs.current[i - 1]?.focus();
+              e.preventDefault();
+            } else if (e.key === 'ArrowLeft' && i > 0) refs.current[i - 1]?.focus();
+            else if (e.key === 'ArrowRight' && i < 5) refs.current[i + 1]?.focus();
+          }}
+          onPaste={(e) => {
+            e.preventDefault();
+            put(0, e.clipboardData.getData('text'));
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function phoneError(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.code === 'resend_cooldown' && typeof err.details.retryAfter === 'number') return `Please wait ${err.details.retryAfter} s before requesting another code.`;
+    if (err.code === 'invalid_code' && typeof err.details.attemptsLeft === 'number') {
+      const n = err.details.attemptsLeft;
+      return `That code is not correct. ${n} attempt${n === 1 ? '' : 's'} left.`;
+    }
+    if (err.code === 'not_allowed') return 'This account is not approved yet. Ask the administrator to add your email.';
+    return err.message;
+  }
+  return 'Something went wrong. Please try again.';
+}
+
+function PhoneVerify() {
+  const { user, access, refreshAccess, signOut } = useAuth();
+  const [status, setStatus] = useState<PhoneStatus | null>(null);
+  const [step, setStep] = useState<'number' | 'code'>('number');
+  const [phone, setPhone] = useState('');
+  const [masked, setMasked] = useState('');
+  const [code, setCode] = useState('');
+  const [error, setError] = useState('');
+  const [codeInvalid, setCodeInvalid] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const resend = useCountdown();
+  const expiry = useCountdown();
+
+  const load = useCallback(async () => {
+    setError('');
+    try {
+      const s = await api<PhoneStatus>('phone', { json: { action: 'status' } });
+      setStatus(s);
+      if (s.verified) {
+        await refreshAccess();
+        return;
+      }
+      if (s.pending && s.phoneMasked) {
+        setMasked(s.phoneMasked);
+        setStep('code');
+        expiry.start(s.expiresIn ?? 0);
+      }
+      if (s.resendIn) resend.start(s.resendIn);
+    } catch (err) {
+      setStatus({ required: true, verified: false, configured: true });
+      setError(phoneError(err));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshAccess]);
+
+  useEffect(() => {
+    if (access === 'phone') void load();
+  }, [access, load]);
+
+  if (access === 'loading') return <Checking />;
+  if (access !== 'phone') return <Navigate to={routeFor(access) ?? '/'} replace />;
+  if (!status) return <Checking />;
+
+  if (!status.configured) {
+    return (
+      <Shell>
+        <Heading title="Phone verification unavailable" subtitle="Text-message verification has not been set up on the server yet. Please try again later or contact the administrator." />
+        <div className="flex flex-col gap-2">
+          <Button variant="primary" onClick={() => void load()}>
+            Try again
+          </Button>
+          <Button variant="ghost" onClick={() => signOut()}>
+            Sign out
+          </Button>
+        </div>
+      </Shell>
+    );
+  }
+
+  const send = async (e?: FormEvent) => {
+    e?.preventDefault();
+    setError('');
+    setCodeInvalid(false);
+    const digits = phone.replace(/\D/g, '');
+    if (digits.length < 9) return setError('Enter your mobile number, for example 024 123 4567.');
+    setBusy(true);
+    try {
+      const r = await api<{ phoneMasked: string; expiresIn: number; resendIn: number }>('phone', { json: { action: 'send', phone: digits } });
+      setMasked(r.phoneMasked);
+      setStep('code');
+      setCode('');
+      expiry.start(r.expiresIn);
+      resend.start(r.resendIn);
+    } catch (err) {
+      if (err instanceof ApiError && typeof err.details.retryAfter === 'number' && err.code === 'resend_cooldown') resend.start(err.details.retryAfter);
+      setError(phoneError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const verify = async (value = code) => {
+    if (value.length !== 6 || busy) return;
+    setError('');
+    setCodeInvalid(false);
+    setBusy(true);
+    try {
+      await api('phone', { json: { action: 'verify', code: value } });
+      // The server set the phoneVerified claim: refresh the token and move on.
+      await refreshAccess();
+    } catch (err) {
+      setCodeInvalid(true);
+      setCode('');
+      if (err instanceof ApiError && ['too_many_attempts', 'expired', 'no_code'].includes(err.code)) expiry.start(0);
+      setError(phoneError(err));
+      setBusy(false);
+    }
+  };
+
+  if (step === 'number') {
+    return (
+      <Shell>
+        <div className="mb-7 flex flex-col items-center text-center">
+          <div className="mb-5 flex size-12 items-center justify-center rounded-2xl bg-accent-soft text-accent">
+            <Smartphone className="size-6" />
+          </div>
+          <h1 className="text-[22px] font-semibold tracking-tight">Verify your phone</h1>
+          <p className="mt-1.5 text-sm text-muted">We’ll text a 6-digit code to confirm it’s you. Standard message rates may apply.</p>
+        </div>
+        <form className="space-y-3.5" onSubmit={send} noValidate>
+          <div>
+            <Label htmlFor="phone">Mobile number</Label>
+            <div className="flex gap-2">
+              <span className="flex h-11 items-center rounded-xl border border-border bg-surface-2 px-3 text-[15px] text-muted" aria-label="Country code Ghana">
+                GH +233
+              </span>
+              <Input
+                id="phone"
+                type="tel"
+                inputMode="tel"
+                autoComplete="tel-national"
+                placeholder="024 123 4567"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value.replace(/[^\d\s]/g, '').slice(0, 13))}
+                className="flex-1"
+              />
+            </div>
+            <p className="mt-1.5 text-xs text-subtle">Ghana mobile numbers are supported at the moment.</p>
+          </div>
+          <ErrorText>{error}</ErrorText>
+          <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy} disabled={resend.left > 0}>
+            {resend.left > 0 ? `Send code in ${resend.left} s` : 'Send code'}
+          </Button>
+        </form>
+        <div className="mt-6 text-center text-sm text-muted">
+          Signed in as {user?.email}.{' '}
+          <button className="font-medium text-accent hover:underline" onClick={() => signOut()}>
+            Sign out
+          </button>
+        </div>
+      </Shell>
+    );
+  }
+
+  return (
+    <Shell>
+      <button
+        onClick={() => {
+          setStep('number');
+          setError('');
+        }}
+        className="mb-6 inline-flex items-center gap-1.5 text-sm text-muted hover:text-fg">
+        <ArrowLeft className="size-4" /> Change number
+      </button>
+      <h1 className="text-[22px] font-semibold tracking-tight">Enter the code</h1>
+      <p className="mt-1.5 mb-6 text-sm text-muted">
+        We sent a 6-digit code to <b className="font-medium text-fg">{masked}</b>.
+      </p>
+      <form
+        className="space-y-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void verify();
+        }}
+      >
+        <CodeBoxes
+          value={code}
+          disabled={busy}
+          invalid={codeInvalid}
+          onChange={(v) => {
+            setCode(v);
+            setCodeInvalid(false);
+            if (v.length === 6) void verify(v);
+          }}
+        />
+        <p className="text-xs text-subtle" aria-live="polite">
+          {expiry.left > 0 ? `The code expires in ${mmss(expiry.left)}.` : 'This code has expired or is no longer valid. Request a new one.'}
+        </p>
+        <ErrorText>{error}</ErrorText>
+        <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy} disabled={code.length !== 6}>
+          Verify
+        </Button>
+      </form>
+      <div className="mt-5 text-center text-sm text-muted">
+        Didn’t get it?{' '}
+        {resend.left > 0 ? (
+          <span className="tabular-nums">Resend in {mmss(resend.left)}</span>
+        ) : (
+          <button className="font-medium text-accent hover:underline" onClick={() => void send()} disabled={busy}>
+            Resend code
+          </button>
+        )}
+      </div>
+    </Shell>
+  );
+}
+
+/* ----------------------------- other states ----------------------------- */
+
 function Verify() {
   const { user, access, refreshAccess, signOut } = useAuth();
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
-  if (access === 'signed-out') return <Navigate to="/login" replace />;
-  if (access === 'allowed') return <Navigate to="/" replace />;
-  if (access === 'denied') return <Navigate to="/denied" replace />;
+  if (access === 'loading' && !busy) return <Checking />;
+  if (access !== 'unverified' && access !== 'loading') return <Navigate to={routeFor(access) ?? '/'} replace />;
   return (
     <Shell>
-      <div className="rounded-2xl border border-border p-6">
-        <div className="mb-4 flex size-10 items-center justify-center rounded-xl bg-accent-soft text-accent">
-          <Mail className="size-5" />
+      <div className="mb-7 flex flex-col items-center text-center">
+        <div className="mb-5 flex size-12 items-center justify-center rounded-2xl bg-accent-soft text-accent">
+          <Mail className="size-6" />
         </div>
-        <h1 className="text-lg font-semibold">Verify your email</h1>
-        <p className="mt-2 text-sm text-muted">
-          We sent a verification link to <b className="text-fg">{user?.email}</b>. Open it, then come back here.
+        <h1 className="text-[22px] font-semibold tracking-tight">Verify your email</h1>
+        <p className="mt-1.5 text-sm text-muted">
+          We sent a verification link to <b className="font-medium text-fg">{user?.email}</b>. Open it, then come back here.
         </p>
-        {msg && <p className="mt-3 text-sm text-accent">{msg}</p>}
-        <div className="mt-5 flex flex-col gap-2">
-          <Button
-            variant="primary"
-            loading={busy}
-            onClick={async () => {
-              setBusy(true);
-              await refreshAccess();
-              setBusy(false);
-              setMsg(auth.currentUser?.emailVerified ? '' : 'Not verified yet. Check your inbox.');
-            }}
-          >
-            I’ve verified my email
-          </Button>
-          <Button
-            variant="ghost"
-            onClick={async () => {
-              if (!auth.currentUser) return;
-              try {
-                await sendEmailVerification(auth.currentUser, { url: window.location.origin + '/' });
-                setMsg('Verification email sent.');
-              } catch (err) {
-                setMsg(friendlyAuthError(err));
-              }
-            }}
-          >
-            Resend email
-          </Button>
-          <Button variant="ghost" onClick={() => signOut()}>
-            Use a different account
-          </Button>
-        </div>
+      </div>
+      {msg && <p className="mb-3 text-center text-sm text-accent">{msg}</p>}
+      <div className="flex flex-col gap-2">
+        <Button
+          variant="primary"
+          size="lg"
+          loading={busy}
+          onClick={async () => {
+            setBusy(true);
+            await refreshAccess();
+            setBusy(false);
+            setMsg(auth.currentUser?.emailVerified ? '' : 'Not verified yet. Check your inbox and spam folder.');
+          }}
+        >
+          I’ve verified my email
+        </Button>
+        <Button
+          variant="ghost"
+          onClick={async () => {
+            if (!auth.currentUser) return;
+            try {
+              await sendEmailVerification(auth.currentUser, { url: window.location.origin + '/' });
+              setMsg('Verification email sent.');
+            } catch (err) {
+              setMsg(authErrorMessage(err));
+            }
+          }}
+        >
+          Resend email
+        </Button>
+        <Button variant="ghost" onClick={() => signOut()}>
+          Use a different account
+        </Button>
       </div>
     </Shell>
   );
@@ -377,33 +733,43 @@ function Verify() {
 
 function Denied() {
   const { user, access, accessError, refreshAccess, signOut } = useAuth();
-  if (access === 'signed-out') return <Navigate to="/login" replace />;
-  if (access === 'allowed') return <Navigate to="/" replace />;
-  if (access === 'unverified') return <Navigate to="/verify" replace />;
+  const [busy, setBusy] = useState(false);
+  if (access === 'loading' && !busy) return <Checking />;
+  if (access !== 'denied' && access !== 'error' && access !== 'loading') return <Navigate to={routeFor(access) ?? '/'} replace />;
+  const isError = access === 'error';
   return (
     <Shell>
-      <div className="rounded-2xl border border-border p-6">
-        <div className="mb-4 flex size-10 items-center justify-center rounded-xl bg-warn-soft text-warn">
-          <ShieldAlert className="size-5" />
+      <div className="mb-7 flex flex-col items-center text-center">
+        <div className="mb-5 flex size-12 items-center justify-center rounded-2xl bg-warn-soft text-warn">
+          <ShieldAlert className="size-6" />
         </div>
-        <h1 className="text-lg font-semibold">{access === 'error' ? 'Can’t verify access' : 'Access not approved'}</h1>
-        <p className="mt-2 text-sm text-muted">
-          {access === 'error'
-            ? accessError ?? 'We could not reach the server to check your access.'
-            : (
-              <>
-                <b className="text-fg">{user?.email}</b> is not on the approved list. Ask the administrator to add this email in Settings → Access.
-              </>
-            )}
+        <h1 className="text-[22px] font-semibold tracking-tight">{isError ? 'Something went wrong' : 'Access not approved'}</h1>
+        <p className="mt-1.5 text-sm text-muted">
+          {isError ? (
+            accessError ?? 'We could not reach the server to check your access.'
+          ) : (
+            <>
+              <b className="font-medium text-fg">{user?.email}</b> is not on the approved list yet. Ask the administrator to add this email in Settings &gt; Access.
+            </>
+          )}
         </p>
-        <div className="mt-5 flex flex-col gap-2">
-          <Button variant="primary" onClick={() => refreshAccess()}>
-            Check again
-          </Button>
-          <Button variant="ghost" onClick={() => signOut()}>
-            Sign out
-          </Button>
-        </div>
+      </div>
+      <div className="flex flex-col gap-2">
+        <Button
+          variant="primary"
+          size="lg"
+          loading={busy}
+          onClick={async () => {
+            setBusy(true);
+            await refreshAccess();
+            setBusy(false);
+          }}
+        >
+          {isError ? 'Try again' : 'Check again'}
+        </Button>
+        <Button variant="ghost" onClick={() => signOut()}>
+          Sign out
+        </Button>
       </div>
     </Shell>
   );
@@ -414,16 +780,20 @@ export default function AuthPages({ mode }: { mode: Mode }) {
   const navigate = useNavigate();
   const location = useLocation();
   const from = (location.state as { from?: string } | null)?.from ?? '/';
+  const entry = mode === 'login' || mode === 'register' || mode === 'reset';
 
+  // Sign-in, register and reset pages follow the auth state once a user exists.
   useEffect(() => {
-    if ((mode === 'login' || mode === 'register') && access !== 'loading' && access !== 'signed-out') {
-      navigate(access === 'allowed' ? from : access === 'unverified' ? '/verify' : '/denied', { replace: true });
-    }
-  }, [access, mode, navigate, from]);
+    if (!entry || access === 'signed-out' || access === 'loading') return;
+    const to = routeFor(access, from);
+    if (to) navigate(to, { replace: true });
+  }, [access, entry, navigate, from]);
 
+  if (entry && access === 'loading' && auth.currentUser) return <Checking />;
   if (mode === 'login') return <Login />;
   if (mode === 'register') return <Register />;
   if (mode === 'reset') return <Reset />;
   if (mode === 'verify') return <Verify />;
+  if (mode === 'phone') return <PhoneVerify />;
   return <Denied />;
 }

@@ -12,18 +12,21 @@ export function Page({
   back,
   actions,
   wide,
+  className,
 }: {
   title: string;
   children: ReactNode;
   back?: string;
   actions?: ReactNode;
   wide?: boolean;
+  /** extra classes for the page background */
+  className?: string;
 }) {
   const shell = useShell();
   const navigate = useNavigate();
   const showBar = !shell.isDesktop || shell.sidebarCollapsed || back;
   return (
-    <div className="flex h-full flex-col">
+    <div className={cn('flex h-full flex-col', className)}>
       {showBar && (
         <header className="flex shrink-0 items-center gap-1 px-2 pt-safe sm:px-3">
           <div className="flex h-14 min-w-0 flex-1 items-center gap-1">

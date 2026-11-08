@@ -45,9 +45,20 @@ export const DEFAULT_SETTINGS: UserSettings = {
 };
 
 export interface UserProfile {
+  uid?: string;
   email: string | null;
   displayName: string;
   photoURL?: string | null;
+  /** sign-in method last used: password, google.com, apple.com */
+  provider?: string;
+  /** set by the server after SMS verification */
+  phoneNumber?: string | null;
+  phoneVerified?: boolean;
+  phoneVerifiedAt?: Timestamp;
+  emailVerified?: boolean;
+  accountCreatedAt?: string;
+  lastLoginAt?: Timestamp;
+  accountStatus?: string;
   createdAt?: Timestamp;
   settings?: Partial<UserSettings>;
 }
