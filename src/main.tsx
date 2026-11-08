@@ -22,6 +22,25 @@ window.setTimeout(() => void initAnalytics(), 4000);
 // Service worker (PWA). Auto-updates in the background.
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
   import('virtual:pwa-register').then(({ registerSW }) => {
-    registerSW({ immediate: true });
+    registerSW({
+      immediate: true,
+      // Browsers only look for a new version on a fresh start, so an open tab
+      // or installed app could keep an old build for days. Check whenever the
+      // app comes back into view and every 30 minutes; a new version then
+      // activates and the page reloads into it (autoUpdate).
+      onRegisteredSW(_url, reg) {
+        if (!reg) return;
+        let last = Date.now();
+        const check = () => {
+          if (!navigator.onLine || Date.now() - last < 60_000) return;
+          last = Date.now();
+          void reg.update().catch(() => undefined);
+        };
+        window.setInterval(check, 30 * 60_000);
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible') check();
+        });
+      },
+    });
   });
 }
