@@ -137,6 +137,11 @@ body {
 
 /* In the base layer so utilities such as outline-none (the composer) win. */
 @layer base {
+  /* Grid items default to min-width: auto, so one long unbreakable line
+     (a URL, a row of chips) can widen the whole page on a phone and cause
+     sideways scrolling. Let them shrink; truncation and wrapping then work. */
+  .grid > * { min-width: 0; }
+
   :focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;

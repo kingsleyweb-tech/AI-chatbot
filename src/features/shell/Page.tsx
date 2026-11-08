@@ -48,7 +48,7 @@ export function Page({
           {actions && <div className="flex shrink-0 items-center gap-1 lg:hidden">{actions}</div>}
         </header>
       )}
-      <div className="scroll-thin touch-scroll min-h-0 flex-1 overflow-y-auto">
+      <div className="scroll-thin touch-scroll min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
         <div className={cn('mx-auto w-full px-4 pb-safe-12 pt-4 sm:px-6 lg:pt-10', wide ? 'max-w-5xl' : 'max-w-3xl')}>{children}</div>
       </div>
     </div>

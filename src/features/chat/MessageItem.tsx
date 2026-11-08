@@ -331,9 +331,9 @@ export const UserMessage = memo(function UserMessage({
       {docs.length > 0 && (
         <div className="mb-1.5 flex flex-wrap justify-end gap-1.5">
           {docs.map((d, i) => (
-            <span key={i} className="flex items-center gap-1.5 rounded-lg border border-border bg-surface px-2 py-1 text-xs">
-              <FileText className="size-3.5 text-accent" />
-              {d.name}
+            <span key={i} className="flex min-w-0 max-w-full items-center gap-1.5 rounded-lg border border-border bg-surface px-2 py-1 text-xs">
+              <FileText className="size-3.5 shrink-0 text-accent" />
+              <span className="truncate">{d.name}</span>
             </span>
           ))}
         </div>

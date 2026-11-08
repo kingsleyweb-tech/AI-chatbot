@@ -246,8 +246,8 @@ export default function KnowledgePage() {
           </span>
         </EmptyState>
       ) : (
-        <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
-          <nav aria-label="Collections" className="lg:sticky lg:top-4 lg:self-start">
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[220px_minmax(0,1fr)]">
+          <nav aria-label="Collections" className="min-w-0 lg:sticky lg:top-4 lg:self-start">
             <ul className="flex gap-1 overflow-x-auto pb-1 lg:flex-col lg:overflow-visible">
               <CollectionItem label="All sources" count={srcs.data.length} active={selected === ALL} onClick={() => setSelected(ALL)} />
               {cols.data.map((c) => (
@@ -277,7 +277,7 @@ export default function KnowledgePage() {
             </ul>
           </nav>
 
-          <section>
+          <section className="min-w-0">
             <div className="mb-3 flex items-center gap-2">
               <div className="relative flex-1">
                 <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-subtle" />
@@ -633,7 +633,7 @@ function SourceRow({
           )}
         </div>
         <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs text-muted">
-          {collection && <span>{collection} ·</span>}
+          {collection && <span className="hidden sm:inline">{collection} ·</span>}
           {s.status === 'processing' && <span>Reading and indexing…</span>}
           {s.status === 'failed' && <span className="text-danger">{s.error ?? 'Indexing failed'}</span>}
           {s.status === 'ready' && (
@@ -641,7 +641,7 @@ function SourceRow({
               {s.url ? <span>{domainOf(s.url)}</span> : s.size ? <span>{formatBytes(s.size)}</span> : null}
               <span>· {s.chunkCount ?? 0} sections</span>
               {when && <span title={`Indexed ${s.indexedAt ?? ''}`}>· updated {relativeTime(when)}</span>}
-              {s.addedFrom === 'web_search' && <span>· saved from web search</span>}
+              {s.addedFrom === 'web_search' && <span className="hidden sm:inline">· saved from web search</span>}
             </>
           )}
           {isDue(s) && <Badge tone="accent">Refresh due</Badge>}

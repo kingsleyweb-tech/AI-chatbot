@@ -389,7 +389,7 @@ export default function ChatPage() {
       )}
 
       {/* Body */}
-      <div ref={scroller} onScroll={onScroll} className="scroll-thin touch-scroll relative min-h-0 flex-1 overflow-y-auto">
+      <div ref={scroller} onScroll={onScroll} className="scroll-thin touch-scroll relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
         {notFound ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
             <p className="text-sm text-muted">This conversation doesn’t exist or was deleted.</p>
