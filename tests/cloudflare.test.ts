@@ -233,6 +233,11 @@ function setup() {
       calls.image++;
       calls.lastForm = body.form ?? null;
       const prompt = String(body.form?.get('prompt') ?? body.json?.prompt ?? '');
+      if (prompt.includes('FLAGIMAGE')) {
+        const { mapCloudflareError } = await import('../server/cloudflare/client.js');
+        const body = JSON.stringify({ errors: [{ code: 3030, message: 'AiError: Your output has been flagged. Please choose another prompt / input image combination' }] });
+        throw Object.assign(mapCloudflareError(400, body), { neurons: 0 });
+      }
       if (prompt.includes('FAILIMAGE')) {
         const { ProviderError } = await import('../server/providers/types.js');
         throw Object.assign(new ProviderError('provider_error', 'Cloudflare Workers AI had a temporary problem.', 502), { neurons: 0 });
@@ -345,6 +350,18 @@ describe('image turns', () => {
   it('records a failed generation and surfaces a retryable provider error', async () => {
     const { db } = setup();
     await expect(turn(db, { intent: { kind: 'generate', prompt: 'FAILIMAGE a cat' } })).rejects.toMatchObject({ code: 'provider_error' });
+    const day = db.docs.get(usagePath(utcDay()))!;
+    expect(day['types.image_generate.failed']).toBe(1);
+  });
+
+  it("explains the image model's own output filter as a refusal with advice, not a retryable error", async () => {
+    const { db, calls } = setup();
+    const err = await turn(db, { intent: { kind: 'generate', prompt: 'FLAGIMAGE a Tesla car' } }).catch((e) => e);
+    expect(err).toMatchObject({ code: 'image_flagged', retryable: false });
+    expect(err.message).toMatch(/own safety filter/);
+    expect(err.message).not.toMatch(/AiError|choose another prompt/);
+    expect(err.suggestion).toMatch(/without the brand/);
+    expect(calls.image).toBe(1);
     const day = db.docs.get(usagePath(utcDay()))!;
     expect(day['types.image_generate.failed']).toBe(1);
   });

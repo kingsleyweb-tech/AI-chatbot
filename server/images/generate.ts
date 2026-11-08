@@ -154,7 +154,18 @@ export async function runImageTurn(args: {
     } catch (err) {
       const neurons = (err as { neurons?: number }).neurons ?? 0;
       const code = err instanceof ProviderError ? err.code : signal.aborted ? 'aborted' : 'internal';
-      await reservation.settle(neurons, { uid, model: model.id, type: isEdit ? 'image_edit' : 'image_generate', ok: false, error: code });
+      const flagged = providerFlagged(err);
+      await reservation.settle(neurons, { uid, model: model.id, type: isEdit ? 'image_edit' : 'image_generate', ok: false, error: flagged ? 'provider_flagged' : code });
+      if (flagged) {
+        // The image model's own output filter (separate from Atlas AI's check). Retrying the same
+        // prompt fails the same way, so this is a refusal with advice, not a retryable error.
+        throw new ImageError(
+          'image_flagged',
+          "Cloudflare's image model blocked this picture with its own safety filter. This often happens with brand names, logos, trademarked products or real people, even when the request is harmless.",
+          false,
+          'Try describing it without the brand or name, for example "a sleek modern electric sedan, silver, studio lighting".',
+        );
+      }
       throw err;
     }
     await reservation.settle(result.neurons, { uid, model: model.id, type: isEdit ? 'image_edit' : 'image_generate', ok: true });
@@ -183,4 +194,10 @@ export async function runImageTurn(args: {
   } finally {
     slot.release();
   }
+}
+
+/** The image model refused its own output (Cloudflare: "Your output has been flagged…"). */
+export function providerFlagged(err: unknown): boolean {
+  if (!(err instanceof ProviderError) || err.code !== 'bad_request') return false;
+  return /flagged|nsfw|unsafe (content|output)|content (policy|filter)|safety (filter|system)|choose another prompt/i.test(err.message);
 }
