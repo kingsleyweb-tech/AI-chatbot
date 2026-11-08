@@ -19,6 +19,7 @@ import {
   ShieldCheck,
   Sparkles,
   SunMoon,
+  UserPlus,
   Users,
   X,
   type LucideIcon,
@@ -855,6 +856,7 @@ function SettingsHome() {
         <NavRow to="/settings/security" icon={ShieldCheck} label="Security and activity" />
         <NavRow to="/settings/usage" icon={BarChart3} label="Usage" />
         {admin && <NavRow to="/admin/users" icon={Users} label="Users" value="Admin" />}
+        {admin && <NavRow to="/admin/requests" icon={UserPlus} label="Access requests" value="Admin" />}
         {admin && <NavRow to="/settings/access" icon={ShieldCheck} label="Access and registration" value="Admin" />}
       </Group>
 

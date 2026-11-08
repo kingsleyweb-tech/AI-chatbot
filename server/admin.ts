@@ -1,9 +1,11 @@
 /**
  * Privileged access for the few operations users must never perform
- * themselves: one-time-code records, phone-number ownership and the
- * phoneVerified custom claim. Uses a service account (FIREBASE_SERVICE_ACCOUNT,
- * server-only) exchanged for a short-lived OAuth token; against the local
- * emulators it uses the emulator's admin bypass instead.
+ * themselves: one-time-code records, phone-number ownership, access approval
+ * and the phoneVerified custom claim. Uses a service account
+ * (FIREBASE_SERVICE_ACCOUNT, server-only): an OAuth token for Firebase
+ * Authentication user management, and the server's own Firebase identity
+ * for Firestore (see serverIdToken). Against the local emulators it uses the
+ * emulator's admin bypass instead.
  */
 import { importPKCS8, SignJWT } from 'jose';
 import { env } from './env.js';
@@ -68,10 +70,58 @@ export async function adminToken(): Promise<string> {
   return cached.token;
 }
 
-/** Firestore client that bypasses security rules. Only for server-owned documents. */
+/** uid of the server's own Firebase identity (see serverIdToken). */
+export const SERVER_UID = 'atlas-server';
+let serverCached: { token: string; exp: number } | null = null;
+
+/**
+ * The server's own Firebase sign-in. A custom token for SERVER_UID carrying
+ * the atlasServer claim is signed locally with the service account's private
+ * key and exchanged for a Firebase ID token. Only the holder of that key can
+ * mint it, and the Firestore rules (isServer()) grant this identity access to
+ * server-owned records. Unlike an OAuth token, this needs no Google Cloud IAM
+ * role on the service account, only the published rules.
+ */
+export async function serverIdToken(): Promise<string> {
+  if (serverCached && serverCached.exp - 5 * 60_000 > Date.now()) return serverCached.token;
+  const sa = parseServiceAccount(env().serviceAccount);
+  if (!sa) throw new HttpError(503, 'admin_unconfigured', 'The server service account is not configured yet.');
+  const apiKey = env().firebaseApiKey;
+  if (!apiKey) throw new HttpError(503, 'admin_unconfigured', 'FIREBASE_WEB_API_KEY (or VITE_FIREBASE_API_KEY) is not set on the server.');
+  const key = await importPKCS8(sa.private_key, 'RS256');
+  const now = Math.floor(Date.now() / 1000);
+  const custom = await new SignJWT({ uid: SERVER_UID, claims: { atlasServer: true } })
+    .setProtectedHeader({ alg: 'RS256', typ: 'JWT' })
+    .setIssuer(sa.client_email)
+    .setSubject(sa.client_email)
+    .setAudience('https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit')
+    .setIssuedAt(now)
+    .setExpirationTime(now + 3600)
+    .sign(key);
+  const res = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${encodeURIComponent(apiKey)}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ token: custom, returnSecureToken: true }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
+    console.error(`[admin] server sign-in failed: ${res.status} ${body.error?.message ?? ''}`);
+    throw new HttpError(503, 'admin_unavailable', 'The server could not sign in to the database. Please try again shortly.');
+  }
+  const body = (await res.json()) as { idToken: string; expiresIn: string };
+  serverCached = { token: body.idToken, exp: Date.now() + Number(body.expiresIn) * 1000 };
+  return serverCached.token;
+}
+
+/**
+ * Firestore client for server-owned records (codes, phone ownership, access
+ * requests, account status). It signs in as the server identity, which the
+ * rules allow everywhere; against the emulators it uses the admin bypass.
+ */
 export async function adminDb(): Promise<Firestore> {
   if (dbOverride) return dbOverride;
-  const db = new Firestore(await adminToken());
+  const db = new Firestore(emulated() ? 'owner' : await serverIdToken());
   db.admin = true;
   return db;
 }

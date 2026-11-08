@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { requireAllowedUser, type AccessConfig } from '../server/access.js';
-import { recordAdminAction } from '../server/account/events.js';
+import { deleteRequest, listRequests, requestStats, setAccess, type AccessRequest } from '../server/account/requests.js';
 import {
   purgeAccount,
   purgeDue,
@@ -28,6 +28,9 @@ const schema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('purge'), uid, confirmEmail: z.string().max(320), acknowledge: z.literal(true) }),
   z.object({ action: z.literal('approve'), uid, approved: z.boolean() }),
   z.object({ action: z.literal('logs') }),
+  z.object({ action: z.literal('requests') }),
+  z.object({ action: z.literal('requestDecision'), uid, decision: z.enum(['approve', 'reject']), note: z.string().max(300).optional() }),
+  z.object({ action: z.literal('requestDelete'), uid }),
 ]);
 
 interface Profile extends ProfileStatus {
@@ -35,6 +38,7 @@ interface Profile extends ProfileStatus {
   photoURL?: string | null;
   phoneVerified?: boolean;
   lastLoginAt?: string;
+  accessStatus?: string;
 }
 
 export interface AdminUserRow {
@@ -50,6 +54,8 @@ export interface AdminUserRow {
   phoneVerified: boolean;
   emailVerified: boolean;
   approved: boolean;
+  /** administrator approval: pending, approved or rejected */
+  accessStatus: 'pending' | 'approved' | 'rejected';
   admin: boolean;
   owner: boolean;
   purgeAfter: number | null;
@@ -78,11 +84,19 @@ function row(a: AuthAccount, p: Profile | undefined, access: AccessConfig | null
     phoneMasked: p?.phoneNumber ? maskPhone(p.phoneNumber) : null,
     phoneVerified: a.claims.phoneVerified === true && Boolean(p?.phoneNumber),
     emailVerified: a.emailVerified,
-    approved: Boolean(email && (admins.includes(email) || lower(access?.allowedEmails).includes(email))),
+    approved: accessOf(email, p, access, admins) === 'approved',
+    accessStatus: accessOf(email, p, access, admins),
     admin: Boolean(email && admins.includes(email)),
     owner: Boolean(email && owners.includes(email)),
     purgeAfter: status === 'deleted' ? (p?.purgeAfter ?? null) : null,
   };
+}
+
+function accessOf(email: string | null, p: Profile | undefined, access: AccessConfig | null, admins: string[]): AdminUserRow['accessStatus'] {
+  if (email && admins.includes(email)) return 'approved';
+  if (p?.accessStatus === 'rejected') return 'rejected';
+  if (p?.accessStatus === 'approved' || (email && lower(access?.allowedEmails).includes(email))) return 'approved';
+  return 'pending';
 }
 
 /** Statistics computed from the actual records (never sample data). */
@@ -98,6 +112,9 @@ export function stats(rows: AdminUserRow[], now = Date.now()) {
     google: rows.filter((r) => r.providers.includes('google.com')).length,
     password: rows.filter((r) => r.providers.includes('password')).length,
     phoneVerified: rows.filter((r) => r.phoneVerified).length,
+    approved: rows.filter((r) => r.accessStatus === 'approved').length,
+    pendingApproval: rows.filter((r) => r.accessStatus === 'pending').length,
+    rejected: rows.filter((r) => r.accessStatus === 'rejected').length,
     phoneUnverified: rows.filter((r) => !r.phoneVerified).length,
     /** password accounts that cannot use the app until they verify a phone */
     phoneRequiredPending: rows.filter((r) => r.providers.includes('password') && !r.phoneVerified).length,
@@ -190,12 +207,29 @@ export const POST = handle(async (request) => {
     return json({ users: rows, stats: stats(rows), generatedAt: Date.now() });
   }
 
+  if (b.action === 'requests') {
+    const rows = await listRequests(db);
+    return json({ requests: rows, stats: requestStats(rows), generatedAt: Date.now() });
+  }
+
   if (b.action === 'logs') {
     const logs = await db.list<Record<string, unknown>>('adminLogs', { orderBy: 'at', direction: 'DESCENDING', limit: 100 });
     return json({ logs: logs.map((l) => ({ id: l.id, ...l.data })) });
   }
 
+  if (b.action === 'requestDelete') {
+    await deleteRequest(db, actor, b.uid);
+    return json({ ok: true });
+  }
+
   const target = await loadTarget(db, b.uid);
+
+  if (b.action === 'requestDecision') {
+    if (target.row.owner) throw new HttpError(400, 'owner', 'The owner is always approved.');
+    if (b.decision === 'reject' && target.row.admin) throw new HttpError(400, 'admin_target', 'Remove administrator rights before rejecting this account.');
+    await setAccess(db, actor, { uid: b.uid, email: target.account.email }, b.decision, b.note);
+    return json({ ok: true });
+  }
 
   if (b.action === 'detail') {
     const base = `users/${b.uid}`;
@@ -211,8 +245,10 @@ export const POST = handle(async (request) => {
       db.list<Record<string, unknown>>(`${base}/securityEvents`, { orderBy: 'at', direction: 'DESCENDING', limit: 15 }).catch(() => []),
       db.list<Record<string, unknown>>('adminLogs', { where: [['targetUid', 'EQUAL', b.uid]], limit: 50 }).catch(() => []),
     ]);
+    const accessRequest = (await db.get<AccessRequest>(`accessRequests/${b.uid}`).catch(() => null))?.data ?? null;
     return json({
       user: target.row,
+      accessRequest,
       account: {
         suspendedAt: target.profile?.suspendedAt ?? null,
         deletionScheduledAt: target.profile?.deletionScheduledAt ?? null,
@@ -229,13 +265,9 @@ export const POST = handle(async (request) => {
   }
 
   if (b.action === 'approve') {
-    if (!target.account.email) throw new HttpError(400, 'no_email', 'This account has no email address.');
     if (target.row.owner) throw new HttpError(400, 'owner', 'The owner is always approved.');
-    const email = target.account.email;
-    const allowed = lower(target.access?.allowedEmails).filter((e) => e !== email);
-    if (b.approved) allowed.push(email);
-    await db.set('config/access', { allowedEmails: allowed, adminEmails: target.access?.adminEmails ?? [] }, true);
-    await recordAdminAction(db, { action: b.approved ? 'user_approved' : 'user_unapproved', adminUid: actor.uid, adminEmail: actor.email, targetUid: target.account.uid, targetEmail: email });
+    if (!b.approved && target.row.admin) throw new HttpError(400, 'admin_target', 'Remove administrator rights before revoking access.');
+    await setAccess(db, actor, { uid: b.uid, email: target.account.email }, b.approved ? 'approve' : 'reject');
     return json({ ok: true });
   }
 

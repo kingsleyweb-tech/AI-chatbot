@@ -25,10 +25,24 @@ export const SECURITY_EVENTS = [
   'account_deletion_scheduled',
   'account_restored',
   'data_exported',
+  'access_requested',
+  'access_approved',
+  'access_rejected',
 ] as const;
 export type SecurityEventType = (typeof SECURITY_EVENTS)[number];
 
-export const ADMIN_ACTIONS = ['user_suspended', 'user_reactivated', 'user_deletion_scheduled', 'user_restored', 'user_purged', 'user_approved', 'user_unapproved'] as const;
+export const ADMIN_ACTIONS = [
+  'user_suspended',
+  'user_reactivated',
+  'user_deletion_scheduled',
+  'user_restored',
+  'user_purged',
+  'user_approved',
+  'user_unapproved',
+  'request_approved',
+  'request_rejected',
+  'request_deleted',
+] as const;
 export type AdminAction = (typeof ADMIN_ACTIONS)[number];
 
 /** Short, sortable id: time first so documents list in order. */

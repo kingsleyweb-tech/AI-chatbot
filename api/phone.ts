@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { evaluateAccess, type AccessConfig } from '../server/access.js';
+import { decideAccess, type AccessConfig, type GateProfile } from '../server/access.js';
 import { deviceLabel, recordSecurityEvent } from '../server/account/events.js';
 import { accountAdmin, adminConfigured, adminDb, mergeCustomClaims } from '../server/admin.js';
 import { needsPhone, requireUser, type AuthUser } from '../server/auth.js';
@@ -27,19 +27,21 @@ async function deps(): Promise<OtpDeps> {
 }
 
 /**
- * Texts cost money, so only accounts the owner has approved (allowlist or
- * admin) can request one. Email verification is not required yet: phone
- * verification comes first in the sign-up flow.
+ * Texts cost money. New email/password sign-ups verify their phone before an
+ * administrator reviews them, so pending accounts may request codes (limited
+ * per account, per number and per day in otp.ts); rejected, suspended and
+ * deleted accounts may not.
  */
-async function assertApproved(user: AuthUser, db: OtpDeps['db']) {
-  const config = (await db.get<AccessConfig>('config/access'))?.data ?? null;
-  if (!evaluateAccess(user.email, true, config, env().adminEmails).ok) {
-    throw new HttpError(403, 'not_allowed', 'This account is not approved.');
-  }
-  const profile = (await db.get<{ accountStatus?: string }>(`users/${user.uid}`))?.data;
+async function assertMayVerify(user: AuthUser, db: OtpDeps['db']) {
+  const [config, profile] = await Promise.all([
+    db.get<AccessConfig>('config/access').then((d) => d?.data ?? null),
+    db.get<GateProfile>(`users/${user.uid}`).then((d) => d?.data),
+  ]);
   if (profile?.accountStatus && profile.accountStatus !== 'active') {
     throw new HttpError(403, 'account_suspended', 'This account is not active.');
   }
+  const gate = decideAccess({ ...user, emailVerified: true, phoneVerified: true }, profile, config, env().adminEmails);
+  if (gate.state === 'rejected') throw new HttpError(403, 'access_rejected', 'Access to Atlas AI was not approved for this account.');
 }
 
 /**
@@ -72,12 +74,12 @@ export const POST = handle(async (request) => {
   const device = deviceLabel(request.headers.get('user-agent'));
 
   if (b.action === 'send') {
-    await assertApproved(user, d.db);
+    await assertMayVerify(user, d.db);
     return json({ ok: true, ...(await sendCode(d, user.uid, b.phone)) });
   }
 
   if (b.action === 'remove') {
-    await assertApproved(user, d.db);
+    await assertMayVerify(user, d.db);
     // Password accounts need a verified number to sign in: they can change it, not remove it.
     const account = await accountAdmin().get(user.uid);
     if (!account || account.providers.includes('password')) {
@@ -102,6 +104,11 @@ export const POST = handle(async (request) => {
   const { phone } = await verifyCode(d, user.uid, b.code.trim());
   await mergeCustomClaims(user.uid, { phoneVerified: true });
   await d.db.set(`users/${user.uid}`, { phoneNumber: phone, phoneVerified: true, phoneVerifiedAt: SERVER_TIME }, true);
+  // keep a pending access request in step with the verified number
+  const req = await d.db.get<{ phoneNumber?: string | null; status?: string }>(`accessRequests/${user.uid}`);
+  if (req && (req.data.phoneNumber === phone || user.provider === 'password')) {
+    await d.db.set(req.path, { phoneNumber: phone, phoneNorm: phone, phoneVerified: true, updatedAt: Date.now() }, true);
+  }
   await recordSecurityEvent(d.db, user.uid, previous && previous !== phone ? 'phone_changed' : 'phone_verified', { provider: user.provider, device });
   return json({ ok: true, verified: true, phoneMasked: maskPhone(phone) });
 });

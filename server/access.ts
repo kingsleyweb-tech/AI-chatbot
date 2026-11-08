@@ -10,7 +10,7 @@ export interface AccessConfig {
 }
 
 const cache = new Map<string, { ok: boolean; admin: boolean; at: number }>();
-const TTL = 5 * 60_000;
+const TTL = 60_000;
 
 export function evaluateAccess(
   email: string | null,
@@ -26,48 +26,122 @@ export function evaluateAccess(
   return { ok: admin || allowed.includes(e), admin };
 }
 
+/** Administrator approval of an account (independent of phone verification and suspension). */
+export type AccessStatus = 'pending' | 'approved' | 'rejected';
+
+/**
+ * Where an account stands, in the order the checks apply:
+ * phone       email/password account without a verified phone number
+ * unverified  email address not verified
+ * suspended   suspended by an administrator
+ * deleted     scheduled for deletion
+ * approved    full access
+ * rejected    an administrator declined access
+ * pending     an access request is waiting for review
+ * request     not approved and no request submitted yet
+ */
+export type GateState = 'phone' | 'unverified' | 'suspended' | 'deleted' | 'approved' | 'rejected' | 'pending' | 'request';
+
+export interface GateProfile {
+  accountStatus?: string;
+  sessionsValidAfter?: number;
+  accessStatus?: string;
+}
+
+export function decideAccess(
+  user: Pick<AuthUser, 'email' | 'emailVerified' | 'provider' | 'phoneVerified'>,
+  profile: GateProfile | undefined,
+  config: AccessConfig | null,
+  bootstrapAdmins: string[],
+  request?: { status?: string } | null,
+): { state: GateState; admin: boolean } {
+  if (needsPhone(user)) return { state: 'phone', admin: false };
+  if (!user.email || !user.emailVerified) return { state: 'unverified', admin: false };
+  if (profile?.accountStatus === 'suspended') return { state: 'suspended', admin: false };
+  if (profile?.accountStatus === 'deleted') return { state: 'deleted', admin: false };
+  const legacy = evaluateAccess(user.email, true, config, bootstrapAdmins);
+  if (legacy.admin) return { state: 'approved', admin: true };
+  if (profile?.accessStatus === 'rejected') return { state: 'rejected', admin: false };
+  if (profile?.accessStatus === 'approved' || legacy.ok) return { state: 'approved', admin: false };
+  if (request?.status === 'rejected') return { state: 'rejected', admin: false };
+  if (request?.status === 'pending') return { state: 'pending', admin: false };
+  return { state: 'request', admin: false };
+}
+
 export interface Ctx {
   user: AuthUser;
   db: Firestore;
   admin: boolean;
 }
 
+let configCache: { value: AccessConfig | null; at: number } | null = null;
+const CONFIG_TTL = 60_000;
+
+/** config/access read with the server identity, shared briefly across requests. */
+export async function accessConfig(sdb: Firestore, fresh = false): Promise<AccessConfig | null> {
+  if (!fresh && configCache && Date.now() - configCache.at < CONFIG_TTL) return configCache.value;
+  const value = (await sdb.get<AccessConfig>('config/access'))?.data ?? null;
+  configCache = { value, at: Date.now() };
+  return value;
+}
+export function clearAccessCache() {
+  configCache = null;
+  cache.clear();
+}
+
+function denied(state: GateState): HttpError {
+  if (state === 'pending') return new HttpError(403, 'access_pending', 'Your access request is waiting for administrator approval.');
+  if (state === 'rejected') return new HttpError(403, 'access_rejected', 'Access to Atlas AI was not approved for this account.');
+  return new HttpError(403, 'not_allowed', 'This account is not approved.');
+}
+
 /**
- * Authenticate + authorize. Mirrors the Firestore rules: the user must have a
- * verified email that is either a bootstrap admin or on config/access.
+ * Authenticate + authorize every protected API call. The account must have
+ * a verified email (and a verified phone for password sign-ins), must not
+ * be suspended, deleted or signed out, and must be approved by an
+ * administrator: users/{uid}.accessStatus == 'approved', an admin, or an
+ * email on the legacy allowlist (config/access). The Firestore rules apply
+ * the same conditions to every database read and write.
  */
 export async function requireAllowedUser(request: Request): Promise<Ctx> {
   const user = await requireUser(request);
   if (needsPhone(user)) {
     throw new HttpError(403, 'phone_unverified', 'Please verify your phone number first.');
   }
+  if (!user.emailVerified) {
+    throw new HttpError(403, 'email_unverified', 'Please verify your email address first.');
+  }
   const db = new Firestore(user.token);
+  if (adminConfigured()) {
+    try {
+      const sdb = await adminDb();
+      const [profile, config] = await Promise.all([sdb.get<GateProfile>(`users/${user.uid}`), accessConfig(sdb)]);
+      const block = accountBlock(profile?.data, user.authTime);
+      if (block) throw block;
+      const r = decideAccess(user, profile?.data, config, env().adminEmails);
+      if (r.state !== 'approved') throw denied(r.state);
+      return { user, db, admin: r.admin };
+    } catch (err) {
+      // The server identity is unavailable (rules not published yet): fall back to the user's own token.
+      if (!(err instanceof HttpError) || !['admin_unconfigured', 'admin_unavailable'].includes(err.code)) throw err;
+    }
+  }
+  return legacyAccess(user, db);
+}
+
+async function legacyAccess(user: AuthUser, db: Firestore): Promise<Ctx> {
   const cached = cache.get(user.uid);
   if (cached && Date.now() - cached.at < TTL) {
     if (!cached.ok) throw new HttpError(403, 'not_allowed', 'This account is not approved.');
     await assertAccountActive(user, db);
     return { user, db, admin: cached.admin };
   }
-  if (!user.emailVerified) {
-    throw new HttpError(403, 'email_unverified', 'Please verify your email address first.');
-  }
   let config: AccessConfig | null = null;
-  let denied = false;
   try {
     config = (await db.get<AccessConfig>('config/access'))?.data ?? null;
   } catch (err) {
-    // A non-allowed user is denied reading config/access by the rules,
-    // and so is an approved one whose account is suspended or session revoked.
+    // A non-allowed user is denied reading config/access by the rules.
     if (!(err instanceof HttpError && err.status === 403)) throw err;
-    denied = true;
-  }
-  if (denied && adminConfigured()) {
-    const real = (await (await adminDb()).get<AccessConfig>('config/access').catch(() => null))?.data ?? null;
-    if (evaluateAccess(user.email, user.emailVerified, real, env().adminEmails).ok) {
-      // approved, so the refusal came from the account state: report that instead
-      await assertAccountActive(user, db);
-      throw new HttpError(403, 'not_allowed', 'This account is not approved.');
-    }
   }
   const result = evaluateAccess(user.email, user.emailVerified, config, env().adminEmails);
   cache.set(user.uid, { ...result, at: Date.now() });

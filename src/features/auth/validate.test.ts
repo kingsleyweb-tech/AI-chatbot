@@ -16,3 +16,16 @@ describe('registration validation', () => {
     expect(validateRegistration({ ...ok, confirm: '' }).confirm).toBe('Confirm your password.');
   });
 });
+
+describe('registration phone number', () => {
+  const withPhone = { ...ok, country: 'GH', phone: '024 123 4567' };
+  it('accepts a Ghana mobile number in local or international form', () => {
+    expect(validateRegistration(withPhone)).toEqual({});
+    expect(validateRegistration({ ...withPhone, phone: '+233 24 123 4567' })).toEqual({});
+  });
+  it('requires a number that can receive verification texts', () => {
+    expect(validateRegistration({ ...withPhone, phone: '' }).phone).toBe('Enter your mobile number.');
+    expect(validateRegistration({ ...withPhone, phone: '011 123 4567' }).phone).toMatch(/valid Ghana/);
+    expect(validateRegistration({ ...withPhone, country: 'GB', phone: '07700 900123' }).phone).toMatch(/Ghana \(\+233\)/);
+  });
+});

@@ -115,6 +115,7 @@ describe('admin statistics', () => {
     phoneVerified: false,
     emailVerified: true,
     approved: true,
+    accessStatus: 'approved',
     admin: false,
     owner: false,
     purgeAfter: null,

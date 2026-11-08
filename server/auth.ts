@@ -18,6 +18,9 @@ export interface AuthUser {
   authTime: number;
   /** raw Firebase ID token; forwarded to Firestore REST so security rules apply */
   token: string;
+  /** display name and photo from the sign-in provider, when present */
+  name?: string | null;
+  picture?: string | null;
 }
 
 type Verifier = (token: string) => Promise<JWTPayload>;
@@ -57,6 +60,8 @@ export async function requireUser(request: Request): Promise<AuthUser> {
     throw new HttpError(401, 'invalid_token', 'Your session has expired. Please sign in again.');
   }
   if (!payload.sub) throw new HttpError(401, 'invalid_token', 'Invalid token.');
+  // The server's own identity is never a user of the app.
+  if (payload.atlasServer === true || payload.sub === 'atlas-server') throw new HttpError(403, 'forbidden', 'Not allowed.');
   return {
     uid: payload.sub,
     email: typeof payload.email === 'string' ? payload.email.toLowerCase() : null,
@@ -65,5 +70,7 @@ export async function requireUser(request: Request): Promise<AuthUser> {
     phoneVerified: payload.phoneVerified === true,
     authTime: typeof payload.auth_time === 'number' ? payload.auth_time : Number(payload.iat ?? 0),
     token: match[1],
+    name: typeof payload.name === 'string' ? payload.name.slice(0, 100) : null,
+    picture: typeof payload.picture === 'string' ? payload.picture.slice(0, 500) : null,
   };
 }

@@ -3,8 +3,16 @@ rules_version = '2';
 // Atlas AI Firestore security rules.
 //
 // Access model:
-// - Only users with a VERIFIED email that is a bootstrap admin or listed in
-//   config/access.allowedEmails can read/write any data.
+// - Only users with a VERIFIED email who are approved can read/write any
+//   data: a bootstrap admin, an admin in config/access.adminEmails, an
+//   account whose profile has accessStatus == 'approved' (set only by the
+//   server after an administrator approves it), or an email on the legacy
+//   allowlist config/access.allowedEmails (unless the profile is 'rejected').
+// - Access requests (accessRequests/{uid}) are written only by the server;
+//   administrators can read them, nobody else.
+// - The server signs in as its own Firebase identity (uid atlas-server with
+//   the atlasServer custom claim, mintable only with the service account
+//   key) and may read and write every document: isServer().
 // - Email/password sign-ins additionally need the phoneVerified custom claim,
 //   which only the server sets after a correct SMS code. Google and Apple
 //   sign-ins do not need it.
@@ -27,6 +35,12 @@ service cloud.firestore {
     function signedIn() {
       return request.auth != null;
     }
+    // The backend's own identity (see serverIdToken in server/admin.ts).
+    function isServer() {
+      return request.auth != null
+        && request.auth.uid == 'atlas-server'
+        && request.auth.token.get('atlasServer', false) == true;
+    }
     function phoneOk() {
       return request.auth.token.firebase.sign_in_provider != 'password'
         || request.auth.token.get('phoneVerified', false) == true;
@@ -45,7 +59,8 @@ service cloud.firestore {
     }
     function serverOnlyProfileKeys() {
       return ['phoneNumber', 'phoneVerified', 'phoneVerifiedAt', 'accountStatus', 'sessionsValidAfter',
-        'suspendedAt', 'suspendedReason', 'deletionScheduledAt', 'purgeAfter', 'lastAuthTime'];
+        'suspendedAt', 'suspendedReason', 'deletionScheduledAt', 'purgeAfter', 'lastAuthTime',
+        'accessStatus', 'approvedAt', 'approvedBy', 'rejectedAt', 'rejectedBy', 'accessRequestedAt'];
     }
     function email() {
       return request.auth.token.email.lower();
@@ -64,9 +79,14 @@ service cloud.firestore {
       return isBootstrapAdmin()
         || (verified() && exists(accessPath()) && email() in accessDoc().get('adminEmails', []));
     }
+    function accessStatus() {
+      return exists(profilePath()) ? get(profilePath()).data.get('accessStatus', '') : '';
+    }
     function isAllowed() {
       return isAdmin()
-        || (verified() && exists(accessPath()) && email() in accessDoc().get('allowedEmails', []));
+        || (verified() && accessStatus() == 'approved')
+        || (verified() && accessStatus() != 'rejected'
+          && exists(accessPath()) && email() in accessDoc().get('allowedEmails', []));
     }
     function isOwner(uid) {
       return isAllowed() && request.auth.uid == uid;
@@ -207,15 +227,21 @@ service cloud.firestore {
       }
     }
 
+    // Access requests: one per account, written only by the server; admins can read.
+    match /accessRequests/{rid} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
     // Administrator activity log: readable by admins, written only by the server.
     match /adminLogs/{id} {
       allow read: if isAdmin();
       allow write: if false;
     }
 
-    // Deny everything else.
+    // The server identity may read and write everything (rules combine with OR).
     match /{document=**} {
-      allow read, write: if false;
+      allow read, write: if isServer();
     }
   }
 }

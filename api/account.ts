@@ -1,13 +1,24 @@
 import { z } from 'zod';
-import { accountBlock } from '../server/access.js';
+import { accessConfig, accountBlock, decideAccess } from '../server/access.js';
 import { deviceLabel, recordSecurityEvent } from '../server/account/events.js';
+import { ensureProfile, ownRequestView, submitRequest, type AccessRequest } from '../server/account/requests.js';
 import { accountAdmin, adminConfigured, adminDb } from '../server/admin.js';
+import { maskPhone } from '../server/auth/phone.js';
+import { env } from '../server/env.js';
 import { requireUser } from '../server/auth.js';
 import { SERVER_TIME } from '../server/firestore.js';
 import { handle, HttpError, json, readJson } from '../server/http.js';
 
 const schema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('status') }),
+  z.object({ action: z.literal('access'), name: z.string().max(100).optional() }),
+  z.object({
+    action: z.literal('requestAccess'),
+    fullName: z.string().min(1).max(100),
+    phone: z.string().max(24).optional(),
+    dialCode: z.string().max(5).optional(),
+    reason: z.string().max(500).optional(),
+  }),
   z.object({ action: z.literal('session') }),
   z.object({ action: z.literal('passwordChanged') }),
   z.object({ action: z.literal('providerLinked'), provider: z.enum(['password', 'google.com']) }),
@@ -33,11 +44,11 @@ const RECENT_MS = 10 * 60_000;
  */
 export const POST = handle(async (request) => {
   const user = await requireUser(request);
-  const parsed = schema.safeParse(await readJson(request, 2_000));
+  const parsed = schema.safeParse(await readJson(request, 4_000));
   if (!parsed.success) throw new HttpError(400, 'bad_request', 'Invalid request.');
   const b = parsed.data;
   if (!adminConfigured()) {
-    if (b.action === 'status' || b.action === 'session' || b.action === 'exported') return json({ ok: true, configured: false, accountStatus: 'active' });
+    if (b.action === 'status' || b.action === 'session' || b.action === 'exported' || b.action === 'access') return json({ ok: true, configured: false, accountStatus: 'active' });
     throw new HttpError(503, 'admin_unconfigured', 'This needs the server service account, which is not configured yet.');
   }
   const db = await adminDb();
@@ -54,6 +65,35 @@ export const POST = handle(async (request) => {
       sessionRevoked: block?.code === 'session_revoked',
       purgeAfter: p?.accountStatus === 'deleted' ? (p.purgeAfter ?? null) : null,
     });
+  }
+
+  if (b.action === 'access') {
+    // Where this account stands, decided on the server. Every signed-in
+    // person gets a profile here, including those not approved yet.
+    const config = await accessConfig(db, true);
+    const profile = await ensureProfile(db, user, config, b.name);
+    const block = accountBlock(profile, user.authTime);
+    const request = (await db.get<AccessRequest>(`accessRequests/${user.uid}`))?.data ?? null;
+    const gate = decideAccess(user, profile, config, env().adminEmails, request);
+    return json({
+      ok: true,
+      configured: true,
+      state: block?.code === 'session_revoked' ? 'revoked' : gate.state,
+      admin: gate.admin,
+      accessStatus: profile.accessStatus ?? 'pending',
+      profile: {
+        displayName: profile.displayName ?? null,
+        email: user.email,
+        phoneMasked: profile.phoneNumber ? maskPhone(profile.phoneNumber) : null,
+        phoneVerified: Boolean(profile.phoneVerified),
+      },
+      request: ownRequestView(request),
+    });
+  }
+
+  if (b.action === 'requestAccess') {
+    const r = await submitRequest(db, user, { fullName: b.fullName, phone: b.phone, dialCode: b.dialCode, reason: b.reason });
+    return json({ ok: true, state: r.state, created: r.created, request: ownRequestView(r.request) });
   }
 
   if (b.action === 'session') {

@@ -22,6 +22,7 @@ interface UserRow {
   phoneVerified: boolean;
   emailVerified: boolean;
   approved: boolean;
+  accessStatus: 'pending' | 'approved' | 'rejected';
   admin: boolean;
   owner: boolean;
   purgeAfter: number | null;
@@ -39,6 +40,9 @@ interface Stats {
   phoneVerified: number;
   phoneUnverified: number;
   phoneRequiredPending: number;
+  approved: number;
+  pendingApproval: number;
+  rejected: number;
 }
 
 interface LogEntry {
@@ -86,6 +90,9 @@ const ACTION_LABELS: Record<string, string> = {
   user_purged: 'Permanently deleted',
   user_approved: 'Approved',
   user_unapproved: 'Access removed',
+  request_approved: 'Access request approved',
+  request_rejected: 'Access request rejected',
+  request_deleted: 'Access request deleted',
 };
 
 function StatusBadge({ status }: { status: UserRow['status'] }) {
@@ -124,7 +131,7 @@ export default function UsersPage() {
   const [loading, setLoading] = useState(false);
   const [q, setQ] = useState('');
   const [provider, setProvider] = useState<'all' | 'google.com' | 'password' | 'apple.com'>('all');
-  const [status, setStatus] = useState<'all' | UserRow['status']>('all');
+  const [status, setStatus] = useState<'all' | UserRow['status'] | UserRow['accessStatus']>('all');
   const [registered, setRegistered] = useState<'all' | '7' | '30' | '90'>('all');
   const [phone, setPhone] = useState<'all' | 'verified' | 'unverified'>('all');
   const [openUid, setOpenUid] = useState<string | null>(null);
@@ -168,7 +175,8 @@ export default function UsersPage() {
       (r) =>
         (!needle || r.name.toLowerCase().includes(needle) || (r.email ?? '').toLowerCase().includes(needle) || (r.phoneMasked ?? '').replace(/\D/g, '').includes(needle.replace(/\D/g, '') || '\u0000')) &&
         (provider === 'all' || r.providers.includes(provider)) &&
-        (status === 'all' || r.status === status) &&
+        (status === 'all' ||
+          (status === 'active' || status === 'suspended' || status === 'deleted' ? r.status === status : r.accessStatus === status && r.status === 'active')) &&
         (phone === 'all' || (phone === 'verified') === r.phoneVerified) &&
         (r.createdAt ?? 0) >= since,
     );
@@ -209,12 +217,12 @@ export default function UsersPage() {
           <>
             <div className="mb-6 grid grid-cols-2 divide-x divide-y divide-border overflow-hidden rounded-2xl border border-border sm:grid-cols-4 sm:divide-y-0 lg:grid-cols-8 [&>*:nth-child(n+5)]:sm:border-t lg:[&>*:nth-child(n+5)]:border-t-0">
               <Stat label="Total users" value={stats.total} />
-              <Stat label="Active" value={stats.active} />
-              <Stat label="Suspended" value={stats.suspended} />
-              <Stat label="Pending deletion" value={stats.pendingDeletion} />
+              <Stat label="Approved" value={stats.approved} />
+              <Stat label="Pending approval" value={stats.pendingApproval} />
+              <Stat label="Rejected" value={stats.rejected} />
+              <Stat label="Suspended" value={stats.suspended} hint={`${stats.pendingDeletion} pending deletion`} />
               <Stat label={`New (${stats.newDays} days)`} value={stats.newUsers} />
-              <Stat label="Google" value={stats.google} />
-              <Stat label="Email and password" value={stats.password} />
+              <Stat label="Google / email" value={stats.google + stats.password} hint={`${stats.google} Google, ${stats.password} email and password`} />
               <Stat label="Phone verified" value={stats.phoneVerified} hint={`${stats.phoneUnverified} without a verified phone; ${stats.phoneRequiredPending} password accounts still need one`} />
             </div>
 
@@ -256,7 +264,10 @@ export default function UsersPage() {
                       onChange={setStatus}
                       options={[
                         { value: 'all', label: 'All statuses' },
-                        { value: 'active', label: 'Active' },
+                        { value: 'approved', label: 'Approved' },
+                        { value: 'pending', label: 'Pending approval' },
+                        { value: 'rejected', label: 'Rejected' },
+                        { value: 'active', label: 'Active (not suspended)' },
                         { value: 'suspended', label: 'Suspended' },
                         { value: 'deleted', label: 'Pending deletion' },
                       ]}
@@ -310,7 +321,8 @@ export default function UsersPage() {
                                 <span className="flex items-center gap-1.5 truncate text-[15px]">
                                   <span className="truncate">{r.name}</span>
                                   {r.admin && <Badge>{r.owner ? 'Owner' : 'Admin'}</Badge>}
-                                  {!r.approved && <Badge tone="warn">Not approved</Badge>}
+                                  {r.accessStatus === 'pending' && <Badge tone="warn">Pending approval</Badge>}
+                                  {r.accessStatus === 'rejected' && <Badge tone="danger">Rejected</Badge>}
                                 </span>
                                 <span className="block truncate text-xs text-muted">{r.email ?? 'No email'}</span>
                                 <span className="block truncate text-xs text-muted md:hidden">
@@ -389,6 +401,7 @@ function UserDetail({ uid, selfUid, onClose, onChanged }: { uid: string; selfUid
   const [failed, setFailed] = useState('');
   const [action, setAction] = useState<Action | null>(null);
   const [approving, setApproving] = useState(false);
+  const [confirmAccess, setConfirmAccess] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -409,7 +422,7 @@ function UserDetail({ uid, selfUid, onClose, onChanged }: { uid: string; selfUid
     setApproving(true);
     try {
       await api('admin', { json: { action: 'approve', uid, approved } });
-      toast(approved ? 'Access granted.' : 'Access removed.', 'success');
+      toast(approved ? 'Access approved.' : 'Access revoked.', 'success');
       await load();
       onChanged();
     } catch (err) {
@@ -434,7 +447,9 @@ function UserDetail({ uid, selfUid, onClose, onChanged }: { uid: string; selfUid
             <div className="flex flex-wrap gap-1.5">
               <StatusBadge status={u.status} />
               {u.admin && <Badge>{u.owner ? 'Owner' : 'Administrator'}</Badge>}
-              <Badge tone={u.approved ? 'neutral' : 'warn'}>{u.approved ? 'Approved' : 'Not approved'}</Badge>
+              <Badge tone={u.approved ? 'neutral' : u.accessStatus === 'rejected' ? 'danger' : 'warn'}>
+                {u.approved ? 'Approved' : u.accessStatus === 'rejected' ? 'Rejected' : 'Pending approval'}
+              </Badge>
             </div>
           </div>
 
@@ -509,10 +524,29 @@ function UserDetail({ uid, selfUid, onClose, onChanged }: { uid: string; selfUid
             </div>
           )}
 
+          {confirmAccess && (
+            <ConfirmDialog
+              open
+              onClose={() => setConfirmAccess(false)}
+              onConfirm={async () => {
+                setConfirmAccess(false);
+                await approve(!u.approved);
+              }}
+              title={u.approved ? 'Revoke access?' : 'Approve access?'}
+              message={
+                u.approved
+                  ? `${u.email ?? u.name} will lose access to Atlas AI immediately and see an "Access not approved" message. Their data is kept.`
+                  : `${u.email ?? u.name} will be able to use Atlas AI the next time they open it.`
+              }
+              confirmLabel={u.approved ? 'Revoke access' : 'Approve'}
+              danger={u.approved}
+            />
+          )}
+
           <div className="flex flex-wrap gap-2 border-t border-border pt-4">
             {!u.owner && u.email && (
-              <Button size="sm" variant="outline" loading={approving} onClick={() => void approve(!u.approved)}>
-                {u.approved ? 'Remove access' : 'Approve access'}
+              <Button size="sm" variant="outline" loading={approving} onClick={() => setConfirmAccess(true)}>
+                {u.approved ? 'Revoke access' : 'Approve access'}
               </Button>
             )}
             {u.status === 'active' && (

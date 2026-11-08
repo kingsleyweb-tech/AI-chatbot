@@ -2,7 +2,7 @@ import { onAuthStateChanged, signOut as fbSignOut, type User } from 'firebase/au
 import { doc, getDoc, onSnapshot, serverTimestamp, setDoc, updateDoc, FirestoreError } from 'firebase/firestore';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ACCOUNT_BLOCK_EVENT, api } from '@/lib/api';
-import { completeRedirect } from '@/lib/authProviders';
+import { completeRedirect, redirectPending } from '@/lib/authProviders';
 import { auth, db, firebaseConfigured } from '@/lib/firebase';
 import { paths } from '@/lib/db';
 import { DEFAULT_SETTINGS, type UserProfile } from '@/lib/types';
@@ -15,13 +15,44 @@ export const BOOTSTRAP_ADMINS = ['kingsleyanaab604@gmail.com'];
  * signed-out  no user
  * phone       email/password account that has not verified a phone number
  * unverified  email address not verified yet
- * denied      not on the approved list
+ * request     not approved yet and no access request submitted
+ * pending     access request waiting for an administrator
+ * rejected    an administrator declined access
+ * denied      not approved (only when the server could not give details)
  * suspended   suspended by an administrator
  * deleted     scheduled for deletion by an administrator
  * error       access or profile could not be checked (retry offered)
  * allowed     full access
  */
-export type AccessState = 'loading' | 'signed-out' | 'phone' | 'unverified' | 'denied' | 'suspended' | 'deleted' | 'allowed' | 'error';
+export type AccessState =
+  | 'loading'
+  | 'signed-out'
+  | 'phone'
+  | 'unverified'
+  | 'request'
+  | 'pending'
+  | 'rejected'
+  | 'denied'
+  | 'suspended'
+  | 'deleted'
+  | 'allowed'
+  | 'error';
+
+/** The signed-in person's own access request, as the server reports it. */
+export interface OwnAccessRequest {
+  status: 'pending' | 'approved' | 'rejected';
+  fullName: string;
+  email: string;
+  phoneMasked: string | null;
+  phoneVerified: boolean;
+  reason: string | null;
+  submittedAt: number;
+  reviewedAt: number | null;
+}
+export interface AccessInfo {
+  request: OwnAccessRequest | null;
+  profile: { displayName: string | null; email: string | null; phoneMasked: string | null; phoneVerified: boolean } | null;
+}
 
 interface AuthCtx {
   user: User | null;
@@ -31,6 +62,8 @@ interface AuthCtx {
   /** sign-in method of the current session: password, google.com, apple.com */
   provider: string | null;
   accessError: string | null;
+  /** access request and profile details for the request / pending screens */
+  accessInfo: AccessInfo;
   /** an error from a redirect sign-in that came back to the app */
   signInError: string | null;
   clearSignInError: () => void;
@@ -66,6 +99,7 @@ interface Decision {
   admin: boolean;
   provider: string | null;
   error?: string;
+  info?: AccessInfo;
   /** the session was revoked (password reset, sign out everywhere): sign out */
   revoked?: boolean;
 }
@@ -86,6 +120,40 @@ async function blockedState(provider: string | null): Promise<Decision | null> {
   return null;
 }
 
+interface ServerAccess {
+  configured: boolean;
+  state?: 'phone' | 'unverified' | 'suspended' | 'deleted' | 'approved' | 'rejected' | 'pending' | 'request' | 'revoked';
+  admin?: boolean;
+  request?: OwnAccessRequest | null;
+  profile?: AccessInfo['profile'];
+}
+
+/**
+ * The server decides access (approval, suspension, phone and email checks)
+ * and creates the profile of every signed-in person, approved or not.
+ * Returns null when the server cannot answer, so the client check below
+ * can still let approved users in.
+ */
+async function serverAccess(provider: string | null): Promise<Decision | null> {
+  let r: ServerAccess;
+  try {
+    r = await api<ServerAccess>('account', { json: { action: 'access', name: auth.currentUser?.displayName ?? undefined } });
+  } catch {
+    return null;
+  }
+  if (!r.configured || !r.state) return null;
+  const info: AccessInfo = { request: r.request ?? null, profile: r.profile ?? null };
+  const admin = Boolean(r.admin);
+  switch (r.state) {
+    case 'approved':
+      return { state: 'allowed', admin, provider, info };
+    case 'revoked':
+      return { state: 'signed-out', admin: false, provider, revoked: true };
+    default:
+      return { state: r.state, admin: false, provider, info };
+  }
+}
+
 async function checkAccess(user: User, forceToken: boolean): Promise<Decision> {
   const email = user.email?.toLowerCase() ?? '';
   let provider: string | null = null;
@@ -93,7 +161,11 @@ async function checkAccess(user: User, forceToken: boolean): Promise<Decision> {
     const t = await user.getIdTokenResult(forceToken);
     provider = t.signInProvider ?? null;
     // Email/password accounts must verify a phone number (enforced again by the rules and APIs).
-    if (provider === 'password' && t.claims.phoneVerified !== true) return { state: 'phone', admin: false, provider };
+    if (provider === 'password' && t.claims.phoneVerified !== true) {
+      // still store the new account, so administrators can see it
+      void api('account', { json: { action: 'access', name: user.displayName ?? undefined } }).catch(() => undefined);
+      return { state: 'phone', admin: false, provider };
+    }
   } catch (err) {
     // A disabled account cannot refresh its token: suspended or scheduled for deletion.
     if ((err as { code?: string })?.code === 'auth/user-disabled') return { state: 'suspended', admin: false, provider };
@@ -101,6 +173,10 @@ async function checkAccess(user: User, forceToken: boolean): Promise<Decision> {
     if (!offline(err)) return { state: 'error', admin: false, provider, error: 'Could not check your session. Please try again.' };
   }
   if (!user.emailVerified) return { state: 'unverified', admin: false, provider };
+  if (navigator.onLine) {
+    const decided = await serverAccess(provider);
+    if (decided) return decided;
+  }
   try {
     const snap = await getDoc(doc(db, 'config', 'access'));
     const data = snap.exists() ? (snap.data() as { allowedEmails?: string[]; adminEmails?: string[] }) : {};
@@ -151,6 +227,9 @@ async function upsertProfile(u: User, provider: string | null) {
     ...(!p.displayName && u.displayName ? { displayName: u.displayName } : {}),
     ...(!p.photoURL && u.photoURL ? { photoURL: u.photoURL } : {}),
     ...(!p.accountCreatedAt && u.metadata.creationTime ? { accountCreatedAt: u.metadata.creationTime } : {}),
+    // profiles created by the server before approval have no settings yet
+    ...(!p.settings ? { settings: DEFAULT_SETTINGS } : {}),
+    ...(!p.createdAt ? { createdAt: serverTimestamp() } : {}),
   });
 }
 
@@ -161,6 +240,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [admin, setAdmin] = useState(false);
   const [provider, setProvider] = useState<string | null>(null);
   const [signInError, setSignInError] = useState<string | null>(null);
+  const [accessInfo, setAccessInfo] = useState<AccessInfo>({ request: null, profile: null });
   const [accessError, setAccessError] = useState<string | null>(
     firebaseConfigured ? null : 'Firebase is not configured. Set the VITE_FIREBASE_* environment variables.',
   );
@@ -172,6 +252,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const evaluate = useCallback(async (u: User | null, forceToken = false) => {
     const mine = ++seq.current;
     if (!u) {
+      // Coming back from a Google redirect: stay on the loading screen until
+      // Firebase has finished processing the result (it then reports the user).
+      if (redirectPending() && redirectDone.current) {
+        const m = await redirectDone.current;
+        if (mine !== seq.current) return;
+        if (!m && auth.currentUser) return; // the listener fires again with the user
+      }
       setAccess('signed-out');
       setAdmin(false);
       setProvider(null);
@@ -184,6 +271,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAdmin(r.admin);
     setProvider(r.provider);
     setAccessError(r.error ?? null);
+    setAccessInfo(r.info ?? { request: null, profile: null });
     if (r.revoked) {
       writeCache(u.uid, null);
       setSignInError('You were signed out because your password was changed or all sessions were signed out. Please sign in again.');
@@ -250,6 +338,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       admin,
       provider,
       accessError,
+      accessInfo,
       signInError,
       clearSignInError: () => setSignInError(null),
       refreshAccess: async () => {
@@ -262,7 +351,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await fbSignOut(auth);
       },
     }),
-    [user, profile, access, admin, provider, accessError, signInError, evaluate],
+    [user, profile, access, admin, provider, accessError, accessInfo, signInError, evaluate],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

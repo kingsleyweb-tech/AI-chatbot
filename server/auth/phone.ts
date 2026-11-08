@@ -28,3 +28,20 @@ export function normalizePhone(input: string): PhoneResult {
 export function maskPhone(e164: string): string {
   return `${e164.slice(0, 4)} •• ••• ${e164.slice(-4)}`;
 }
+
+/**
+ * Any international number as E.164 (for access requests). Ghana numbers
+ * get the stricter mobile check above. `dialCode` (e.g. "+233") applies to
+ * numbers written without one.
+ */
+export function normalizeInternational(input: string, dialCode = '+233'): PhoneResult {
+  let digits = input.trim().replace(/[\s().-]/g, '');
+  if (!/^\+?\d+$/.test(digits)) return { ok: false, reason: 'format' };
+  if (digits.startsWith('00')) digits = '+' + digits.slice(2);
+  if (!digits.startsWith('+')) {
+    if (!/^\+[1-9]\d{0,3}$/.test(dialCode)) return { ok: false, reason: 'format' };
+    digits = dialCode + digits.replace(/^0+/, '');
+  }
+  if (digits.startsWith('+233')) return normalizePhone(digits);
+  return /^\+[1-9]\d{7,14}$/.test(digits) ? { ok: true, e164: digits } : { ok: false, reason: 'format' };
+}

@@ -6,19 +6,21 @@ import {
   updateProfile,
 } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
-import { ArrowLeft, Eye, EyeOff, Mail, ShieldAlert, Smartphone } from 'lucide-react';
-import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { ArrowLeft, CheckCircle2, Clock, Eye, EyeOff, Mail, ShieldAlert, Smartphone, UserPlus } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { LogoMark, TAGLINE } from '@/components/Logo';
-import { Button, Input, Label, Spinner } from '@/components/ui';
+import { Button, Input, Label, Spinner, Textarea } from '@/components/ui';
 import { api, ApiError, publicApi } from '@/lib/api';
-import { authErrorMessage, signInWithProvider, type SocialProvider } from '@/lib/authProviders';
+import { authErrorMessage, redirectPending, signInWithProvider, type SocialProvider } from '@/lib/authProviders';
+import { countryByCode, toE164 } from '@/lib/phone';
+import { PhoneField } from './PhoneField';
 import { auth, db } from '@/lib/firebase';
 import { validateRegistration } from './validate';
 import { CodeBoxes, mmss, phoneError, useCountdown } from './otpUi';
 import { useAuth, type AccessState } from '@/state/auth';
 
-type Mode = 'login' | 'register' | 'reset' | 'verify' | 'phone' | 'denied';
+type Mode = 'login' | 'register' | 'reset' | 'verify' | 'phone' | 'denied' | 'request';
 
 /** Where each access state belongs. */
 function routeFor(access: AccessState, from = '/'): string | null {
@@ -29,6 +31,10 @@ function routeFor(access: AccessState, from = '/'): string | null {
       return '/verify-phone';
     case 'unverified':
       return '/verify';
+    case 'request':
+    case 'pending':
+    case 'rejected':
+      return '/request-access';
     case 'denied':
     case 'error':
     case 'suspended':
@@ -144,8 +150,9 @@ function useRegistrationOpen() {
   const [open, setOpen] = useState<boolean | null>(null);
   useEffect(() => {
     getDoc(doc(db, 'config', 'public'))
-      .then((s) => setOpen(Boolean(s.data()?.registrationOpen)))
-      .catch(() => setOpen(false));
+      // New accounts need administrator approval, so sign-up is open unless an admin closed it.
+      .then((s) => setOpen(s.data()?.registrationOpen !== false))
+      .catch(() => setOpen(true));
   }, []);
   return open;
 }
@@ -237,7 +244,7 @@ function FieldError({ children }: { children?: string }) {
 
 function Register() {
   const regOpen = useRegistrationOpen();
-  const [v, setV] = useState({ name: '', email: '', password: '', confirm: '' });
+  const [v, setV] = useState({ name: '', email: '', country: 'GH', phone: '', password: '', confirm: '' });
   const [touched, setTouched] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -263,17 +270,28 @@ function Register() {
     if (Object.keys(errors).length) return;
     setBusy(true);
     try {
+      const e164 = toE164(countryByCode(v.country), v.phone)!;
+      // An existing account with this email is refused here by Firebase
+      // (auth/email-already-in-use); a number already linked to another
+      // account is refused by the server when the code is requested.
       const cred = await createUserWithEmailAndPassword(auth, v.email.trim(), v.password);
       await updateProfile(cred.user, { displayName: v.name.trim() });
       await sendEmailVerification(cred.user, { url: window.location.origin + '/' }).catch(() => undefined);
-      // The auth listener moves on to phone verification.
+      // Store the new account (pending approval) and text the code straight away.
+      await api('account', { json: { action: 'access', name: v.name.trim() } }).catch(() => undefined);
+      try {
+        await api('phone', { json: { action: 'send', phone: e164 } });
+      } catch (err) {
+        rememberPhoneError(phoneError(err), v.phone);
+      }
+      // The auth listener moves on to the code screen.
     } catch (err) {
       setError(authErrorMessage(err));
       setBusy(false);
     }
   };
 
-  const show = (k: keyof typeof v) => (touched ? errors[k] : undefined);
+  const show = (k: keyof typeof errors) => (touched ? errors[k] : undefined);
   return (
     <Shell>
       <Heading title="Create your account" subtitle="Your intelligent assistant for thinking, creating and discovering." />
@@ -292,6 +310,11 @@ function Register() {
             <FieldError>{show('email')}</FieldError>
           </div>
           <div>
+            <Label htmlFor="phone">Mobile number</Label>
+            <PhoneField id="phone" country={v.country} onCountry={set('country')} value={v.phone} onChange={set('phone')} invalid={!!show('phone')} />
+            <FieldError>{show('phone')}</FieldError>
+          </div>
+          <div>
             <Label htmlFor="password" hint="At least 8 characters, with a number.">
               Password
             </Label>
@@ -307,7 +330,7 @@ function Register() {
           <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy}>
             Create account
           </Button>
-          <p className="text-center text-xs text-subtle">You will confirm your phone number with a text message next.</p>
+          <p className="text-center text-xs text-subtle">We will text a 6-digit code to confirm your number. New accounts are reviewed by an administrator before they can use Atlas AI.</p>
         </form>
         <p className="text-center text-sm text-muted">
           Already have an account?{' '}
@@ -533,21 +556,40 @@ interface PhoneStatus {
   attemptsLeft?: number;
 }
 
+const PHONE_ERROR_KEY = 'atlas.phoneError';
+/** Carry a failed first text (from registration) over to the phone screen. */
+function rememberPhoneError(message: string, phone: string) {
+  try {
+    sessionStorage.setItem(PHONE_ERROR_KEY, JSON.stringify({ message, phone }));
+  } catch {
+    /* storage unavailable */
+  }
+}
+function takePhoneError(): { message: string; phone: string } | null {
+  try {
+    const v = sessionStorage.getItem(PHONE_ERROR_KEY);
+    sessionStorage.removeItem(PHONE_ERROR_KEY);
+    return v ? (JSON.parse(v) as { message: string; phone: string }) : null;
+  } catch {
+    return null;
+  }
+}
+
 function PhoneVerify() {
   const { user, access, refreshAccess, signOut } = useAuth();
   const [status, setStatus] = useState<PhoneStatus | null>(null);
   const [step, setStep] = useState<'number' | 'code'>('number');
-  const [phone, setPhone] = useState('');
+  const [carried] = useState(takePhoneError);
+  const [phone, setPhone] = useState(carried?.phone ?? '');
   const [masked, setMasked] = useState('');
   const [code, setCode] = useState('');
-  const [error, setError] = useState('');
+  const [error, setError] = useState(carried?.message ?? '');
   const [codeInvalid, setCodeInvalid] = useState(false);
   const [busy, setBusy] = useState(false);
   const resend = useCountdown();
   const expiry = useCountdown();
 
   const load = useCallback(async () => {
-    setError('');
     try {
       const s = await api<PhoneStatus>('phone', { json: { action: 'status' } });
       setStatus(s);
@@ -850,6 +892,204 @@ function Denied() {
   );
 }
 
+/* ----------------------------- access requests ----------------------------- */
+
+const fmtDate = (ms: number | null | undefined) =>
+  ms ? new Date(ms).toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+
+function Detail({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex items-baseline justify-between gap-4 py-2 text-sm">
+      <span className="text-muted">{label}</span>
+      <span className="min-w-0 truncate text-right font-medium text-fg">{children}</span>
+    </div>
+  );
+}
+
+/**
+ * Accounts that are signed in (and verified) but not approved. Shows the
+ * request form, or the status of the request already submitted. Status is
+ * re-checked when the app comes back into view and every two minutes while
+ * the page is open (at most 15 times), never in a tight loop.
+ */
+function AccessRequest() {
+  const { user, access, accessInfo, provider, refreshAccess, signOut } = useAuth();
+  const isPassword = provider === 'password';
+  const [name, setName] = useState(accessInfo.profile?.displayName ?? user?.displayName ?? '');
+  const [country, setCountry] = useState('GH');
+  const [phone, setPhone] = useState('');
+  const [reason, setReason] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const checks = useRef(0);
+
+  const check = useCallback(async () => {
+    setChecking(true);
+    await refreshAccess();
+    setChecking(false);
+  }, [refreshAccess]);
+
+  useEffect(() => {
+    if (access !== 'pending') return;
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void check();
+    };
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== 'visible' || checks.current >= 15) return;
+      checks.current += 1;
+      void check();
+    }, 120_000);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [access, check]);
+
+  if (access === 'loading' && !busy && !checking) return <Checking />;
+  if (!['request', 'pending', 'rejected', 'loading'].includes(access)) return <Navigate to={routeFor(access) ?? '/'} replace />;
+
+  const req = accessInfo.request;
+
+  if (access === 'rejected') {
+    return (
+      <Shell>
+        <div className="mb-7 flex flex-col items-center text-center">
+          <div className="mb-5 flex size-12 items-center justify-center rounded-2xl bg-danger-soft text-danger">
+            <ShieldAlert className="size-6" />
+          </div>
+          <h1 className="text-[22px] font-semibold tracking-tight">Access not approved</h1>
+          <p className="mt-1.5 text-sm text-muted">
+            The administrator reviewed the request for <b className="font-medium text-fg">{user?.email}</b> and did not approve access to Atlas AI. Contact the administrator if you think this is a mistake.
+          </p>
+        </div>
+        {req && (
+          <div className="mb-6 divide-y divide-border rounded-xl border border-border px-4">
+            <Detail label="Status">Not approved</Detail>
+            <Detail label="Submitted">{fmtDate(req.submittedAt)}</Detail>
+            {req.reviewedAt && <Detail label="Reviewed">{fmtDate(req.reviewedAt)}</Detail>}
+          </div>
+        )}
+        <Button variant="primary" size="lg" className="w-full" onClick={() => signOut()}>
+          Sign out
+        </Button>
+      </Shell>
+    );
+  }
+
+  if (access === 'pending' && req) {
+    return (
+      <Shell>
+        <div className="mb-7 flex flex-col items-center text-center">
+          <div className="mb-5 flex size-12 items-center justify-center rounded-2xl bg-accent-soft text-accent">
+            <CheckCircle2 className="size-6" />
+          </div>
+          <h1 className="text-[22px] font-semibold tracking-tight">Your request has been submitted</h1>
+          <p className="mt-1.5 text-sm text-muted">
+            Thank you for your interest in Atlas AI. Your access request has been sent to the administrator. You will be able to use Atlas AI as soon as your account has been approved.
+          </p>
+        </div>
+        <div className="mb-6 divide-y divide-border rounded-xl border border-border px-4">
+          <Detail label="Name">{req.fullName}</Detail>
+          <Detail label="Email">{req.email}</Detail>
+          {req.phoneMasked && (
+            <Detail label="Phone">
+              {req.phoneMasked} {req.phoneVerified ? '' : <span className="font-normal text-subtle">(not verified)</span>}
+            </Detail>
+          )}
+          <Detail label="Status">
+            <span className="inline-flex items-center gap-1.5 text-warn">
+              <Clock className="size-3.5" /> Waiting for review
+            </span>
+          </Detail>
+          <Detail label="Submitted">{fmtDate(req.submittedAt)}</Detail>
+        </div>
+        <div className="flex flex-col gap-2">
+          <Button variant="primary" size="lg" loading={checking} onClick={() => void check()}>
+            Refresh status
+          </Button>
+          <Button variant="ghost" onClick={() => signOut()}>
+            Sign out
+          </Button>
+        </div>
+        <p className="mt-4 text-center text-xs text-subtle">You can close the app; your request stays on file. Sign in again any time to check its status.</p>
+      </Shell>
+    );
+  }
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setError('');
+    if (name.trim().length < 2) return setError('Enter your full name.');
+    let e164: string | undefined;
+    if (!isPassword) {
+      const n = toE164(countryByCode(country), phone);
+      if (!n) return setError(`Enter a valid phone number, for example ${countryByCode(country).example}.`);
+      e164 = n;
+    }
+    setBusy(true);
+    try {
+      await api('account', {
+        json: { action: 'requestAccess', fullName: name.trim(), phone: e164, dialCode: countryByCode(country).dial, reason: reason.trim() || undefined },
+      });
+      await refreshAccess();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Your request could not be sent. Please try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Shell>
+      <div className="mb-7 flex flex-col items-center text-center">
+        <div className="mb-5 flex size-12 items-center justify-center rounded-2xl bg-accent-soft text-accent">
+          <UserPlus className="size-6" />
+        </div>
+        <h1 className="text-[22px] font-semibold tracking-tight">Request Access to Atlas AI</h1>
+        <p className="mt-1.5 text-sm text-muted">
+          Atlas AI currently requires administrator approval before new users can access the application. Submit your details below to request access.
+        </p>
+      </div>
+      <form className="space-y-3.5" onSubmit={submit} noValidate>
+        <div>
+          <Label htmlFor="req-name">Full name</Label>
+          <Input id="req-name" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} />
+        </div>
+        <div>
+          <Label htmlFor="req-email">Email address</Label>
+          <Input id="req-email" type="email" value={user?.email ?? ''} readOnly className="bg-surface-2 text-muted" />
+        </div>
+        <div>
+          <Label htmlFor="req-phone">Phone number</Label>
+          {isPassword ? (
+            <Input id="req-phone" value={`${accessInfo.profile?.phoneMasked ?? ''} (verified)`} readOnly className="bg-surface-2 text-muted" />
+          ) : (
+            <PhoneField id="req-phone" country={country} onCountry={setCountry} value={phone} onChange={setPhone} />
+          )}
+        </div>
+        <div>
+          <Label htmlFor="req-reason" hint="Optional">
+            Reason for requesting access
+          </Label>
+          <Textarea id="req-reason" rows={3} maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} />
+        </div>
+        <ErrorText>{error}</ErrorText>
+        <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy}>
+          Submit Access Request
+        </Button>
+      </form>
+      <div className="mt-6 text-center text-sm text-muted">
+        Signed in as {user?.email}.{' '}
+        <button className="font-medium text-accent hover:underline" onClick={() => signOut()}>
+          Sign out
+        </button>
+      </div>
+    </Shell>
+  );
+}
+
 export default function AuthPages({ mode }: { mode: Mode }) {
   const { access } = useAuth();
   const navigate = useNavigate();
@@ -864,11 +1104,13 @@ export default function AuthPages({ mode }: { mode: Mode }) {
     if (to) navigate(to, { replace: true });
   }, [access, entry, navigate, from]);
 
-  if (entry && access === 'loading' && auth.currentUser) return <Checking />;
+  // Signed in (or returning from Google) while access is checked: never flash the form.
+  if (entry && access === 'loading' && (auth.currentUser || redirectPending())) return <Checking />;
   if (mode === 'login') return <Login />;
   if (mode === 'register') return <Register />;
   if (mode === 'reset') return <Reset />;
   if (mode === 'verify') return <Verify />;
   if (mode === 'phone') return <PhoneVerify />;
+  if (mode === 'request') return <AccessRequest />;
   return <Denied />;
 }

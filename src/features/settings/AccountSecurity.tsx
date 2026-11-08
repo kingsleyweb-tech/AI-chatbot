@@ -453,6 +453,9 @@ const EVENT_LABELS: Record<string, string> = {
   account_deletion_scheduled: 'Account scheduled for deletion',
   account_restored: 'Account restored',
   data_exported: 'Data exported',
+  access_requested: 'Access requested',
+  access_approved: 'Access approved',
+  access_rejected: 'Access not approved',
 };
 
 function RecentActivity() {

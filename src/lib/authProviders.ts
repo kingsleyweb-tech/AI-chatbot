@@ -47,6 +47,39 @@ export function authErrorMessage(err: unknown, id?: SocialProvider): string {
 let inFlight = false;
 
 /**
+ * Marks a full-page Google redirect in progress, so the app shows
+ * "Signing you in" (not the sign-in form) when it reloads, and can tell the
+ * user when the result never arrived. Expires after 10 minutes.
+ */
+const REDIRECT_KEY = 'atlas.redirect';
+function markRedirect(on: boolean) {
+  try {
+    if (on) localStorage.setItem(REDIRECT_KEY, String(Date.now()));
+    else localStorage.removeItem(REDIRECT_KEY);
+  } catch {
+    /* storage unavailable */
+  }
+}
+export function redirectPending(): boolean {
+  try {
+    const at = Number(localStorage.getItem(REDIRECT_KEY) ?? 0);
+    return at > 0 && Date.now() - at < 10 * 60_000;
+  } catch {
+    return false;
+  }
+}
+
+async function redirect(p: AuthProvider) {
+  markRedirect(true);
+  try {
+    await signInWithRedirect(auth, p);
+  } catch (err) {
+    markRedirect(false);
+    throw err;
+  }
+}
+
+/**
  * Sign in with Google. Uses a popup in the browser and a full-page
  * redirect in installed apps (where popups open outside the app and their
  * result can be lost) or when the popup is blocked. The auth state listener
@@ -61,7 +94,7 @@ export async function signInWithProvider(_id: SocialProvider = 'google'): Promis
   const p = provider();
   try {
     if (isStandalone()) {
-      await signInWithRedirect(auth, p);
+      await redirect(p);
       return 'redirect';
     }
     try {
@@ -71,7 +104,7 @@ export async function signInWithProvider(_id: SocialProvider = 'google'): Promis
       const code = (err as { code?: string }).code ?? '';
       if (CANCELLED.has(code)) return 'cancelled';
       if (NEEDS_REDIRECT.has(code)) {
-        await signInWithRedirect(auth, p);
+        await redirect(p);
         return 'redirect';
       }
       throw err;
@@ -86,10 +119,18 @@ export async function signInWithProvider(_id: SocialProvider = 'google'): Promis
  * start-up, or redirect errors are silently lost.
  */
 export async function completeRedirect(): Promise<string | null> {
+  const pending = redirectPending();
   try {
-    await getRedirectResult(auth);
+    const result = await getRedirectResult(auth);
+    markRedirect(false);
+    // Came back from Google but no session arrived: say so instead of
+    // silently showing the sign-in form again.
+    if (pending && !result && !auth.currentUser) {
+      return 'Google sign-in did not finish. Please try again. If this keeps happening in the installed app, open Atlas AI in your browser once and sign in there.';
+    }
     return null;
   } catch (err) {
+    markRedirect(false);
     const code = (err as { code?: string }).code ?? '';
     if (CANCELLED.has(code) || code === 'auth/no-auth-event') return null;
     return authErrorMessage(err);

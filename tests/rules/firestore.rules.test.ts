@@ -328,3 +328,63 @@ describe('account status, sessions and audit records', () => {
     denied(await read(ADMIN, 'users/alice/convIndex/s0000'));
   });
 });
+
+describe('administrator approval (accessStatus) and access requests', () => {
+  const CAROL = token('carol', 'carol@example.com', true, { provider: 'google.com', phoneVerified: false });
+  const now = Math.floor(Date.now() / 1000);
+  const SERVER = `${b64({ alg: 'none', typ: 'JWT' })}.${b64({
+    iss: `https://securetoken.google.com/${PROJECT}`,
+    aud: PROJECT,
+    sub: 'atlas-server',
+    user_id: 'atlas-server',
+    iat: now,
+    exp: now + 3600,
+    auth_time: now,
+    atlasServer: true,
+    firebase: { sign_in_provider: 'custom' },
+  })}.`;
+  const FAKE_SERVER = token('atlas-server', 'x@example.com');
+
+  it('a pending account (not on the allowlist) cannot use the app', async () => {
+    ok(await write(OWNER, 'users/carol', { email: 'carol@example.com', accessStatus: 'pending' }));
+    denied(await read(CAROL, 'users/carol'));
+    denied(await write(CAROL, 'users/carol/conversations/c1', { title: 'x' }));
+  });
+
+  it('an approved profile grants access without the allowlist', async () => {
+    ok(await write(OWNER, 'users/carol', { email: 'carol@example.com', accessStatus: 'approved' }));
+    ok(await read(CAROL, 'users/carol'));
+    ok(await write(CAROL, 'users/carol/conversations/c1', { title: 'x' }));
+  });
+
+  it('a rejected profile overrides the legacy allowlist', async () => {
+    ok(await write(OWNER, 'users/alice', { email: 'alice@example.com', accessStatus: 'rejected' }));
+    denied(await read(ALLOWED, 'users/alice/conversations/c1'));
+  });
+
+  it('users cannot approve themselves', async () => {
+    ok(await write(OWNER, 'users/alice', { email: 'alice@example.com', accessStatus: 'pending', displayName: 'A' }));
+    denied(await call(ALLOWED, 'PATCH', 'users/alice?updateMask.fieldPaths=accessStatus', { accessStatus: 'approved' }));
+    denied(await call(ALLOWED, 'PATCH', 'users/alice?updateMask.fieldPaths=approvedBy', { approvedBy: 'me' }));
+    ok(await call(ALLOWED, 'PATCH', 'users/alice?updateMask.fieldPaths=displayName', { displayName: 'Alice' }));
+  });
+
+  it('access requests are readable by admins only and writable by no client', async () => {
+    ok(await write(OWNER, 'accessRequests/carol', { uid: 'carol', email: 'carol@example.com', status: 'pending' }));
+    ok(await read(ADMIN, 'accessRequests/carol'));
+    denied(await read(CAROL, 'accessRequests/carol'));
+    denied(await read(ALLOWED, 'accessRequests/carol'));
+    denied(await write(CAROL, 'accessRequests/carol', { uid: 'carol', status: 'approved' }));
+    denied(await write(ADMIN, 'accessRequests/carol', { uid: 'carol', status: 'approved' }));
+  });
+
+  it('the server identity can read and write server-only records; an impostor cannot', async () => {
+    ok(await write(SERVER, 'otp/carol', { codeHash: 'h' }));
+    ok(await write(SERVER, 'accessRequests/carol', { status: 'pending' }));
+    ok(await write(SERVER, 'users/carol', { accessStatus: 'approved' }));
+    ok(await read(SERVER, 'config/access'));
+    denied(await read(FAKE_SERVER, 'otp/carol'));
+    denied(await write(FAKE_SERVER, 'accessRequests/carol', { status: 'approved' }));
+    denied(await read(STRANGER, 'otp/carol'));
+  });
+});

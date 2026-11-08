@@ -12,6 +12,10 @@ npx firebase deploy --only firestore:rules,firestore:indexes --project ai-app-6e
 
 Existing email/password accounts (including administrators) are asked to verify a phone number once at their next sign-in.
 
+**The server reaches Firestore through these rules, not through Google Cloud IAM.** `/api/*` signs a Firebase custom token for the reserved user `atlas-server` (claim `atlasServer: true`) with `FIREBASE_SERVICE_ACCOUNT`, exchanges it for an ID token and uses that token for Firestore. The rules grant that identity full access (`isServer()`). No browser can obtain the claim, because custom tokens can only be signed with the service account's private key. Nothing has to change in Google Cloud. Until the rules are published, the admin pages, access requests and phone numbers report "Publish the latest Firestore rules", and access checks fall back to the old allowlist.
+
+You can also publish without the CLI: in the Firebase console, open **Firestore Database > Rules**, paste `firebase/firestore.rules` and select **Publish**.
+
 The current rules also enforce account status: a suspended or deleted profile (`accountStatus`) and sessions older than `sessionsValidAfter` are refused, security events and admin logs are read-only for clients, and the new collections (`securityEvents`, `adminLogs`, `convIndex`, `projectMemory`, recovery records) are covered. Until these rules are deployed, suspension still works through Firebase Auth (the account is disabled and its tokens revoked) and the API checks, but the database itself does not refuse an already-issued token until it expires (up to an hour).
 
 ## 2. Vercel
@@ -51,6 +55,21 @@ If an Apple account does exist, its owner can get in by:
 
 To bring Apple back later, complete the Apple Developer setup (Services ID, key, Team ID) in Firebase and restore the button from git history (`src/features/auth/AuthPages.tsx`, `src/lib/authProviders.ts`).
 
+### Admin approval (access requests)
+
+Every account, whether it signs in with Google or with email and password, is stored in Firestore (`users/{uid}`) the first time it signs in. It needs administrator approval before it can use Atlas AI. Phone verification (email and password accounts only) and approval are separate steps.
+
+- `users/{uid}.accessStatus` is `pending`, `approved` or `rejected`. Only the server can write it; the rules refuse a client that tries to change its own status. Suspension stays in `accountStatus`.
+- Unapproved users see **Request Access to Atlas AI**, with fields for name, email, phone with country code and an optional reason. The request is stored in `accessRequests/{uid}`. There is one request per account, and duplicates are refused by normalized email and phone. After submitting, users see the pending screen. It refreshes when the app comes back into view and every two minutes, at most 15 times.
+- Administrators review requests in **Settings > Access requests**. The same page is in the sidebar, with a count of pending requests. Available actions are approve, reject, suspend, reactivate, delete the request and open the account. Every action asks for confirmation and is written to `adminLogs` and to the user's `securityEvents`. No email notifications are sent, because no email provider is configured.
+
+**Migration of existing users (nobody is locked out):**
+
+- Administrators (`ADMIN_EMAILS`, `config/access.adminEmails`) and every email on `config/access.allowedEmails` keep access. Their profile is marked `approved` the next time they sign in.
+- Other existing accounts become `pending` and must request access.
+- Nothing is approved automatically.
+- Rejecting a user also removes them from `allowedEmails`.
+
 ### Account administration
 
 - **Users** (Settings > Users, administrators only) shows statistics and every account from Firebase Auth and Firestore. Suspend disables the Auth account, revokes its tokens, sets `accountStatus: suspended` and records a security event and an admin log. Delete schedules permanent deletion after 30 days (the account is disabled at once and can be restored until then); the daily cron or **Delete permanently now** (typed email, acknowledgement and a second confirmation) removes the user's data, phone mapping, allowlist entry and Auth account.
@@ -62,7 +81,7 @@ Email/password accounts must verify a Ghana mobile number with a 6-digit text co
 
 1. Firebase **Project settings > Service accounts > Generate new private key**. Paste the JSON (or its base64) into Vercel as `FIREBASE_SERVICE_ACCOUNT` (Sensitive), then delete the downloaded file.
 2. Vercel: `OTP_HMAC_SECRET` (Sensitive, 32+ random bytes), `VYNFY_API_KEY` (Sensitive), `VYNFY_SENDER_ID`, optionally `OTP_DAILY_CAP`. Leave `VYNFY_SANDBOX` unset in production.
-3. Each text costs one Vynfy SMS credit. Only allowlisted accounts can request codes, with per-account, per-number and app-wide limits.
+3. Each text costs one Vynfy SMS credit. Any active account that has not been rejected can request codes, because new sign-ups verify their phone before they can ask for approval. Per-account, per-number and app-wide limits apply. Texts reach Ghana numbers only. Access requests accept international numbers but do not verify them.
 4. **Password recovery by text** (`/api/recovery`) uses the same provider and secrets. It responds the same way whether or not an email has an account, and every reset revokes all sessions. Each recovery text is also one Vynfy credit; sending is rate limited per account, per IP address and app-wide.
 
 ## 3. Install on iPhone

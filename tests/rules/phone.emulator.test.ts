@@ -117,14 +117,21 @@ describe.runIf(process.env.FIREBASE_AUTH_EMULATOR_HOST)('phone verification end 
     expect((await phone(token, { action: 'verify', code })).body.error).toMatchObject({ code: 'no_code' });
   });
 
-  it('accounts that are not approved cannot trigger texts', async (ctx) => {
+  it('new sign-ups awaiting approval can verify a phone; rejected accounts cannot trigger texts', async (ctx) => {
     if (!up) ctx.skip();
     const before = sent.length;
+    const pendingToken = await newPasswordUser('newcomer@example.com');
+    const ok = await phone(pendingToken, { action: 'send', phone: '0551234568' });
+    expect(ok.status).toBe(200);
+    expect(sent.length).toBe(before + 1);
+
     const token = await newPasswordUser('stranger@example.com');
+    const uid = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()).user_id as string;
+    expect(await fsStatus('owner', 'PATCH', `users/${uid}`, { accessStatus: { stringValue: 'rejected' } })).toBe(200);
     const r = await phone(token, { action: 'send', phone: '0551234567' });
     expect(r.status).toBe(403);
-    expect(r.body.error).toMatchObject({ code: 'not_allowed' });
-    expect(sent.length).toBe(before);
+    expect(r.body.error).toMatchObject({ code: 'access_rejected' });
+    expect(sent.length).toBe(before + 1);
   });
 
   it('a number verified by one account cannot verify another', async (ctx) => {

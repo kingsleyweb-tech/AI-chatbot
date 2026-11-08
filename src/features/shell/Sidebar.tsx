@@ -1,10 +1,11 @@
-import { limit, orderBy, query } from 'firebase/firestore';
-import { Bookmark, Brain, FileText, FolderClosed, Library, LogOut, MoreHorizontal, PanelLeftClose, Pencil, Search, Settings, SquarePen, Trash2, Users, X } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { collection, getCountFromServer, limit, orderBy, query, where } from 'firebase/firestore';
+import { Bookmark, Brain, FileText, FolderClosed, Library, LogOut, MoreHorizontal, PanelLeftClose, Pencil, Search, Settings, SquarePen, Trash2, UserPlus, Users, X } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import { NavLink, useMatch, useNavigate } from 'react-router-dom';
 import { Logo } from '@/components/Logo';
 import { ConfirmDialog, Dialog, Button, IconButton, Input, Menu } from '@/components/ui';
 import { deleteConversation, paths, renameConversation, updateConversation } from '@/lib/db';
+import { db } from '@/lib/firebase';
 import { useQuery } from '@/lib/hooks';
 import type { Conversation } from '@/lib/types';
 import { cn, dateGroup } from '@/lib/utils';
@@ -13,7 +14,7 @@ import { useToast } from '@/state/toast';
 
 const PAGE = 40;
 
-function NavItem({ to, icon, label, onClick }: { to: string; icon: React.ReactNode; label: string; onClick?: () => void }) {
+function NavItem({ to, icon, label, onClick, count }: { to: string; icon: React.ReactNode; label: string; onClick?: () => void; count?: number }) {
   return (
     <NavLink
       to={to}
@@ -26,9 +27,41 @@ function NavItem({ to, icon, label, onClick }: { to: string; icon: React.ReactNo
       }
     >
       <span className="shrink-0">{icon}</span>
-      {label}
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      {count ? (
+        <span className="rounded-full bg-accent px-1.5 text-[11px] leading-[18px] font-semibold text-white tabular-nums" aria-label={`${count} waiting`}>
+          {count > 99 ? '99+' : count}
+        </span>
+      ) : null}
     </NavLink>
   );
+}
+
+/**
+ * Pending access requests, for the administrator's sidebar badge. One
+ * aggregation query (admins may read accessRequests), re-run when the app
+ * comes back into view, not on a timer.
+ */
+function usePendingRequests(enabled: boolean): number {
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    if (!enabled) return;
+    let live = true;
+    const run = () =>
+      getCountFromServer(query(collection(db, 'accessRequests'), where('status', '==', 'pending')))
+        .then((r) => live && setN(r.data().count))
+        .catch(() => undefined);
+    void run();
+    const onVisible = () => document.visibilityState === 'visible' && void run();
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('atlas:requests-changed', run);
+    return () => {
+      live = false;
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('atlas:requests-changed', run);
+    };
+  }, [enabled]);
+  return n;
 }
 
 export function useRenameDialog() {
@@ -113,6 +146,7 @@ export function useDeleteConversation() {
 export function Sidebar({ onSearch, onClose, onCollapse }: { onSearch: () => void; onClose?: () => void; onCollapse?: () => void }) {
   const uid = useUid();
   const { user, profile, admin, signOut } = useAuth();
+  const pendingRequests = usePendingRequests(admin);
   const navigate = useNavigate();
   const toast = useToast();
   const [count, setCount] = useState(PAGE);
@@ -183,6 +217,7 @@ export function Sidebar({ onSearch, onClose, onCollapse }: { onSearch: () => voi
         <NavItem to="/knowledge" icon={<Library className="size-[17px]" />} label="Knowledge" />
         <NavItem to="/memory" icon={<Brain className="size-[17px]" />} label="Memory" />
         {admin && <NavItem to="/admin/users" icon={<Users className="size-[17px]" />} label="Users" />}
+        {admin && <NavItem to="/admin/requests" icon={<UserPlus className="size-[17px]" />} label="Access requests" count={pendingRequests} />}
       </div>
 
       <div className="scroll-thin touch-scroll mt-3 min-h-0 flex-1 overflow-y-auto px-2 pb-3">

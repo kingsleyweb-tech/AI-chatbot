@@ -19,6 +19,7 @@ const DocumentsPage = lazy(() => import('./features/documents/DocumentsPage'));
 const KnowledgePage = lazy(() => import('./features/knowledge/KnowledgePage'));
 const SettingsPage = lazy(() => import('./features/settings/SettingsPage'));
 const UsersPage = lazy(() => import('./features/admin/UsersPage'));
+const AccessRequestsPage = lazy(() => import('./features/admin/AccessRequestsPage'));
 
 export function Splash() {
   return (
@@ -35,6 +36,7 @@ function Protected({ children }: { children: ReactNode }) {
   if (access === 'signed-out') return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   if (access === 'phone') return <Navigate to="/verify-phone" replace />;
   if (access === 'unverified') return <Navigate to="/verify" replace />;
+  if (access === 'request' || access === 'pending' || access === 'rejected') return <Navigate to="/request-access" replace />;
   if (access === 'denied' || access === 'error' || access === 'suspended' || access === 'deleted') return <Navigate to="/denied" replace />;
   return <>{children}</>;
 }
@@ -52,6 +54,7 @@ function Routed() {
             <Route path="/verify" element={<AuthPages mode="verify" />} />
             <Route path="/verify-phone" element={<AuthPages mode="phone" />} />
             <Route path="/denied" element={<AuthPages mode="denied" />} />
+            <Route path="/request-access" element={<AuthPages mode="request" />} />
             <Route
               element={
                 <Protected>
@@ -69,6 +72,7 @@ function Routed() {
               <Route path="knowledge" element={<KnowledgePage />} />
               <Route path="settings/:section?" element={<SettingsPage />} />
               <Route path="admin/users" element={<UsersPage />} />
+              <Route path="admin/requests" element={<AccessRequestsPage />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

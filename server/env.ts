@@ -18,6 +18,8 @@ export function env() {
     serpApiKey: e.SERPAPI_API_KEY ?? '',
     appUrl: e.APP_URL ?? 'http://localhost:5173',
     projectId: e.FIREBASE_PROJECT_ID ?? e.VITE_FIREBASE_PROJECT_ID ?? '',
+    /** Firebase web API key (public); the server uses it to sign in as its own identity. */
+    firebaseApiKey: e.FIREBASE_WEB_API_KEY ?? e.VITE_FIREBASE_API_KEY ?? '',
     adminEmails: (list(e.ADMIN_EMAILS) ?? [DEFAULT_ADMIN]).map((s) => s.toLowerCase()),
     defaultModel: e.DEFAULT_MODEL,
     fallbackModels: list(e.FALLBACK_MODELS),
