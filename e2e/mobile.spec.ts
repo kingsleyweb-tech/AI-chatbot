@@ -94,6 +94,38 @@ test('admin and security pages require sign-in', async ({ page }) => {
   }
 });
 
+test('privacy policy and terms are public, dated, marked as drafts and fit a phone screen', async ({ page }) => {
+  for (const [path, title] of [
+    ['/privacy', 'Privacy Policy'],
+    ['/terms', 'Terms of Use'],
+  ] as const) {
+    await page.goto(path);
+    await expect(page).toHaveURL(new RegExp(`${path}$`));
+    await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
+    await expect(page.getByText(/Last updated:/)).toBeVisible();
+    await expect(page.getByRole('note')).toContainText('has not been reviewed by a lawyer');
+    await expect(page.getByText('Still to be confirmed by the operator')).toBeVisible();
+    await noHorizontalScroll(page);
+  }
+});
+
+test('the sign-in screen links to the privacy policy and terms', async ({ page }) => {
+  await page.goto('/login');
+  await page.getByRole('link', { name: 'Privacy Policy' }).click();
+  await expect(page).toHaveURL(/\/privacy$/);
+  await page.getByRole('button', { name: 'Back' }).click();
+  await expect(page).toHaveURL(/\/login$/);
+  await page.getByRole('link', { name: 'Terms of Use' }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Terms of Use' })).toBeVisible();
+});
+
+test('support, help, notifications and admin support pages require sign-in', async ({ page }) => {
+  for (const path of ['/support', '/support/new', '/support/ATL-2611-ABCDE', '/help', '/notifications', '/admin/support', '/admin/support/ATL-2611-ABCDE']) {
+    await page.goto(path);
+    await expect(page).toHaveURL(/\/login$/);
+  }
+});
+
 test('PWA metadata for Add to Home Screen is present', async ({ page, request }) => {
   await page.goto('/login');
   await expect(page.locator('meta[name="apple-mobile-web-app-capable"]')).toHaveCount(1);

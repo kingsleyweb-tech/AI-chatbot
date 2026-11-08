@@ -5,6 +5,10 @@ import {
   AtSign,
   BarChart3,
   Brain,
+  CircleHelp,
+  FileText,
+  Inbox,
+  LifeBuoy,
   ChevronRight,
   Cpu,
   Globe,
@@ -17,6 +21,7 @@ import {
   Plus,
   Settings2,
   ShieldCheck,
+  Smartphone,
   Sparkles,
   SunMoon,
   UserPlus,
@@ -801,17 +806,26 @@ function AccessSection() {
 function AboutSection() {
   const installed = isStandalone();
   return (
-    <Section title="About">
-      <Row title="Atlas AI" description="A private AI assistant.">
-        <span className="text-sm text-muted">Version {__APP_VERSION__}</span>
-      </Row>
-      <Row title="Installed as app" description={installed ? 'Running from the Home Screen.' : isIOS() ? 'In Safari, tap Share, then “Add to Home Screen”.' : 'Use your browser’s Install option.'}>
-        <span className="text-sm text-muted">{installed ? 'Yes' : 'No'}</span>
-      </Row>
-      <Row title="Privacy" description="Your chats, memories and documents are stored in your own Firebase project and are only readable by your account. Messages are sent to the selected model provider through the server.">
-        <span />
-      </Row>
-    </Section>
+    <>
+      <Group title="Support">
+        <NavRow to="/help" icon={CircleHelp} label="Help Centre" />
+        <NavRow to="/support/new" icon={LifeBuoy} label="Contact support" />
+        <NavRow to="/support" icon={Inbox} label="My reports" />
+      </Group>
+      <Group title="Legal">
+        <NavRow to="/terms" icon={FileText} label="Terms of use" />
+        <NavRow to="/privacy" icon={ShieldCheck} label="Privacy policy" />
+      </Group>
+      <Group title="App">
+        <NavRow icon={Info} label="Atlas AI" value={`Version ${__APP_VERSION__}`} />
+        <NavRow icon={Smartphone} label="Installed as app" value={installed ? 'Yes' : 'No'} />
+      </Group>
+      {!installed && (
+        <p className="-mt-4 mb-7 px-4 text-xs text-muted">
+          {isIOS() ? 'To install: in Safari, tap Share, then “Add to Home Screen”.' : 'To install: use your browser’s Install option.'}
+        </p>
+      )}
+    </>
   );
 }
 
@@ -897,6 +911,13 @@ function SettingsHome() {
             onChange={(v) => update({ searchMode: v ? 'auto' : 'manual', autoSearch: v })}
           />
         </div>
+      </Group>
+
+      <Group title="Help and support">
+        <NavRow to="/help" icon={CircleHelp} label="Help Centre" />
+        <NavRow to="/support/new" icon={LifeBuoy} label="Report an issue" />
+        <NavRow to="/support" icon={Inbox} label="My reports" />
+        {admin && <NavRow to="/admin/support" icon={LifeBuoy} label="Support & issue reports" value="Admin" />}
       </Group>
 
       <Group>

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { requireAllowedUser, type AccessConfig } from '../server/access.js';
 import { adminConfigured, adminDb } from '../server/admin.js';
 import { env } from '../server/env.js';
+import type { Firestore } from '../server/firestore.js';
 import { handle, HttpError, json, readJson } from '../server/http.js';
 import { CATEGORY_IDS, STATUS_IDS, SUPPORT_LIMITS, SUPPORT_PRIORITIES } from '../server/shared/support.js';
 import { removeArticle, saveArticle } from '../server/support/help.js';
@@ -68,6 +69,12 @@ const adminActions = [
   z.object({ action: z.literal('helpRemove'), id: z.string().max(60), mode: z.enum(['remove', 'restore']) }),
 ] as const;
 
+/** Bootstrap owners plus administrators listed in config/access. */
+async function adminEmails(db: Firestore): Promise<string[]> {
+  const access = (await db.get<AccessConfig>('config/access'))?.data;
+  return [...new Set([...env().adminEmails, ...(access?.adminEmails ?? []).map((e) => e.toLowerCase())])];
+}
+
 const schema = z.discriminatedUnion('action', [...userActions, ...adminActions]);
 const ADMIN_ONLY = new Set<string>(adminActions.map((a) => a.shape.action.value));
 
@@ -112,24 +119,18 @@ export const POST = handle(async (request) => {
       return json(await reopenOwn(db, me, b.ref));
     case 'attachment':
       return json(await getAttachment(db, me, ctx.admin, b.ref, b.id));
-    case 'adminList': {
-      const access = (await db.get<AccessConfig>('config/access'))?.data;
-      const admins = [...new Set([...env().adminEmails, ...(access?.adminEmails ?? []).map((e) => e.toLowerCase())])];
-      return json({ ...(await adminList(db)), admins });
-    }
+    case 'adminList':
+      return json({ ...(await adminList(db)), admins: await adminEmails(db) });
     case 'adminGet':
-      return json(await adminDetail(db, b.ref));
+      return json({ ...(await adminDetail(db, b.ref)), admins: await adminEmails(db) });
     case 'adminReply':
       return json(await adminReply(db, actor, b.ref, b));
     case 'adminStatus':
       return json(await adminSetStatus(db, actor, b.ref, b.status));
     case 'adminPriority':
       return json(await adminSetPriority(db, actor, b.ref, b.priority));
-    case 'adminAssign': {
-      const access = (await db.get<AccessConfig>('config/access'))?.data;
-      const admins = [...env().adminEmails, ...(access?.adminEmails ?? []).map((e) => e.toLowerCase())];
-      return json(await adminAssign(db, actor, b.ref, b.assignee, admins));
-    }
+    case 'adminAssign':
+      return json(await adminAssign(db, actor, b.ref, b.assignee, await adminEmails(db)));
     case 'adminNote':
       return json(await adminAddNote(db, actor, b.ref, b.text));
     case 'adminDelete':

@@ -1,5 +1,5 @@
 import { collection, getCountFromServer, limit, orderBy, query, where } from 'firebase/firestore';
-import { Bookmark, Brain, FileText, FolderClosed, Library, LogOut, MoreHorizontal, PanelLeftClose, Pencil, Search, Settings, SquarePen, Trash2, UserPlus, Users, X } from 'lucide-react';
+import { Bell, Bookmark, Brain, CircleHelp, FileText, FolderClosed, LifeBuoy, Library, LogOut, MoreHorizontal, PanelLeftClose, Pencil, Search, Settings, SquarePen, Trash2, UserPlus, Users, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { NavLink, useMatch, useNavigate } from 'react-router-dom';
 import { Logo } from '@/components/Logo';
@@ -11,6 +11,7 @@ import type { Conversation } from '@/lib/types';
 import { cn, dateGroup } from '@/lib/utils';
 import { useAuth, useUid } from '@/state/auth';
 import { useToast } from '@/state/toast';
+import { useNotifications } from '../notifications/useNotifications';
 
 const PAGE = 40;
 
@@ -42,6 +43,29 @@ function NavItem({ to, icon, label, onClick, count }: { to: string; icon: React.
  * aggregation query (admins may read accessRequests), re-run when the app
  * comes back into view, not on a timer.
  */
+/** New (unanswered) support reports, for the administrator's sidebar badge. */
+function useNewReports(enabled: boolean): number {
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    if (!enabled) return;
+    let live = true;
+    const run = () =>
+      getCountFromServer(query(collection(db, 'supportReports'), where('status', '==', 'new')))
+        .then((r) => live && setN(r.data().count))
+        .catch(() => undefined);
+    void run();
+    const onVisible = () => document.visibilityState === 'visible' && void run();
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('atlas:notified', run);
+    return () => {
+      live = false;
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('atlas:notified', run);
+    };
+  }, [enabled]);
+  return n;
+}
+
 function usePendingRequests(enabled: boolean): number {
   const [n, setN] = useState(0);
   useEffect(() => {
@@ -147,6 +171,8 @@ export function Sidebar({ onSearch, onClose, onCollapse }: { onSearch: () => voi
   const uid = useUid();
   const { user, profile, admin, signOut } = useAuth();
   const pendingRequests = usePendingRequests(admin);
+  const newReports = useNewReports(admin);
+  const { unread } = useNotifications();
   const navigate = useNavigate();
   const toast = useToast();
   const [count, setCount] = useState(PAGE);
@@ -216,8 +242,10 @@ export function Sidebar({ onSearch, onClose, onCollapse }: { onSearch: () => voi
         <NavItem to="/documents" icon={<FileText className="size-[17px]" />} label="Documents" />
         <NavItem to="/knowledge" icon={<Library className="size-[17px]" />} label="Knowledge" />
         <NavItem to="/memory" icon={<Brain className="size-[17px]" />} label="Memory" />
+        <NavItem to="/notifications" icon={<Bell className="size-[17px]" />} label="Notifications" count={unread} />
         {admin && <NavItem to="/admin/users" icon={<Users className="size-[17px]" />} label="Users" />}
         {admin && <NavItem to="/admin/requests" icon={<UserPlus className="size-[17px]" />} label="Access requests" count={pendingRequests} />}
+        {admin && <NavItem to="/admin/support" icon={<LifeBuoy className="size-[17px]" />} label="Support" count={newReports} />}
       </div>
 
       <div className="scroll-thin touch-scroll mt-3 min-h-0 flex-1 overflow-y-auto px-2 pb-3">
@@ -311,6 +339,8 @@ export function Sidebar({ onSearch, onClose, onCollapse }: { onSearch: () => voi
           items={[
             { label: 'Settings', icon: <Settings className="size-4" />, onSelect: () => navigate('/settings') },
             { label: 'Memory', icon: <Brain className="size-4" />, onSelect: () => navigate('/memory') },
+            { label: 'Help Centre', icon: <CircleHelp className="size-4" />, onSelect: () => navigate('/help') },
+            { label: 'Report an issue', icon: <LifeBuoy className="size-4" />, onSelect: () => navigate('/support/new') },
             'separator',
             { label: 'Sign out', icon: <LogOut className="size-4" />, onSelect: () => signOut() },
           ]}

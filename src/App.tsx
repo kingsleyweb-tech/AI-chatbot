@@ -20,6 +20,14 @@ const KnowledgePage = lazy(() => import('./features/knowledge/KnowledgePage'));
 const SettingsPage = lazy(() => import('./features/settings/SettingsPage'));
 const UsersPage = lazy(() => import('./features/admin/UsersPage'));
 const AccessRequestsPage = lazy(() => import('./features/admin/AccessRequestsPage'));
+const SupportAdminPage = lazy(() => import('./features/admin/SupportAdminPage'));
+const SupportReportAdminPage = lazy(() => import('./features/admin/SupportReportAdminPage'));
+const ReportIssuePage = lazy(() => import('./features/support/ReportIssuePage'));
+const MyReportsPage = lazy(() => import('./features/support/MyReportsPage'));
+const ReportThreadPage = lazy(() => import('./features/support/ReportThreadPage'));
+const NotificationsPage = lazy(() => import('./features/notifications/NotificationsPage'));
+const HelpPage = lazy(() => import('./features/help/HelpPage'));
+const LegalPage = lazy(() => import('./features/legal/LegalPage'));
 
 export function Splash() {
   return (
@@ -75,6 +83,8 @@ function Routed() {
             <Route path="/verify-phone" element={<AuthPages mode="phone" />} />
             <Route path="/denied" element={<AuthPages mode="denied" />} />
             <Route path="/request-access" element={<AuthPages mode="request" />} />
+            <Route path="/privacy" element={<LegalPage doc="privacy" />} />
+            <Route path="/terms" element={<LegalPage doc="terms" />} />
             <Route
               element={
                 <Protected>
@@ -93,6 +103,14 @@ function Routed() {
               <Route path="settings/:section?" element={<SettingsPage />} />
               <Route path="admin/users" element={<UsersPage />} />
               <Route path="admin/requests" element={<AccessRequestsPage />} />
+              <Route path="admin/support" element={<SupportAdminPage />} />
+              <Route path="admin/support/:ref" element={<SupportReportAdminPage />} />
+              <Route path="support" element={<MyReportsPage />} />
+              <Route path="support/new" element={<ReportIssuePage />} />
+              <Route path="support/:ref" element={<ReportThreadPage />} />
+              <Route path="notifications" element={<NotificationsPage />} />
+              <Route path="help" element={<HelpPage />} />
+              <Route path="help/:id" element={<HelpPage />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

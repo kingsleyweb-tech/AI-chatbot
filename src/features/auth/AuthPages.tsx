@@ -53,7 +53,18 @@ function Shell({ children, footer = TAGLINE }: { children: ReactNode; footer?: R
       <div className="flex flex-1 flex-col items-center justify-center px-5 py-10">
         <div className="w-full max-w-[380px]">{children}</div>
       </div>
-      {footer && <div className="pb-6 text-center text-xs text-subtle">{footer}</div>}
+      <div className="space-y-1.5 pb-6 text-center text-xs text-subtle">
+        {footer && <div>{footer}</div>}
+        <div>
+          <Link to="/privacy" className="hover:text-fg hover:underline">
+            Privacy Policy
+          </Link>
+          <span aria-hidden> · </span>
+          <Link to="/terms" className="hover:text-fg hover:underline">
+            Terms of Use
+          </Link>
+        </div>
+      </div>
     </div>
   );
 }

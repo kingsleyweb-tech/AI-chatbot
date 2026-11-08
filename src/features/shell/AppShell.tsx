@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { useIsDesktop } from '@/lib/viewport';
+import { NotificationsProvider } from '../notifications/useNotifications';
 import { SearchDialog } from './SearchDialog';
 import { Sidebar } from './Sidebar';
 
@@ -66,6 +67,7 @@ export default function AppShell() {
 
   return (
     <Ctx.Provider value={ctx}>
+      <NotificationsProvider>
       <div className="flex h-full w-full overflow-hidden bg-bg">
         {isDesktop ? (
           <motion.aside
@@ -114,6 +116,7 @@ export default function AppShell() {
         </main>
       </div>
       <SearchDialog open={searchOpen} onClose={() => setSearchOpen(false)} />
+      </NotificationsProvider>
     </Ctx.Provider>
   );
 }
