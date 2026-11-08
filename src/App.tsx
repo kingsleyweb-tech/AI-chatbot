@@ -1,4 +1,4 @@
-import { lazy, Suspense, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, type ReactNode } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LogoMark } from './components/Logo';
@@ -41,8 +41,28 @@ function Protected({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+/**
+ * Fetch the main app screens while the browser is idle, so opening the app
+ * (after sign-in or approval) is instant and uses chunks of this same build.
+ */
+function usePrefetchApp() {
+  const { access } = useAuth();
+  const ready = access !== 'loading' && access !== 'signed-out';
+  useEffect(() => {
+    if (!ready) return;
+    const load = () => {
+      void import('./features/shell/AppShell').catch(() => undefined);
+      void import('./features/chat/ChatPage').catch(() => undefined);
+    };
+    const w = window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number };
+    if (w.requestIdleCallback) w.requestIdleCallback(load, { timeout: 3000 });
+    else window.setTimeout(load, 1500);
+  }, [ready]);
+}
+
 function Routed() {
   useVisualViewport();
+  usePrefetchApp();
   return (
     <div className="app-frame">
       <ErrorBoundary>

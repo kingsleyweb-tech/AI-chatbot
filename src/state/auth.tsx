@@ -249,7 +249,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const seq = useRef(0);
   const redirectDone = useRef<Promise<string | null> | null>(null);
 
-  const evaluate = useCallback(async (u: User | null, forceToken = false) => {
+  /**
+   * Decide access for `u`.
+   * - quiet: keep showing the current screen while re-checking (no loading
+   *   flash; used by "Refresh status" and other in-page re-checks).
+   * - On a normal start, a user the server approved before opens the app at
+   *   once from the cached decision while the check runs in the background.
+   *   The rules and APIs enforce access on every request regardless, and a
+   *   negative answer replaces the optimistic state as soon as it arrives.
+   */
+  const evaluate = useCallback(async (u: User | null, forceToken = false, quiet = false) => {
     const mine = ++seq.current;
     if (!u) {
       // Coming back from a Google redirect: stay on the loading screen until
@@ -265,13 +274,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setProfile(null);
       return;
     }
-    setAccess('loading');
-    const r = await checkAccess(u, forceToken);
+    const cached = !forceToken && !quiet ? readCache(u.uid) : null;
+    const optimistic = cached === 'allowed' || cached === 'admin';
+    if (optimistic) {
+      setAdmin(cached === 'admin');
+      setAccess('allowed');
+    } else if (!quiet) {
+      setAccess('loading');
+    }
+    let r = await checkAccess(u, forceToken);
     if (mine !== seq.current) return;
-    setAdmin(r.admin);
-    setProvider(r.provider);
-    setAccessError(r.error ?? null);
-    setAccessInfo(r.info ?? { request: null, profile: null });
+    // A transient failure must not throw an approved user out of the open app.
+    if (optimistic && r.state === 'error') r = { state: 'allowed', admin: cached === 'admin', provider: r.provider };
     if (r.revoked) {
       writeCache(u.uid, null);
       setSignInError('You were signed out because your password was changed or all sessions were signed out. Please sign in again.');
@@ -297,6 +311,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } else if (r.state !== 'error') {
       writeCache(u.uid, null);
     }
+    // Update everything together, after the profile write: a quiet re-check must
+    // never render the old state with new details (the request form flashed).
+    setAdmin(r.admin);
+    setProvider(r.provider);
+    setAccessError(r.error ?? null);
+    setAccessInfo(r.info ?? { request: null, profile: null });
     setAccess(r.state);
   }, []);
 
@@ -323,12 +343,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Live profile (settings) subscription once allowed.
   useEffect(() => {
     if (!user || access !== 'allowed') return;
+    let authTime = 0;
+    void user
+      .getIdTokenResult()
+      .then((t) => (authTime = Date.parse(t.authTime) / 1000))
+      .catch(() => undefined);
+    let rechecking = false;
+    // "Sign out of all devices", suspension and deletion all update this
+    // document; react at once instead of waiting for the next request.
+    const recheck = () => {
+      if (rechecking || !auth.currentUser) return;
+      rechecking = true;
+      void evaluate(auth.currentUser, true, true).finally(() => (rechecking = false));
+    };
     return onSnapshot(
       paths.user(user.uid),
-      (snap) => setProfile(snap.exists() ? (snap.data() as UserProfile) : null),
-      () => undefined,
+      (snap) => {
+        const p = snap.exists() ? (snap.data() as UserProfile & { sessionsValidAfter?: number; accountStatus?: string }) : null;
+        setProfile(p);
+        if (!p) return;
+        if ((p.accountStatus && p.accountStatus !== 'active') || (authTime && (p.sessionsValidAfter ?? 0) > authTime)) recheck();
+      },
+      // The rules refuse the profile once the session is revoked or the account is blocked.
+      (err) => {
+        if (err.code === 'permission-denied') recheck();
+      },
     );
-  }, [user, access]);
+  }, [user, access, evaluate]);
 
   const value = useMemo<AuthCtx>(
     () => ({
@@ -345,7 +386,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const u = auth.currentUser;
         if (u) await u.reload().catch(() => undefined);
         setUser(auth.currentUser);
-        await evaluate(auth.currentUser, true);
+        await evaluate(auth.currentUser, true, true);
       },
       signOut: async () => {
         await fbSignOut(auth);

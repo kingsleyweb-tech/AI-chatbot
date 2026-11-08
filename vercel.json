@@ -24,7 +24,7 @@
       "destination": "https://ai-app-6efa7.firebaseapp.com/__/firebase/:path*"
     },
     {
-      "source": "/((?!api/|__/).*)",
+      "source": "/((?!api/|__/|assets/).*)",
       "destination": "/index.html"
     }
   ],

@@ -1,4 +1,5 @@
 import { Component, type ReactNode } from 'react';
+import { CHUNK_ERROR, reloadForNewBuild } from '@/lib/reload';
 
 interface State {
   error: Error | null;
@@ -13,14 +14,14 @@ export class ErrorBoundary extends Component<{ children: ReactNode; fallback?: R
 
   componentDidCatch(error: Error) {
     console.error('[ui] render error:', error.message);
+    // A newer build was deployed while this page was open: load it instead of showing an error.
+    if (CHUNK_ERROR.test(error.message)) reloadForNewBuild();
   }
 
   render() {
     if (!this.state.error) return this.props.children;
     if (this.props.fallback) return this.props.fallback;
-    const chunkError = /dynamically imported module|Loading chunk|Importing a module script failed/i.test(
-      this.state.error.message,
-    );
+    const chunkError = CHUNK_ERROR.test(this.state.error.message);
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center">
         <h2 className="text-base font-semibold">Something went wrong</h2>
