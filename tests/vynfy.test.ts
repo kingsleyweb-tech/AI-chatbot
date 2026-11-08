@@ -348,3 +348,18 @@ describe('OTP service status as a delivery signal', () => {
     expect((await otpStatus(deps, 'u1')).delivery).toEqual({ state: 'sent', error: null });
   });
 });
+
+describe('one number, one account', () => {
+  it('two accounts racing for the same number (written differently): only the first to verify gets it', async () => {
+    // both request a code before either has verified
+    await sendCode(deps, 'alice', '0501901401');
+    otp.codes.clear(); // Vynfy issues a fresh code for the second request
+    await sendCode(deps, 'bob', '+233 50 190 1401');
+    expect(await verifyCode(deps, 'bob', '444447')).toEqual({ phone: '+233501901401' });
+    otp.codes.set('+233501901401', { code: '444447', id: '1', expiresAt: now + 60_000, attempts: 0, state: 'pending' });
+    expect(await code(verifyCode(deps, 'alice', '444447'))).toBe('phone_in_use');
+    // and nobody can request a code for it any more
+    now += 61_000;
+    expect(await code(sendCode(deps, 'carol', '+2330501901401'))).toBe('phone_in_use');
+  });
+});
