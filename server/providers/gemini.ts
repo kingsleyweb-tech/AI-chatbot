@@ -211,7 +211,7 @@ export class GeminiProvider implements ChatProvider {
   async *stream(p: CompletionParams): AsyncGenerator<ProviderChunk> {
     const headers = this.headers();
     const connect = new AbortController();
-    const timer = setTimeout(() => connect.abort(), CONNECT_TIMEOUT_MS);
+    const timer = setTimeout(() => connect.abort(), p.firstByteTimeoutMs ?? CONNECT_TIMEOUT_MS);
     const signal = AbortSignal.any([connect.signal, p.signal].filter(Boolean) as AbortSignal[]);
     let res: Response;
     try {

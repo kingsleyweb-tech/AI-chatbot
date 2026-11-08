@@ -17,6 +17,8 @@ export interface CompletionParams {
   temperature?: number;
   /** ask for a JSON object response when the model supports it */
   json?: boolean;
+  /** give up (and let the caller fall back) if no response starts within this time */
+  firstByteTimeoutMs?: number;
 }
 
 export type ProviderChunk =

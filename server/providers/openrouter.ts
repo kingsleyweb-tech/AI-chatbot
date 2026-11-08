@@ -195,7 +195,7 @@ export class OpenRouterProvider implements ChatProvider {
     const headers = this.headers(); // throws not_configured before any network call
     if (p.model.endsWith(':free') && freeDailyLimitActive()) throw dailyLimitError();
     const connect = new AbortController();
-    const timer = setTimeout(() => connect.abort(), CONNECT_TIMEOUT_MS);
+    const timer = setTimeout(() => connect.abort(), p.firstByteTimeoutMs ?? CONNECT_TIMEOUT_MS);
     const signals = [connect.signal, p.signal].filter(Boolean) as AbortSignal[];
     const signal = AbortSignal.any(signals);
     let res: Response;
@@ -221,7 +221,7 @@ export class OpenRouterProvider implements ChatProvider {
     let finish: string | null = null;
     let gotContent = false;
     // idle watchdog: abort if the stream stalls
-    let idle = setTimeout(() => connect.abort(), CONNECT_TIMEOUT_MS);
+    let idle = setTimeout(() => connect.abort(), p.firstByteTimeoutMs ?? CONNECT_TIMEOUT_MS);
     clearTimeout(timer);
     try {
       for await (const data of parseSSE(res.body, signal)) {

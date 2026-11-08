@@ -22,6 +22,7 @@ import {
 } from '../memory/conversations.js';
 import { formatHistory, indexExchange, loadIndex, searchHistory, tagConversationProject, type IndexEntry } from '../memory/history.js';
 import { detectFocus, formatProject, loadProjects, projectSlug, updateProjectMemory, type LoadedProject } from '../memory/projects.js';
+import { markFailed, markHealthy, preferHealthy } from '../providers/health.js';
 import { getCatalog, providerFor } from '../providers/registry.js';
 import { loadAiConfig } from '../config/ai.js';
 import { routeModel, nextInChain } from '../router/route.js';
@@ -261,9 +262,10 @@ export async function runChat(
           const k = fieldPath(...path);
           counters[k] = (counters[k] ?? 0) + n;
         };
-        const notice = (message: string, model?: string) => {
+        // Internal notes (model fallbacks, search provider switches) are kept on the
+        // stored message for diagnostics, not shown in the chat.
+        const notice = (message: string) => {
           notices.push(message);
-          send({ type: 'notice', message, ...(model ? { model } : {}) });
         };
 
         try {
@@ -309,7 +311,8 @@ export async function runChat(
             // Leave the try block without generating; the message is still persisted below.
             throw APPROVAL_STOP;
           }
-          const chain = route.chain;
+          // models that just failed (quota, hang) go last so the user doesn't wait for them again
+          const chain = preferHealthy(route.chain);
           if (route.switched) {
             routeInfo = {
               ...route.switched,
@@ -321,8 +324,20 @@ export async function runChat(
 
           // ---- Context assembly (in parallel) ----
           const queryText = lastUser.content.slice(0, 2000);
+          const trivial = isTrivial(lastUser.content);
+          // Independent reads start now, while the query is being embedded.
+          const projectP = projectId
+            ? db.get<{ name?: string; instructions?: string }>(`${base}/projects/${projectId}`).catch(() => null)
+            : Promise.resolve(null);
+          const projectsP = memoryOn ? loadProjects(db, uid).catch(() => [] as LoadedProject[]) : Promise.resolve([] as LoadedProject[]);
+          const indexP = memoryOn ? loadIndex(db, uid).catch(() => [] as IndexEntry[]) : Promise.resolve([] as IndexEntry[]);
+          const memoriesP = memoryOn ? loadMemories(db, uid).catch(() => []) : Promise.resolve([]);
+          // A slow embedding service must not hold up the reply: after 3 s the
+          // lexical fallbacks are used instead. Greetings need no embedding.
           const queryEmbedding =
-            memoryOn || body.options.documentIds.length ? await embed([queryText]) : null;
+            (memoryOn && !trivial) || body.options.documentIds.length
+              ? await Promise.race([embed([queryText]).catch(() => null), new Promise<null>((r) => setTimeout(() => r(null), 3_000))])
+              : null;
           const query = {
             text: queryText,
             vector: queryEmbedding?.vectors[0],
@@ -336,7 +351,7 @@ export async function runChat(
           // whether a "do you know <company>" question still needs the web.
           // Greetings and arithmetic never touch any knowledge source.
           let knowledge: KnowledgeContext | null = null;
-          if (!isTrivial(lastUser.content)) {
+          if (!trivial) {
             const previous = body.messages.filter((m) => m.role === 'user').slice(-2, -1)[0]?.content ?? '';
             // short follow-ups ("what services do they offer?") are searched with the previous question
             const kbText = previous && looksLikeFollowUp(lastUser.content) ? `${previous.slice(0, 600)}\n${queryText}` : queryText;
@@ -358,15 +373,7 @@ export async function runChat(
           }
 
           // ---- Project focus (decides which memories and past chats may be used) ----
-          const [project, projects, historyIndex] = await Promise.all([
-            projectId
-              ? db
-                  .get<{ name?: string; instructions?: string }>(`${base}/projects/${projectId}`)
-                  .catch(() => null)
-              : Promise.resolve(null),
-            memoryOn ? loadProjects(db, uid).catch(() => [] as LoadedProject[]) : Promise.resolve([] as LoadedProject[]),
-            memoryOn ? loadIndex(db, uid).catch(() => [] as IndexEntry[]) : Promise.resolve([] as IndexEntry[]),
-          ]);
+          const [project, projects, historyIndex] = await Promise.all([projectP, projectsP, indexP]);
           focus = memoryOn
             ? detectFocus({
                 text: queryText,
@@ -394,11 +401,7 @@ export async function runChat(
           const convProject = new Map(historyIndex.map((e) => [e.c, e.p]));
 
           const [memories, related, docs, web] = await Promise.all([
-            memoryOn
-              ? loadMemories(db, uid)
-                  .then((m) => selectRelevant(m, query, { focusProject: focus?.slug ?? null }))
-                  .catch(() => [])
-              : Promise.resolve([]),
+            memoriesP.then((m) => (m.length ? selectRelevant(m, query, { focusProject: focus?.slug ?? null }) : [])).catch(() => []),
             memoryOn
               ? relatedConversations({ db, uid, excludeId: body.conversationId, query })
                   .then((r) =>
@@ -516,6 +519,8 @@ export async function runChat(
                 messages,
                 signal,
                 maxTokens: modelConfig().maxOutputTokens,
+                // with a fallback available, don't wait long for a stuck model
+                ...(i < chain.length - 1 ? { firstByteTimeoutMs: 15_000 } : {}),
               })) {
                 if (chunk.type === 'delta') {
                   content += chunk.text;
@@ -543,10 +548,12 @@ export async function runChat(
                 );
               }
               lastErr = null;
+              markHealthy(modelId);
               break;
             } catch (err) {
               if (signal.aborted) throw err;
               lastErr = err;
+              if (err instanceof ProviderError && !content) markFailed(modelId, err.code);
               if (err instanceof ProviderError) {
                 count(['providers', providerFor(modelId).id, 'failed']);
                 if (err.code === 'rate_limited' || err.code === 'daily_limit') count(['providers', providerFor(modelId).id, 'rateLimited']);
@@ -557,12 +564,8 @@ export async function runChat(
               count(['routing', 'fallbacks']);
               const switching = providerFor(chain[next]).id !== providerFor(modelId).id;
               if (switching) count(['routing', 'providerSwitches']);
-              notice(
-                switching
-                  ? `${nameOf(modelId)}: ${err.message} Switching to ${providerFor(chain[next]).id === 'gemini' ? 'Google Gemini' : 'OpenRouter'}: ${nameOf(chain[next])} (for this reply only; your model is unchanged).`
-                  : `${nameOf(modelId)}: ${err.message} Trying ${nameOf(chain[next])}.`,
-                chain[next],
-              );
+              console.info(`[chat] fallback ${modelId} -> ${chain[next]} (${err.code})`);
+              notice(`${nameOf(modelId)}: ${err.message} Used ${nameOf(chain[next])} instead.`);
               i = next - 1;
             }
           }

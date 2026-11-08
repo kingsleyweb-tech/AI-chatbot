@@ -4,8 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
 const store: Record<string, Record<string, unknown>> = {};
 const denied = new Set<string>();
 
-vi.mock('../src/lib/firebase', () => ({ db: {} }));
-vi.mock('../src/lib/api', () => ({ api: vi.fn(async () => ({ ok: true })) }));
+vi.mock('./firebase', () => ({ db: {} }));
+vi.mock('./api', () => ({ api: vi.fn(async () => ({ ok: true })) }));
 vi.mock('firebase/firestore', () => ({
   collection: (_db: unknown, ...segs: string[]) => segs.join('/'),
   doc: (_db: unknown, ...segs: string[]) => segs.join('/'),
@@ -20,7 +20,7 @@ vi.mock('firebase/firestore', () => ({
   },
 }));
 
-const { buildAccountExport, plain } = await import('../src/lib/accountExport');
+const { buildAccountExport, plain } = await import('./accountExport');
 
 const ts = (iso: string) => ({ toDate: () => new Date(iso) });
 
@@ -49,10 +49,10 @@ describe('account data export', () => {
     expect(out.format).toBe('atlas-account-export');
     expect(out.profile).toEqual({ displayName: 'Ama', createdAt: '2026-01-01T00:00:00.000Z' });
     expect(out.conversations).toHaveLength(1);
-    expect(out.conversations[0].messages.map((m) => m.content)).toEqual(['first', 'second']);
+    expect(out.conversations[0].messages.map((m: { content?: unknown }) => m.content)).toEqual(['first', 'second']);
     expect(out.memories).toEqual([{ id: 'x', text: 'Prefers tea' }]);
     expect(out.projectMemory[0]).toMatchObject({ id: 'p_alpha', name: 'Project Alpha' });
-    expect(out.securityEvents.map((e) => e.type)).toEqual(['password_changed', 'login']);
+    expect(out.securityEvents.map((e: { type?: unknown }) => e.type)).toEqual(['password_changed', 'login']);
     expect(out.skipped).toEqual(['documents']);
     expect(JSON.stringify(out)).not.toContain('not mine');
   });

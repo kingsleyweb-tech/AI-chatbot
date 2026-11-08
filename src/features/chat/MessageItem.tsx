@@ -399,7 +399,6 @@ export const AssistantMessage = memo(function AssistantMessage({
   const content = live?.content ?? m.content;
   const reasoning = live?.reasoning ?? m.reasoning ?? '';
   const sources = live?.sources ?? m.sources ?? [];
-  const notices = live?.notices ?? m.notices ?? [];
   const search = live ? live.search : m.search;
   const researchSteps = live?.researchSteps ?? m.researchSteps ?? [];
   const model = live?.model ?? m.model;
@@ -418,11 +417,6 @@ export const AssistantMessage = memo(function AssistantMessage({
       <div className="min-w-0 flex-1">
         {route && <RouteNote route={route} />}
         <SearchStatus info={search} steps={researchSteps} live={streaming} />
-        {notices.map((n, i) => (
-          <div key={i} className="mb-2 rounded-lg bg-surface px-3 py-1.5 text-xs text-muted">
-            {n}
-          </div>
-        ))}
         {reasoning && <Reasoning text={reasoning} live={streaming && !content} />}
         {live && live.status === 'connecting' && !content && (
           <div className="flex items-center gap-2 py-1.5 text-sm text-muted">

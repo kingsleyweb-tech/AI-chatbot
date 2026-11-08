@@ -6,6 +6,7 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import type { Source } from '@shared/types';
 import { CodeBlock } from './CodeBlock';
+import { splitBlocks } from '@/lib/markdownBlocks';
 
 /**
  * Convert citation markers like [1] and [D2] (outside code) into links with
@@ -100,6 +101,14 @@ const rehypePlugins = [[rehypeKatex, { throwOnError: false, strict: 'ignore' }]]
   typeof ReactMarkdown
 >['rehypePlugins'];
 
+const Block = memo(function Block({ text, components }: { text: string; components: Components }) {
+  return (
+    <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={components} urlTransform={urlTransform}>
+      {text}
+    </ReactMarkdown>
+  );
+});
+
 export const Markdown = memo(function Markdown({
   content,
   sources,
@@ -116,16 +125,16 @@ export const Markdown = memo(function Markdown({
     const linked = linkCitations(content, sources);
     return streaming ? closeOpenFence(linked) : linked;
   }, [content, sources, streaming]);
+  const blocks = useMemo(() => (streaming ? splitBlocks(text) : null), [streaming, text]);
   return (
     <div className={`md ${className ?? ''}`}>
-      <ReactMarkdown
-        remarkPlugins={remarkPlugins}
-        rehypePlugins={rehypePlugins}
-        components={components}
-        urlTransform={urlTransform}
-      >
-        {text}
-      </ReactMarkdown>
+      {blocks ? (
+        blocks.map((b, i) => <Block key={i} text={b} components={components} />)
+      ) : (
+        <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={components} urlTransform={urlTransform}>
+          {text}
+        </ReactMarkdown>
+      )}
     </div>
   );
 });
