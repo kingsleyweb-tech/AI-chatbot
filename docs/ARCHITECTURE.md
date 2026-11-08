@@ -70,7 +70,37 @@ Signed-in persistence is tested end to end against the Firebase emulators with a
   - `routing.fallbacks`, `routing.providerSwitches`, `routing.switched`
 - **OpenRouter free daily cap.** Accounts without purchased credits get 50 free-model requests per day. The cap is read from OpenRouter's key info, or learned from the first `free-models-per-day` 429. Free OpenRouter models are then marked unavailable until midnight UTC, and requests go to Gemini.
 - **Gemini.** It uses the free tier (no billing on the Google project; `GEMINI_BILLING=paid` flips every Gemini model to paid). Short background calls disable thinking, so it cannot use up their small output budget. Embeddings use `gemini-embedding-001` (768 dimensions). Usage is counted per provider in `usage/{day}.providers.<id>`.
-- **Image generation and editing** are not offered. The prompt tells the model so, and it says so plainly.
+- **Cloudflare Workers AI** (`server/providers/cloudflare.ts`, `server/cloudflare/client.ts`) is an additional provider:
+  - It offers five curated chat models (`CLOUDFLARE_CHAT_MODELS`: Gemma 4 26B, gpt-oss-120b, Llama 4 Scout, Mistral Small 3.1, Qwen2.5 Coder), used **only when the user selects one**.
+  - `routeModel` never picks a `cloudflare` model automatically and never uses one as a fallback; Gemini and OpenRouter remain the chain.
+  - Requests go to the OpenAI-compatible endpoint `.../accounts/{id}/ai/v1/chat/completions` with the token in the `Authorization` header only.
+  - Errors are mapped by `mapCloudflareError`. The free daily allocation (code 4006) is remembered until 00:00 UTC and marks the models unavailable.
+
+## Images (`server/images`, `src/features/images`)
+
+1. **Intent** (`intent.ts`): `detectImageIntent` runs on every message when Cloudflare is configured.
+   - It recognises direct requests ("Generate an image of ...", "Design a poster ..."), edits of an attached image, and follow-up edits of the image just created ("make it more realistic").
+   - It ignores questions about images ("Which AI model is best for generating images?"), how-to questions and text tasks ("Create a React component").
+2. **Budget** (`server/cloudflare/budget.ts`). Before any Cloudflare call:
+   - one active image request per user, at least 8 s between requests, and `config/limits.images.perUserDaily` (default 10)
+   - an app-wide reservation against `cloudflareUsage/{yyyy-mm-dd}`, capped at `images.appDailyNeurons` (default 9,000; at most 9,500 of the free 10,000)
+   - It fails closed when the usage counter cannot be read. Text calls to Cloudflare chat models reserve 60 Neurons the same way.
+   - Actual cost comes from the `cf-ai-neurons` header and is recorded per type, model and error in `cloudflareUsage/{day}` and in the user's `usage/{day}` (`providers.cloudflare.*`, `images.generated/edited/failed`).
+3. **Safety** (`safety.ts`): deterministic rules first (sexual content, minors, deepfakes and face swaps of real people, forged documents and money, brand impersonation), then `@cf/meta/llama-guard-3-8b`. A failed or unreadable check refuses (fail closed).
+4. **Generation** (`generate.ts`, `server/config/images.ts`):
+   - Model: `@cf/black-forest-labs/flux-2-klein-4b`, multipart with `prompt`, `width` and `height` (aspect from the request: square 1024x1024, landscape 1344x768, portrait 768x1344).
+   - An edit adds `input_image_0` (the attachment, or the previous image loaded from Firestore) and keeps the source's shape.
+   - `CLOUDFLARE_IMAGE_MODEL` can switch to `flux-1-schnell` (generation only).
+5. **Storage** (`store.ts`):
+   - Metadata goes to `users/{uid}/generatedImages/{img_<messageId>}`. Bytes go to `users/{uid}/generatedImageData/{id}_{n}` as Firestore bytes, in chunks of at most 900,000 bytes.
+   - Everything is written by the server in one commit, metadata last. No base64 is stored in message documents; the message stores only `images[]` metadata.
+   - The id is derived from the message id, so a retried reply reuses the stored image: no second generation, no duplicate.
+   - If storing fails, the image is still streamed to the browser (`image` event with a data URL) so it can be downloaded, and the reply says it was not saved.
+6. **Client**:
+   - `GeneratedImage` shows the image at its real aspect ratio, with a skeleton while loading and Retry on error.
+   - **Download** builds a Blob of the original bytes and saves it as `atlas-image-YYYYMMDD-HHMM-<prompt>.jpg|png`. On iPhone/iPad it uses the share sheet with the file (Save Image / Save to Files), so the image is saved rather than opened in a tab.
+   - `/images` is the gallery: newest first, lazy loading, prompt, Download, open the conversation, and delete.
+   - Deleting a conversation deletes its images (`api/memory.ts`); the account purge deletes both collections.
 
 ## Web search (`server/search`)
 
@@ -153,7 +183,10 @@ All user data is under `users/{uid}`:
 | `…/searchCache/{hash}` | cached search results or page extracts, with `expiresAt` |
 | `config/access` | `allowedEmails[]`, `adminEmails[]` (admin-write) |
 | `config/public` | `registrationOpen` (public read, admin-write) |
-| `config/limits` | search budgets, Deep Research budget, cache lifetimes (approved read, admin-write) |
+| `.../generatedImages/{id}` | created image metadata: `uid`, `conversationId`, `messageId`, `prompt`, `model`, `kind` (generate/edit), `sourceImageId`, `mime`, `width`, `height`, `bytes`, `chunks`, `storage`, `status`, `createdAt` (server-written; owner read/delete) |
+| `.../generatedImageData/{id}_{n}` | image bytes, at most 900,000 per document (server-written; owner read/delete) |
+| `config/limits` | search budgets, Deep Research budget, cache lifetimes, `images.perUserDaily` / `images.appDailyNeurons` (approved read, admin-write) |
+| `cloudflareUsage/{yyyy-mm-dd}` | app-wide Workers AI Neurons and requests per type, model and error (server only) |
 | `adminLogs/{id}` | administrator actions (server-written, admin read-only) |
 | `recovery/{id}`, `otpRecovery/{uid}`, `rateLimits/{key}` | password-recovery state and counters (server only, no client access) |
 
@@ -239,6 +272,9 @@ CSP (scripts: self, the inline theme script by SHA-256 hash, Google sign-in and 
 
 ## Known limitations
 
+- **Created images use Firestore storage** (about 0.3-2 MB each, in chunks) because Firebase Storage needs the Blaze plan. Spark includes 1 GiB in total.
+- **Llama Guard checks the request text only,** not an attached image that is being edited.
+- **Deleting a single message keeps its image** in the gallery; deleting the conversation or the image removes it. Images that could not be stored stay available only in the open tab.
 - **No OCR.** Scanned PDFs without a text layer are flagged with a clear message.
 - **Original uploaded files are not stored,** only their extracted text. Images in chats are compressed (max 1600 px) and stored inline in the message, within Firestore's 1 MiB document limit.
 - **Voice input** uses the Web Speech API. It works in Safari on iOS 14.5+ and Chrome, but not in Firefox. When unavailable, the microphone button is hidden. Read-aloud uses the system voices.

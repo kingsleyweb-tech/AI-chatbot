@@ -8,12 +8,13 @@ import { cn, formatTokens, modelShortName } from '@/lib/utils';
 import { useIsDesktop } from '@/lib/viewport';
 import { useCatalog } from '@/state/catalog';
 
-type Filter = 'featured' | 'free' | 'gemini' | 'openrouter' | 'reasoning' | 'code' | 'vision' | 'documents' | 'audio' | 'images' | 'all';
+type Filter = 'featured' | 'free' | 'gemini' | 'openrouter' | 'cloudflare' | 'reasoning' | 'code' | 'vision' | 'documents' | 'audio' | 'images' | 'all';
 const FILTERS: { id: Filter; label: string; test: (m: ModelInfo) => boolean }[] = [
   { id: 'featured', label: 'Featured', test: (m) => m.featured },
   { id: 'free', label: 'Free', test: (m) => m.free },
   { id: 'gemini', label: 'Gemini', test: (m) => m.provider === 'gemini' },
   { id: 'openrouter', label: 'OpenRouter', test: (m) => m.provider === 'openrouter' },
+  { id: 'cloudflare', label: 'Cloudflare', test: (m) => m.provider === 'cloudflare' },
   { id: 'reasoning', label: 'Reasoning', test: (m) => m.capabilities.reasoning },
   { id: 'code', label: 'Code', test: (m) => m.capabilities.code },
   { id: 'vision', label: 'Vision', test: (m) => m.capabilities.vision },
@@ -89,7 +90,7 @@ function ModelRow({
           {needsCredits && <Badge tone="warn">Needs credits</Badge>}
         </span>
         <span className="mt-0.5 block truncate text-xs text-muted">
-          {m.vendor} · via {m.provider === 'openrouter' ? 'OpenRouter' : m.provider === 'gemini' ? 'Google AI Studio' : m.provider}
+          {m.vendor} · via {m.provider === 'openrouter' ? 'OpenRouter' : m.provider === 'gemini' ? 'Google AI Studio' : m.provider === 'cloudflare' ? 'Cloudflare Workers AI' : m.provider}
           {m.pricing && !m.free ? ` · $${m.pricing.prompt}/$${m.pricing.completion} per 1M tokens` : ''}
         </span>
         {m.description && <span className="mt-1 line-clamp-2 block text-xs text-subtle">{m.description}</span>}
@@ -118,13 +119,42 @@ export function ModelPicker({
   const [filter, setFilter] = useState<Filter>('featured');
   const btn = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLDivElement>(null);
-  const [pos, setPos] = useState<{ top: number; left?: number; right?: number }>({ top: 0 });
+  const [pos, setPos] = useState<{ top?: number; bottom?: number; left?: number; right?: number; maxHeight: number; width: number }>({ top: 0, maxHeight: 620, width: 420 });
   const current = getModel(value);
 
+  // Keep the whole panel inside the window: open below the button when there is room,
+  // otherwise above it, and cap the height to the space available so the list scrolls
+  // inside the panel instead of running off the screen.
   useLayoutEffect(() => {
-    if (!open || !btn.current || !isDesktop) return;
-    const r = btn.current.getBoundingClientRect();
-    setPos(align === 'start' ? { top: r.bottom + 6, left: Math.max(8, r.left) } : { top: r.bottom + 6, right: Math.max(8, window.innerWidth - r.right) });
+    if (!open || !isDesktop) return;
+    const place = () => {
+      if (!btn.current) return;
+      const r = btn.current.getBoundingClientRect();
+      const vh = window.innerHeight;
+      const vw = window.innerWidth;
+      const gap = 6;
+      const margin = 12;
+      const below = vh - r.bottom - gap - margin;
+      const above = r.top - gap - margin;
+      const want = Math.min(620, vh * 0.7);
+      const up = below < Math.min(want, 360) && above > below;
+      const maxHeight = Math.max(160, Math.min(want, up ? above : below));
+      const width = Math.min(420, vw - 16);
+      const vertical = up ? { bottom: vh - r.top + gap } : { top: r.bottom + gap };
+      const horizontal =
+        align === 'start'
+          ? { left: Math.max(8, Math.min(r.left, vw - width - 8)) }
+          : { right: Math.max(8, Math.min(vw - r.right, vw - width - 8)) };
+      setPos({ ...vertical, ...horizontal, maxHeight, width });
+    };
+    place();
+    window.addEventListener('resize', place);
+    // the page behind may scroll (capture: any scroll container)
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
   }, [open, isDesktop, align]);
 
   useEffect(() => {
@@ -175,7 +205,13 @@ export function ModelPicker({
           />
         </div>
         {!q && (
-          <div className="-mx-3 flex gap-1 overflow-x-auto px-3 pb-0.5 [scrollbar-width:none]">
+          <div
+            className="-mx-3 flex gap-1 overflow-x-auto px-3 pb-0.5 [scrollbar-width:none]"
+            // a plain mouse wheel scrolls the filter row sideways (trackpads already can)
+            onWheel={(e) => {
+              if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) e.currentTarget.scrollLeft += e.deltaY;
+            }}
+          >
             {FILTERS.map((f) => (
               <button
                 key={f.id}
@@ -251,7 +287,7 @@ export function ModelPicker({
                 exit={{ opacity: 0, y: -4 }}
                 transition={{ duration: 0.13 }}
                 style={{ position: 'fixed', ...pos }}
-                className="z-[60] flex max-h-[min(70vh,620px)] w-[420px] flex-col overflow-hidden rounded-2xl border border-border bg-elevated shadow-2xl"
+                className="z-[60] flex flex-col overflow-hidden overscroll-contain rounded-2xl border border-border bg-elevated shadow-2xl"
               >
                 {content}
               </motion.div>

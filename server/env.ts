@@ -16,6 +16,11 @@ export function env() {
     geminiKey: e.GEMINI_API_KEY ?? '',
     tavilyKey: e.TAVILY_API_KEY ?? '',
     serpApiKey: e.SERPAPI_API_KEY ?? '',
+    /** Cloudflare Workers AI (server-only; never sent to the browser). */
+    cloudflareAccountId: (e.CLOUDFLARE_ACCOUNT_ID ?? '').trim(),
+    cloudflareApiToken: (e.CLOUDFLARE_API_TOKEN ?? '').trim(),
+    /** optional override of the default image model (must be listed in server/config/images.ts) */
+    cloudflareImageModel: (e.CLOUDFLARE_IMAGE_MODEL ?? '').trim(),
     appUrl: e.APP_URL ?? 'http://localhost:5173',
     projectId: e.FIREBASE_PROJECT_ID ?? e.VITE_FIREBASE_PROJECT_ID ?? '',
     /** Firebase web API key (public); the server uses it to sign in as its own identity. */

@@ -31,7 +31,7 @@ await j(`${FS}/users/${uid}`, {
     phoneVerified: { booleanValue: true },
     phoneNumber: { stringValue: '+233200000000' },
     consent: { mapValue: { fields: {
-      termsVersion: { stringValue: '1.2' }, privacyVersion: { stringValue: '1.2' },
+      termsVersion: { stringValue: '1.3' }, privacyVersion: { stringValue: '1.3' },
       acceptedAt: { integerValue: String(now) }, method: { stringValue: 'checkbox' },
     } } },
   } }),

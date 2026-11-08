@@ -7,8 +7,8 @@
  * version here AND in firestore.rules: everyone is then asked to accept
  * again, and earlier acceptances stay in users/{uid}/consents.
  */
-export const TERMS_VERSION = '1.2';
-export const PRIVACY_VERSION = '1.2';
+export const TERMS_VERSION = '1.3';
+export const PRIVACY_VERSION = '1.3';
 
 export type ConsentMethod = 'google' | 'email_password' | 'other';
 

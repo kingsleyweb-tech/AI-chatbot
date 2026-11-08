@@ -25,6 +25,7 @@ The current rules also enforce account status: a suspended or deleted profile (`
    - `OPENROUTER_API_KEY`: mark it **Sensitive**
    - `GEMINI_API_KEY`: recommended (primary provider), Sensitive. Set `GEMINI_BILLING=paid` only if the Google project has billing enabled.
    - `SERPAPI_API_KEY` and `TAVILY_API_KEY`: optional, also Sensitive
+   - `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`: optional (image creation and Cloudflare chat models), Sensitive
    - `APP_URL`: for example `https://your-app.vercel.app`
    - `FIREBASE_PROJECT_ID`: `ai-app-6efa7`
    - all `VITE_FIREBASE_*` values from `.env.local` (with `VITE_FIREBASE_AUTH_DOMAIN=auto`, see below)
@@ -111,3 +112,6 @@ In Vercel **Deployments**, choose a previous deployment and select **Promote to 
   - Deep Research at most 6 searches and 4 page reads per run
 
   It caches results, so a repeated question costs nothing. It never moves to paid usage. An admin can change the limits in **Settings > Usage**.
+- **Cloudflare Workers AI** (images): free allocation of 10,000 Neurons/day, resetting at 00:00 UTC. One image costs about 100-130 Neurons, plus about 9 for the safety check.
+  - Atlas AI stops at 9,000 Neurons/day app-wide and 10 images per user per day, both configurable in `config/limits.images`.
+  - It never switches to the paid plan. When the allowance is used up, users are told when it resets.

@@ -23,21 +23,28 @@ export function apiDevPlugin(): Plugin {
           >;
           // Local end-to-end tests against the Firebase emulators: emulator ID tokens are
           // unsigned, so they are decoded instead of verified (dev server only, never deployed).
+          // Scripted AI instead of Gemini/OpenRouter generation (no provider quota is used).
+          // Checked on every request (Vite may reload the provider modules after an edit) and
+          // installed before the request runs: if the script fails to load, the request fails
+          // instead of silently reaching the real providers.
+          if (process.env.E2E_FAKE_AI === '1') {
+            const registry = (await server.ssrLoadModule('/server/providers/registry.ts')) as typeof import('../server/providers/registry.js');
+            const { fakeProvider } = (await server.ssrLoadModule('/dev/fakeAi.ts')) as typeof import('./fakeAi.js');
+            const cf = (await server.ssrLoadModule('/server/cloudflare/client.ts')) as typeof import('../server/cloudflare/client.js');
+            const { fakeCloudflare } = (await server.ssrLoadModule('/dev/fakeAi.ts')) as typeof import('./fakeAi.js');
+            cf.setCloudflareFake(fakeCloudflare);
+            for (const model of ['gemini:any', 'openrouter/any', '@cf/any']) {
+              const provider = registry.providerFor(model) as ReturnType<typeof registry.providerFor> & { __scripted?: boolean };
+              if (provider.__scripted) continue;
+              Object.assign(provider, fakeProvider(provider.id), { __scripted: true });
+              console.log(`[api-dev] E2E_FAKE_AI: ${provider.id} uses scripted replies, no provider calls`);
+            }
+          }
           if (process.env.FIREBASE_AUTH_EMULATOR_HOST && !emulatorVerifierSet) {
             const auth = (await server.ssrLoadModule('/server/auth.ts')) as typeof import('../server/auth.js');
             const { decodeJwt } = await import('jose');
             auth.setTokenVerifier(async (token) => decodeJwt(token));
             emulatorVerifierSet = true;
-            // scripted AI instead of Gemini/OpenRouter generation (no provider quota is used)
-            if (process.env.E2E_FAKE_AI === '1') {
-              const registry = (await server.ssrLoadModule('/server/providers/registry.ts')) as typeof import('../server/providers/registry.js');
-              const { fakeProvider } = (await server.ssrLoadModule('/dev/fakeAi.ts')) as typeof import('./fakeAi.js');
-              for (const model of ['gemini:any', 'openrouter/any']) {
-                const provider = registry.providerFor(model);
-                Object.assign(provider, fakeProvider(provider.id));
-              }
-              console.log('[api-dev] E2E_FAKE_AI: scripted replies, no provider calls');
-            }
           }
           const handler = mod[req.method ?? 'GET'];
           if (!handler) {

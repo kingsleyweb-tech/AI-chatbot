@@ -121,16 +121,17 @@ describe('Terms of Use and Privacy Policy acceptance', () => {
     expect(entries('users/n1/consents/')).toHaveLength(2);
   });
 
-  it('moving from version 1.1 to 1.2: 1.1 is refused, accepting 1.2 adds to the history and keeps the 1.1 record', async () => {
-    expect([TERMS_VERSION, PRIVACY_VERSION]).toEqual(['1.2', '1.2']);
-    const v11 = { termsVersion: '1.1', privacyVersion: '1.1', acceptedAt: 1, method: 'google' as const };
-    await expect(acceptTerms(db.asFirestore(), user(), { termsVersion: '1.1', privacyVersion: '1.1' }, null, 'x')).rejects.toMatchObject({ code: 'terms_outdated' });
-    db.docs.set('users/n1/consents/v11', { ...v11, termsAccepted: true, privacyAccepted: true });
-    const r = await acceptTerms(db.asFirestore(), user(), V, v11, 'x', 2_000);
+  it('moving from version 1.2 to 1.3: 1.2 is refused, accepting 1.3 adds to the history and keeps the 1.1 and 1.2 records', async () => {
+    expect([TERMS_VERSION, PRIVACY_VERSION]).toEqual(['1.3', '1.3']);
+    const v12 = { termsVersion: '1.2', privacyVersion: '1.2', acceptedAt: 1, method: 'google' as const };
+    await expect(acceptTerms(db.asFirestore(), user(), { termsVersion: '1.2', privacyVersion: '1.2' }, null, 'x')).rejects.toMatchObject({ code: 'terms_outdated' });
+    db.docs.set('users/n1/consents/v11', { ...v12, termsVersion: '1.1', privacyVersion: '1.1', termsAccepted: true, privacyAccepted: true });
+    db.docs.set('users/n1/consents/v12', { ...v12, termsAccepted: true, privacyAccepted: true });
+    const r = await acceptTerms(db.asFirestore(), user(), V, v12, 'x', 2_000);
     expect(r.recorded).toBe(true);
-    expect(profileOf('n1').consent).toMatchObject({ termsVersion: '1.2', privacyVersion: '1.2', acceptedAt: 2_000 });
+    expect(profileOf('n1').consent).toMatchObject({ termsVersion: '1.3', privacyVersion: '1.3', acceptedAt: 2_000 });
     const hist = entries('users/n1/consents/').map(([, d]) => (d as { termsVersion: string }).termsVersion).sort();
-    expect(hist).toEqual(['1.1', '1.2']);
+    expect(hist).toEqual(['1.1', '1.2', '1.3']);
   });
 
   it('email/password sign-ups are recorded as such', async () => {

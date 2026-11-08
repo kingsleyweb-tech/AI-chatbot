@@ -26,7 +26,7 @@ const google = (o: Partial<AuthUser> = {}): AuthUser => ({
 const password = (o: Partial<AuthUser> = {}): AuthUser => google({ uid: 'p1', email: 'kojo@example.com', provider: 'password', phoneVerified: true, name: null, ...o });
 
 /** current Terms/Privacy accepted (server/shared/legal.ts) */
-const C = { consent: { termsVersion: '1.2', privacyVersion: '1.2', acceptedAt: 1, method: 'google' as const } };
+const C = { consent: { termsVersion: '1.3', privacyVersion: '1.3', acceptedAt: 1, method: 'google' as const } };
 const consented = (uid: string) => db.docs.set(`users/${uid}`, { ...(db.docs.get(`users/${uid}`) ?? {}), ...C });
 
 beforeEach(() => {
@@ -67,9 +67,9 @@ describe('decideAccess', () => {
   it('asks for the current Terms of Use and Privacy Policy before approval, after account status', () => {
     expect(decideAccess(google(), { accessStatus: 'approved' }, cfg, OWNER).state).toBe('consent');
     expect(decideAccess(google({ email: 'owner@example.com' }), undefined, null, OWNER).state).toBe('consent');
-    expect(decideAccess(google(), { accessStatus: 'approved', consent: { termsVersion: '0.9', privacyVersion: '1.2' } }, cfg, OWNER).state).toBe('consent');
-    // an account that accepted the previous version (1.1) must accept 1.2 before continuing
-    expect(decideAccess(google(), { accessStatus: 'approved', consent: { termsVersion: '1.1', privacyVersion: '1.1', acceptedAt: 1, method: 'google' } }, cfg, OWNER).state).toBe('consent');
+    expect(decideAccess(google(), { accessStatus: 'approved', consent: { termsVersion: '0.9', privacyVersion: '1.3' } }, cfg, OWNER).state).toBe('consent');
+    // an account that accepted an earlier version (1.1 or 1.2) must accept 1.3 before continuing
+    for (const v of ['1.1', '1.2']) expect(decideAccess(google(), { accessStatus: 'approved', consent: { termsVersion: v, privacyVersion: v, acceptedAt: 1, method: 'google' } }, cfg, OWNER).state).toBe('consent');
     expect(decideAccess(google(), { accessStatus: 'approved', ...C }, cfg, OWNER).state).toBe('approved');
     // consent never lifts a suspension or a rejection
     expect(decideAccess(google(), { accountStatus: 'suspended' }, cfg, OWNER).state).toBe('suspended');

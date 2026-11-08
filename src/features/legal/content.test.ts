@@ -5,10 +5,10 @@ import { CONTACT_EMAIL, PRIVACY, TERMS } from './content';
 const CONTACT = 'kingsleyanaab99@gmail.com';
 const texts = (d: typeof PRIVACY) => [d.title, d.intro, ...d.sections.flatMap((s) => [s.heading, ...(s.paragraphs ?? []), ...(s.bullets ?? [])])];
 
-describe('legal documents (version 1.2)', () => {
-  it('both documents are version 1.2', () => {
-    expect(TERMS_VERSION).toBe('1.2');
-    expect(PRIVACY_VERSION).toBe('1.2');
+describe('legal documents (version 1.3)', () => {
+  it('both documents are version 1.3', () => {
+    expect(TERMS_VERSION).toBe('1.3');
+    expect(PRIVACY_VERSION).toBe('1.3');
   });
 
   for (const d of [PRIVACY, TERMS]) {
@@ -72,9 +72,31 @@ describe('legal documents (version 1.2)', () => {
     expect(p).toContain('Google Gemini is the primary provider and OpenRouter is an additional provider');
     expect(p).toContain('terms for unpaid services apply');
     expect(p).toContain('model providers have their own policies');
-    expect(p).not.toMatch(/Cloudflare|Workers AI|Vertex|Anthropic|OpenAI/);
+    expect(p).not.toMatch(/Vertex|Anthropic|OpenAI/);
     // PPTX images are not stored: only extracted text is
     expect(p).not.toMatch(/embedded images|images from (slides|presentations)/i);
+  });
+
+  it('describes the Cloudflare Workers AI image integration as implemented', () => {
+    const p = JSON.stringify(PRIVACY);
+    const t = JSON.stringify(TERMS);
+    const both = JSON.stringify([PRIVACY, TERMS]);
+    expect(both).not.toMatch(/does not generate or edit images/i);
+    expect(p).toContain('Google (Gemini), OpenRouter and Cloudflare (Workers AI) are third-party AI providers');
+    expect(p).toContain('never in place of Gemini or OpenRouter');
+    expect(p).toContain('first to a safety model');
+    expect(p).toContain('To edit an image, the image is sent as well');
+    expect(p).toContain('does not use content processed by Workers AI to train AI models');
+    expect(p).toContain('https://developers.cloudflare.com/workers-ai/platform/data-usage/');
+    expect(p).toContain('until you delete the image in Images, delete the conversation it was created in, or your account is deleted');
+    expect(p).toContain('in its original quality, with its Download button');
+    expect(p).toContain('Images Atlas AI created can be read and deleted only by your account');
+    expect(t).toContain('Cloudflare (Workers AI)');
+    expect(t).toContain('Atlas AI can create an image, or edit one, when you ask');
+    expect(t).toContain('deepfakes, face swaps or fake photos of a real person');
+    expect(t).toContain('does not switch to paid usage');
+    // no invented retention period or guarantee for Cloudflare
+    expect(both).not.toMatch(/Cloudflare (deletes|keeps)[^.]*\b\d+ (days|hours)/i);
   });
 
   it('describes Atlas AI as general purpose, never as professional-only', () => {

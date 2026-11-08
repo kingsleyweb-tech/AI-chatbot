@@ -1,3 +1,4 @@
+import { deflateSync } from 'node:zlib';
 import type { ChatProvider, CompletionParams, ProviderChunk, ProviderMessage } from '../server/providers/types.js';
 
 /**
@@ -17,8 +18,16 @@ const sleep = (ms: number, signal?: AbortSignal) =>
 const text = (m: ProviderMessage) => (typeof m.content === 'string' ? m.content : m.content.map((p) => (p.type === 'text' ? p.text : '')).join(' '));
 
 /** The scripted answer to the latest user message, as pieces to stream. */
-export function scriptedReply(messages: ProviderMessage[]): { pieces: string[]; delayMs: number } {
+export function scriptedReply(messages: ProviderMessage[]): { pieces: string[]; delayMs: number; reasoning?: string[] } {
   const last = text([...messages].reverse().find((m) => m.role === 'user') ?? { role: 'user', content: '' });
+  // a reasoning model: thinks (reasoning chunks, no answer text) before answering
+  if (/step by step/i.test(last)) {
+    return {
+      reasoning: ['Let me work through this. ', 'First, the facts. ', 'Then the conclusion. ', 'Checking the result. '],
+      pieces: ['Step 1: gather the facts.\n', 'Step 2: compare them.\n', 'Step 3: conclude.\n', '\nAnswer: REASONED'],
+      delayMs: 400,
+    };
+  }
   let m = /reply with only the number (\d+)/i.exec(last);
   if (m) return { pieces: [m[1]], delayMs: 50 };
   m = /reply with only the word (\w+)/i.exec(last);
@@ -39,8 +48,12 @@ export function fakeProvider(id: string): Pick<ChatProvider, 'stream' | 'complet
   return {
     embed: undefined, // no embeddings: memory and related-chat lookups are skipped
     async *stream(p: CompletionParams): AsyncGenerator<ProviderChunk> {
-      const { pieces, delayMs } = scriptedReply(p.messages);
+      const { pieces, delayMs, reasoning = [] } = scriptedReply(p.messages);
       await sleep(200, p.signal);
+      for (const piece of reasoning) {
+        yield { type: 'reasoning', text: piece };
+        await sleep(delayMs, p.signal);
+      }
       for (const piece of pieces) {
         yield { type: 'delta', text: piece };
         await sleep(delayMs, p.signal);
@@ -52,3 +65,76 @@ export function fakeProvider(id: string): Pick<ChatProvider, 'stream' | 'complet
     },
   };
 }
+
+/* ------------------------- Cloudflare Workers AI (images) ------------------------- */
+
+
+const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+function crc32(buf: Buffer): number {
+  let c = 0xffffffff;
+  for (const b of buf) c = CRC_TABLE[(c ^ b) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+function pngChunk(type: string, data: Buffer): Buffer {
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(data.length);
+  const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(body));
+  return Buffer.concat([len, body, crc]);
+}
+
+/** A real PNG of the requested size (diagonal colour bands derived from the prompt). */
+export function fakePng(width: number, height: number, seed: string): Uint8Array {
+  let h = 0;
+  for (const ch of seed) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  const base = [h & 0xff, (h >> 8) & 0xff, (h >> 16) & 0xff];
+  const rows: Buffer[] = [];
+  for (let y = 0; y < height; y++) {
+    const row = Buffer.alloc(1 + width * 3);
+    for (let x = 0; x < width; x++) {
+      const band = Math.floor((x + y) / 64) % 2 ? 40 : 0;
+      row[1 + x * 3] = (base[0] + band) & 0xff;
+      row[2 + x * 3] = (base[1] + band) & 0xff;
+      row[3 + x * 3] = (base[2] + band) & 0xff;
+    }
+    rows.push(row);
+  }
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 2; // truecolour
+  return new Uint8Array(
+    Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), pngChunk('IHDR', ihdr), pngChunk('IDAT', deflateSync(Buffer.concat(rows))), pngChunk('IEND', Buffer.alloc(0))]),
+  );
+}
+
+/**
+ * Scripted image model and safety classifier. Prompts containing FAILIMAGE fail,
+ * UNSAFEGUARD is classified unsafe; every image takes about 1.5 s.
+ */
+export const fakeCloudflare = {
+  async image(model: string, body: { json?: Record<string, unknown>; form?: FormData }, signal?: AbortSignal) {
+    const prompt = String(body.json?.prompt ?? body.form?.get('prompt') ?? '');
+    const width = Number(body.form?.get('width') ?? 1024) || 1024;
+    const height = Number(body.form?.get('height') ?? 1024) || 1024;
+    await sleep(1500, signal);
+    if (/FAILIMAGE/.test(prompt)) {
+      const { ProviderError } = await import('../server/providers/types.js');
+      throw new ProviderError('provider_error', 'Cloudflare Workers AI had a temporary problem.', 502);
+    }
+    // smaller than requested keeps the test fast; the shape (aspect ratio) is kept
+    const scale = 256 / Math.max(width, height);
+    const bytes = fakePng(Math.round(width * scale), Math.round(height * scale), `${model}|${prompt}|${body.form?.has('input_image_0') ? 'edit' : ''}`);
+    return { bytes, mime: 'image/png', neurons: 104.2 };
+  },
+  async chat(_model: string, messages: { role: string; content: string }[]) {
+    const text = messages.map((m) => m.content).join(' ');
+    return { text: /UNSAFEGUARD/.test(text) ? 'unsafe\nS1' : 'safe', neurons: 9.1 };
+  },
+};

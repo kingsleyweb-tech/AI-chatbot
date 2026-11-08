@@ -18,7 +18,7 @@ export interface RouteOptions {
   approvedPaid?: string | null;
   maxChain?: number;
   /** provider ranked first among capable free models (admin setting, default gemini) */
-  preferredProvider?: 'gemini' | 'openrouter';
+  preferredProvider?: 'gemini' | 'openrouter' | 'cloudflare';
   /** automatic fallback policy (admin setting) */
   fallback?: 'any' | 'same_provider' | 'off';
 }
@@ -100,7 +100,7 @@ export function nextInChain(
 export function applyFallbackPolicy(chain: string[], catalog: ModelInfo[], policy: RouteOptions['fallback'] = 'any'): string[] {
   if (policy === 'off') return chain.slice(0, 1);
   if (policy === 'same_provider') {
-    const providerOf = (id: string) => catalog.find((m) => m.id === id)?.provider ?? (id.startsWith('gemini:') ? 'gemini' : 'openrouter');
+    const providerOf = (id: string) => catalog.find((m) => m.id === id)?.provider ?? (id.startsWith('gemini:') ? 'gemini' : id.startsWith('@cf/') ? 'cloudflare' : 'openrouter');
     const first = providerOf(chain[0]);
     return chain.filter((id) => providerOf(id) === first);
   }
@@ -124,7 +124,11 @@ function routeInner(selectedId: string, task: Task, catalog: ModelInfo[], opts: 
   const usable = (m: ModelInfo) =>
     m.free || m.id === opts.approvedPaid || (m.id === selectedId && opts.paidAvailable !== false);
 
-  const freeFit = rankCandidates(catalog.filter((m) => m.free && fits(m)), preferenceList(task, selected), opts.preferredProvider);
+  // Cloudflare models run when the user selects one, or when an admin makes Cloudflare the
+  // preferred provider (then they are tried first, with Gemini/OpenRouter as fallbacks).
+  // Otherwise they are never auto-picked and never a fallback.
+  const auto = (m: ModelInfo) => m.provider !== 'cloudflare' || opts.preferredProvider === 'cloudflare';
+  const freeFit = rankCandidates(catalog.filter((m) => m.free && auto(m) && fits(m)), preferenceList(task, selected), opts.preferredProvider);
 
   const approved = opts.approvedPaid ? catalog.find((m) => m.id === opts.approvedPaid) : undefined;
   if (approved && fits(approved)) {
@@ -148,7 +152,7 @@ function routeInner(selectedId: string, task: Task, catalog: ModelInfo[], opts: 
   }
 
   const paidFit = catalog
-    .filter((m) => !m.free && fits(m))
+    .filter((m) => !m.free && auto(m) && fits(m))
     .sort((a, b) => Number(b.featured) - Number(a.featured) || (estimateCost(a, task.estTokens) ?? 1e9) - (estimateCost(b, task.estTokens) ?? 1e9));
   if (paidFit.length) {
     const model = paidFit[0];

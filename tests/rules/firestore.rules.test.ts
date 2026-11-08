@@ -41,7 +41,7 @@ function enc(v: unknown): unknown {
 }
 
 /** Accepted current Terms/Privacy (server/shared/legal.ts); seeded profiles get it unless a test sets `consent`. */
-const CONSENT = { termsVersion: '1.2', privacyVersion: '1.2', acceptedAt: 1, method: 'google' };
+const CONSENT = { termsVersion: '1.3', privacyVersion: '1.3', acceptedAt: 1, method: 'google' };
 
 async function call(who: Who, method: string, path: string, data?: object): Promise<number> {
   if (who === OWNER && method === 'PATCH' && data && /^users\/[^/?]+$/.test(path) && !('consent' in data)) data = { consent: CONSENT, ...data };
@@ -202,6 +202,31 @@ describe('search limits, cache and document subcollections', () => {
     ok(await write(ADMIN, 'config/limits', { ...limits, serpapi: { daily: 5, monthly: 100 } }));
     denied(await write(ADMIN, 'config/limits', { ...limits, apiKey: 'x' }));
     denied(await write(ADMIN, 'config/limits', { ...limits, providerReserve: 'lots' }));
+    ok(await write(ADMIN, 'config/limits', { ...limits, images: { perUserDaily: 10, appDailyNeurons: 9000 } }));
+    denied(await write(ADMIN, 'config/limits', { ...limits, images: 'unlimited' }));
+  });
+
+  it('created images: the owner can read and delete them, nobody can create or change them from the app', async () => {
+    const meta = { uid: 'alice', conversationId: 'c1', prompt: 'a lion', model: '@cf/black-forest-labs/flux-2-klein-4b', mime: 'image/jpeg', width: 1024, height: 1024, chunks: 1, status: 'ready' };
+    ok(await write(OWNER, 'users/alice/generatedImages/img_m1', meta));
+    ok(await write(OWNER, 'users/alice/generatedImageData/img_m1_0', { imageId: 'img_m1', index: 0, data: 'AAAA' }));
+    ok(await read(ALLOWED, 'users/alice/generatedImages/img_m1'));
+    ok(await read(ALLOWED, 'users/alice/generatedImageData/img_m1_0'));
+    denied(await read(BOB, 'users/alice/generatedImages/img_m1'));
+    denied(await read(BOB, 'users/alice/generatedImageData/img_m1_0'));
+    denied(await write(ALLOWED, 'users/alice/generatedImages/img_x', meta));
+    denied(await write(ALLOWED, 'users/alice/generatedImages/img_m1', { ...meta, prompt: 'changed' }));
+    denied(await write(ALLOWED, 'users/alice/generatedImageData/img_x_0', { data: 'AAAA' }));
+    denied(await del(BOB, 'users/alice/generatedImages/img_m1'));
+    ok(await del(ALLOWED, 'users/alice/generatedImageData/img_m1_0'));
+    ok(await del(ALLOWED, 'users/alice/generatedImages/img_m1'));
+  });
+
+  it('the app-wide Cloudflare usage counter is server-only', async () => {
+    ok(await write(OWNER, 'cloudflareUsage/2026-11-08', { neurons: 120 }));
+    denied(await read(ALLOWED, 'cloudflareUsage/2026-11-08'));
+    denied(await read(ADMIN, 'cloudflareUsage/2026-11-08'));
+    denied(await write(ALLOWED, 'cloudflareUsage/2026-11-08', { neurons: 0 }));
   });
 
   it('lets approved users read the AI routing config but only admins change it', async () => {
@@ -211,6 +236,7 @@ describe('search limits, cache and document subcollections', () => {
     denied(await read(STRANGER, 'config/ai'));
     denied(await write(ALLOWED, 'config/ai', ai));
     ok(await write(ADMIN, 'config/ai', { ...ai, preferredProvider: 'openrouter', fallback: 'off', defaultModel: null }));
+    ok(await write(ADMIN, 'config/ai', { ...ai, preferredProvider: 'cloudflare', defaultModel: '@cf/google/gemma-4-26b-a4b-it' }));
     denied(await write(ADMIN, 'config/ai', { ...ai, preferredProvider: 'other' }));
     denied(await write(ADMIN, 'config/ai', { ...ai, fallback: 'paid' }));
     denied(await write(ADMIN, 'config/ai', { ...ai, apiKey: 'x' }));
@@ -500,17 +526,20 @@ describe('Terms of Use and Privacy Policy consent', () => {
   });
 
   it('an older accepted version is not enough after a document update', async () => {
-    ok(await write(OWNER, 'users/alice', { displayName: 'Alice', consent: { termsVersion: '0.9', privacyVersion: '1.2', acceptedAt: 1, method: 'google' } }));
+    ok(await write(OWNER, 'users/alice', { displayName: 'Alice', consent: { termsVersion: '0.9', privacyVersion: '1.3', acceptedAt: 1, method: 'google' } }));
+    denied(await read(ALLOWED, 'users/alice/conversations/c1'));
+    // accepted 1.2 (before Cloudflare image creation was added): must accept 1.3
+    ok(await write(OWNER, 'users/alice', { displayName: 'Alice', consent: { termsVersion: '1.2', privacyVersion: '1.2', acceptedAt: 1, method: 'google' } }));
     denied(await read(ALLOWED, 'users/alice/conversations/c1'));
   });
 
   it('users cannot grant themselves consent, and cannot write the consent history', async () => {
     ok(await write(OWNER, 'users/alice', { displayName: 'Alice', consent: null }));
-    denied(await call(ALLOWED, 'PATCH', 'users/alice?updateMask.fieldPaths=consent', { consent: { termsVersion: '1.2', privacyVersion: '1.2', acceptedAt: 1, method: 'google' } }));
+    denied(await call(ALLOWED, 'PATCH', 'users/alice?updateMask.fieldPaths=consent', { consent: { termsVersion: '1.3', privacyVersion: '1.3', acceptedAt: 1, method: 'google' } }));
     ok(await write(OWNER, 'users/alice', { displayName: 'Alice' })); // accepted (seeded)
     denied(await call(ALLOWED, 'PATCH', 'users/alice?updateMask.fieldPaths=consent', { consent: { termsVersion: '9.9', privacyVersion: '9.9', acceptedAt: 1, method: 'google' } }));
-    denied(await write(ALLOWED, 'users/alice/consents/x', { termsVersion: '1.2', privacyVersion: '1.2' }));
-    ok(await write(OWNER, 'users/alice/consents/x', { termsVersion: '1.2', privacyVersion: '1.2' }));
+    denied(await write(ALLOWED, 'users/alice/consents/x', { termsVersion: '1.3', privacyVersion: '1.3' }));
+    ok(await write(OWNER, 'users/alice/consents/x', { termsVersion: '1.3', privacyVersion: '1.3' }));
     ok(await read(ALLOWED, 'users/alice/consents/x'));
     denied(await read(BOB, 'users/alice/consents/x'));
   });

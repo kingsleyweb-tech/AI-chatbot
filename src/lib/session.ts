@@ -102,6 +102,21 @@ function clearSessionStorage() {
 }
 
 let signingOut = false;
+const endingListeners = new Set<() => void>();
+
+/**
+ * True from the moment sign-out starts until the page reloads. The app then shows only a
+ * neutral splash, so no page (for example the sign-in page, once Firebase reports the user
+ * signed out) touches Firestore while its client is being terminated and its offline copy
+ * cleared ("The client has already been terminated").
+ */
+export function sessionEnding(): boolean {
+  return signingOut;
+}
+export function subscribeSessionEnding(cb: () => void): () => void {
+  endingListeners.add(cb);
+  return () => endingListeners.delete(cb);
+}
 
 /**
  * End the session on this device and open the sign-in page.
@@ -114,6 +129,7 @@ let signingOut = false;
 export async function endSession(reason: SignOutReason, fromOtherTab = false): Promise<void> {
   if (signingOut) return;
   signingOut = true;
+  for (const cb of endingListeners) cb();
   if (!fromOtherTab && reason !== 'revoked') {
     if (auth.currentUser) {
       // Best effort and short: never keep someone signed in because the network is slow.

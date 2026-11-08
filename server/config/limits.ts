@@ -7,6 +7,15 @@ import type { SearchLimits } from '../shared/types.js';
 
 export type { SearchLimits };
 
+/**
+ * Cloudflare's free allowance is 10,000 Neurons per day (resets 00:00 UTC). The app
+ * stops below it, so it can never run into paid usage: the cap is clamped to
+ * CLOUDFLARE_NEURON_CAP_MAX whatever an admin stores.
+ */
+export const CLOUDFLARE_FREE_NEURONS = 10_000;
+export const CLOUDFLARE_NEURON_CAP_DEFAULT = 9_000;
+export const CLOUDFLARE_NEURON_CAP_MAX = 9_500;
+
 export const DEFAULT_LIMITS: SearchLimits = {
   serpapi: { daily: 8, monthly: 200 },
   tavily: { daily: 30, monthly: 900 },
@@ -16,6 +25,7 @@ export const DEFAULT_LIMITS: SearchLimits = {
   autoReserve: 2,
   /** stop using a provider when its own reported remaining quota drops to this */
   providerReserve: 5,
+  images: { perUserDaily: 10, appDailyNeurons: CLOUDFLARE_NEURON_CAP_DEFAULT },
 };
 
 function num(v: unknown, fallback: number, min: number, max: number): number {
@@ -48,6 +58,10 @@ export function normalizeLimits(raw: unknown): SearchLimits {
     },
     autoReserve: num((raw as Record<string, unknown> | null)?.autoReserve, d.autoReserve, 0, 1000),
     providerReserve: num((raw as Record<string, unknown> | null)?.providerReserve, d.providerReserve, 0, 1000),
+    images: {
+      perUserDaily: num(r.images?.perUserDaily, d.images.perUserDaily, 0, 100),
+      appDailyNeurons: num(r.images?.appDailyNeurons, d.images.appDailyNeurons, 0, CLOUDFLARE_NEURON_CAP_MAX),
+    },
   };
 }
 

@@ -395,13 +395,32 @@ function AdminAiRows() {
         <Select
           className="sm:w-48"
           value={current.preferredProvider}
-          onChange={(v) => void save({ preferredProvider: v as AiConfig['preferredProvider'] })}
+          onChange={(v) => {
+            const provider = v as AiConfig['preferredProvider'];
+            const patch: Partial<AiConfig> = { preferredProvider: provider };
+            // Choosing Cloudflare also makes a Cloudflare model the app default; otherwise users
+            // would keep the old default (a chosen model is always kept when it can answer).
+            if (provider === 'cloudflare') {
+              const currentDefault = catalog?.models.find((m) => m.id === (current.defaultModel ?? catalog?.defaultModel));
+              const cf = catalog?.models.filter((m) => m.provider === 'cloudflare' && m.available) ?? [];
+              const pick = cf.find((m) => m.id === '@cf/google/gemma-4-26b-a4b-it') ?? cf[0];
+              if (currentDefault?.provider !== 'cloudflare' && pick) patch.defaultModel = pick.id;
+            }
+            void save(patch);
+          }}
           options={[
             { value: 'gemini', label: 'Google Gemini' },
             { value: 'openrouter', label: 'OpenRouter' },
+            { value: 'cloudflare', label: 'Cloudflare Workers AI' },
           ]}
         />
       </Row>
+      {current.preferredProvider === 'cloudflare' && (
+        <p className="pb-3 text-xs text-muted">
+          Cloudflare uses the free daily allowance (10,000 Neurons, shared with image creation; Atlas AI stops at 9,000). When it is used up, replies
+          continue on Gemini or OpenRouter until 00:00 UTC (unless automatic fallback is off or limited to the same provider). Titles, summaries and memory still use Gemini.
+        </p>
+      )}
       <Row title="App default model" description="For users who have not chosen a default model themselves.">
         <div className="-mx-2.5">
           <ModelPicker value={current.defaultModel ?? catalog?.defaultModel ?? ''} onChange={(id) => void save({ defaultModel: id })} align="end" />

@@ -1,9 +1,10 @@
 import { useSyncExternalStore } from 'react';
-import type { ApprovalRequest, ChatRequestBody, ChatTurn, ResearchStep, RouteInfo, SearchInfo, Source, StreamEvent } from '@shared/types';
+import type { ApprovalRequest, ChatRequestBody, ChatTurn, GeneratedImageInfo, ImageStage, ResearchStep, RouteInfo, SearchInfo, Source, StreamEvent } from '@shared/types';
 import { ApiError, streamChat } from '@/lib/api';
 import { saveAssistantFallback } from '@/lib/db';
 import type { Message } from '@/lib/types';
 import { newId } from '@/lib/utils';
+import { rememberImage } from '../images/images';
 
 export interface LiveReply {
   id: string;
@@ -17,9 +18,15 @@ export interface LiveReply {
   researchSteps: ResearchStep[];
   route?: RouteInfo;
   approval?: ApprovalRequest;
+  /** set while a picture is being created (image requests only) */
+  imageStage?: ImageStage;
+  /** pictures created for this reply (their data is kept in memory, see images.ts) */
+  images: GeneratedImageInfo[];
   status: 'connecting' | 'streaming' | 'done' | 'stopped' | 'error';
   /** true once the server confirmed the reply is stored in Firestore */
   saved?: boolean;
+  /** true once storing has finished one way or another (server confirmation, or this browser's backup save) */
+  settled?: boolean;
   error?: { code: string; message: string; suggestion?: string; retryable: boolean };
   context?: { memories: number; documents: number; conversations: number; knowledge: number };
   startedAt: number;
@@ -59,6 +66,8 @@ function subscribe(l: () => void) {
 
 const active = (r: LiveReply) => r.status === 'streaming' || r.status === 'connecting';
 const EMPTY: LiveReply[] = [];
+
+export { replyPhase, type ReplyPhase } from './phase';
 
 /** All replies of a conversation not yet confirmed by Firestore, oldest first. */
 export function useLiveReplies(conversationId: string | undefined): LiveReply[] {
@@ -142,6 +151,7 @@ export async function generate(args: {
     model: args.model,
     notices: [],
     researchSteps: [],
+    images: [],
     status: 'connecting',
     startedAt: Date.now(),
   };
@@ -180,6 +190,16 @@ export async function generate(args: {
       case 'reasoning':
         reply.reasoning += e.text;
         break;
+      case 'image_progress':
+        reply.imageStage = e.stage;
+        break;
+      case 'image': {
+        const { dataUrl, ...info } = e.image;
+        // kept in memory: shown and downloadable at once, even if the server could not store it
+        rememberImage(info.id, dataUrl);
+        reply.images = [...reply.images.filter((i) => i.id !== info.id), info];
+        break;
+      }
       case 'delta':
         reply.status = 'streaming';
         reply.content += e.text;
@@ -194,6 +214,7 @@ export async function generate(args: {
         break;
       case 'saved':
         reply.saved = e.ok;
+        if (e.ok) reply.settled = true;
         break;
     }
   };
@@ -246,11 +267,15 @@ export async function generate(args: {
         sources: reply.sources,
         reasoning: reply.reasoning || null,
         status: reply.status === 'done' ? 'complete' : reply.status === 'stopped' ? 'stopped' : 'error',
+        ...(reply.images.length ? { images: reply.images } : {}),
         error: reply.status === 'error' && reply.error ? { code: reply.error.code, message: reply.error.message, suggestion: reply.error.suggestion ?? null } : null,
       });
     try {
       await backup();
+      settle();
     } catch (err) {
+      // the indicator never waits on the network: the text is already on screen
+      settle();
       // offline: try again once the connection is back
       if (navigator.onLine) console.warn('[chat] could not store the reply', err);
       else {
@@ -258,5 +283,11 @@ export async function generate(args: {
         await backup().catch((e) => console.warn('[chat] could not store the reply', e));
       }
     }
+  } else settle();
+
+  function settle() {
+    if (reply.settled) return;
+    reply.settled = true;
+    emit(true);
   }
 }

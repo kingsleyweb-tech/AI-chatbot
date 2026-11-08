@@ -42,7 +42,7 @@ export interface ModelInfo {
 /** Admin AI settings (Firestore config/ai). */
 export interface AiConfig {
   /** provider tried first when routing picks a model */
-  preferredProvider: 'gemini' | 'openrouter';
+  preferredProvider: 'gemini' | 'openrouter' | 'cloudflare';
   /** app-wide default model for users who have not chosen one (null: built-in default) */
   defaultModel: string | null;
   /** automatic fallback on recoverable failures: to any provider, the same provider only, or never */
@@ -52,7 +52,7 @@ export interface AiConfig {
 export interface ModelCatalog {
   models: ModelInfo[];
   defaultModel: string;
-  preferredProvider?: 'gemini' | 'openrouter';
+  preferredProvider?: 'gemini' | 'openrouter' | 'cloudflare';
   fallbackModels: string[];
   /** whether the account behind the provider key can use paid models */
   paidAvailable: boolean | null;
@@ -78,6 +78,8 @@ export interface SearchLimits {
   /** daily credits per provider kept for explicitly requested searches */
   autoReserve: number;
   providerReserve: number;
+  /** Cloudflare Workers AI image generation (never beyond the free daily allowance) */
+  images: { perUserDaily: number; appDailyNeurons: number };
 }
 
 /** What happened with web search for one answer (persisted on the message). */
@@ -192,7 +194,25 @@ export interface UsageInfo {
   completionTokens: number;
   totalTokens: number;
   cost?: number;
+  /** Cloudflare Workers AI cost in Neurons (exact, as reported by Cloudflare) */
+  neurons?: number;
 }
+
+/** A picture created by Atlas AI (Cloudflare Workers AI), as stored on the message. The bytes live in users/{uid}/generatedImageData. */
+export interface GeneratedImageInfo {
+  id: string;
+  model: string;
+  mime: string;
+  width: number;
+  height: number;
+  prompt: string;
+  kind: 'generate' | 'edit';
+  sourceImageId: string | null;
+  /** false when the server could not store it (the browser that received it keeps it for download) */
+  stored: boolean;
+}
+
+export type ImageStage = 'checking' | 'generating' | 'saving';
 
 export type StreamEvent =
   | { type: 'start'; model: string }
@@ -205,6 +225,9 @@ export type StreamEvent =
   | { type: 'context'; memories: number; documents: number; conversations: number; knowledge?: number }
   | { type: 'reasoning'; text: string }
   | { type: 'delta'; text: string }
+  | { type: 'image_progress'; stage: ImageStage }
+  /** the created picture, with its data so it can be shown and downloaded at once */
+  | { type: 'image'; image: GeneratedImageInfo & { dataUrl: string } }
   | { type: 'usage'; usage: UsageInfo }
   | { type: 'error'; code: string; message: string; retryable: boolean; suggestion?: string }
   | { type: 'done'; finishReason: string | null; model: string }

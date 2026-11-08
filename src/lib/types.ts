@@ -1,7 +1,7 @@
 import type { Timestamp } from 'firebase/firestore';
-import type { ApprovalRequest, Attachment, MemoryCategory, MessageStatus, ResearchStep, RouteInfo, SearchInfo, Source, UsageInfo } from '@shared/types';
+import type { ApprovalRequest, Attachment, GeneratedImageInfo, MemoryCategory, MessageStatus, ResearchStep, RouteInfo, SearchInfo, Source, UsageInfo } from '@shared/types';
 
-export type { ApprovalRequest, Attachment, MemoryCategory, MessageStatus, ResearchStep, RouteInfo, SearchInfo, Source, UsageInfo };
+export type { ApprovalRequest, Attachment, GeneratedImageInfo, MemoryCategory, MessageStatus, ResearchStep, RouteInfo, SearchInfo, Source, UsageInfo };
 
 export type Theme = 'light' | 'dark' | 'system';
 export type Accent = 'teal' | 'cyan' | 'emerald' | 'blue' | 'amber' | 'graphite';
@@ -96,6 +96,8 @@ export interface Message {
   approval?: ApprovalRequest | null;
   usage?: UsageInfo | null;
   reasoning?: string | null;
+  /** pictures created by Atlas AI for this reply (bytes stored separately, see features/images) */
+  images?: GeneratedImageInfo[];
   error?: { code: string; message: string; suggestion?: string | null } | null;
   /** which context sources the server used for this reply */
   contextUsed?: ContextUsed | null;

@@ -118,6 +118,9 @@ export const USER_COLLECTIONS = [
   'searchCache',
   'projectMemory',
   'convIndex',
+  // pictures created by Atlas AI: metadata and image bytes
+  'generatedImages',
+  'generatedImageData',
 ] as const;
 
 /** Delete a user document and everything under it. Returns the number of documents removed. */

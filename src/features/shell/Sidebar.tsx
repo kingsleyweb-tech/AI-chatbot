@@ -1,5 +1,5 @@
 import { collection, getCountFromServer, limit, orderBy, query, where } from 'firebase/firestore';
-import { Bell, Bookmark, Brain, CircleHelp, FileText, FolderClosed, LifeBuoy, Library, LogOut, MessageSquareText, MoreHorizontal, PanelLeftClose, Pencil, Search, Settings, SquarePen, Trash2, UserPlus, Users, X } from 'lucide-react';
+import { Bell, Bookmark, Brain, CircleHelp, FileText, FolderClosed, ImageIcon, LifeBuoy, Library, LogOut, MessageSquareText, MoreHorizontal, PanelLeftClose, Pencil, Search, Settings, SquarePen, Trash2, UserPlus, Users, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { NavLink, useMatch, useNavigate } from 'react-router-dom';
 import { Logo } from '@/components/Logo';
@@ -241,6 +241,7 @@ export function Sidebar({ onSearch, onClose, onCollapse }: { onSearch: () => voi
           </button>
           <NavItem to="/projects" icon={<FolderClosed className="size-[17px]" />} label="Projects" />
           <NavItem to="/saved" icon={<Bookmark className="size-[17px]" />} label="Saved" />
+          <NavItem to="/images" icon={<ImageIcon className="size-[17px]" />} label="Images" />
           <NavItem to="/documents" icon={<FileText className="size-[17px]" />} label="Documents" />
           <NavItem to="/knowledge" icon={<Library className="size-[17px]" />} label="Knowledge" />
           <NavItem to="/memory" icon={<Brain className="size-[17px]" />} label="Memory" />

@@ -15,6 +15,7 @@ type FsValue =
   | { doubleValue: number }
   | { timestampValue: string }
   | { stringValue: string }
+  | { bytesValue: string }
   | { arrayValue: { values?: FsValue[] } }
   | { mapValue: { fields?: Record<string, FsValue> } };
 
@@ -41,6 +42,8 @@ export function encodeValue(v: unknown): FsValue {
   }
   if (typeof v === 'string') return { stringValue: v };
   if (v instanceof Date) return { timestampValue: v.toISOString() };
+  // binary data (generated image bytes): stored as a Firestore bytes value, base64 on the wire
+  if (v instanceof Uint8Array) return { bytesValue: Buffer.from(v.buffer, v.byteOffset, v.byteLength).toString('base64') };
   if (Array.isArray(v)) return { arrayValue: { values: v.map(encodeValue) } };
   if (typeof v === 'object') return { mapValue: { fields: encodeFields(v as object) } };
   throw new Error(`Cannot encode value of type ${typeof v}`);
@@ -62,6 +65,7 @@ export function decodeValue(v: FsValue): unknown {
   if ('doubleValue' in v) return v.doubleValue;
   if ('timestampValue' in v) return v.timestampValue;
   if ('stringValue' in v) return v.stringValue;
+  if ('bytesValue' in v) return Uint8Array.from(Buffer.from(v.bytesValue, 'base64'));
   if ('arrayValue' in v) return (v.arrayValue.values ?? []).map(decodeValue);
   if ('mapValue' in v) return decodeFields(v.mapValue.fields ?? {});
   return null;

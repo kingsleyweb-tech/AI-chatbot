@@ -1,5 +1,6 @@
 import type { ModelCatalog, ModelInfo } from '../shared/types.js';
 import { modelConfig } from '../config/models.js';
+import { CLOUDFLARE_PREFIX, CloudflareProvider } from './cloudflare.js';
 import { GEMINI_PREFIX, GeminiProvider } from './gemini.js';
 import { freeDailyLimitActive, OpenRouterProvider } from './openrouter.js';
 import type { ChatProvider } from './types.js';
@@ -11,8 +12,11 @@ import type { ChatProvider } from './types.js';
  */
 const openrouter = new OpenRouterProvider();
 const gemini = new GeminiProvider();
+const cloudflare = new CloudflareProvider();
 const providers: { prefix: string; provider: ChatProvider }[] = [
   { prefix: GEMINI_PREFIX, provider: gemini },
+  // selectable only: never picked automatically or used as a fallback (see router/route.ts)
+  { prefix: CLOUDFLARE_PREFIX, provider: cloudflare },
   { prefix: '', provider: openrouter },
 ];
 

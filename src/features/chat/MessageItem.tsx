@@ -34,7 +34,9 @@ import type { Message } from '@/lib/types';
 import { cn, copyText, domainOf, modelShortName, relativeTime } from '@/lib/utils';
 import { useSettings } from '@/state/settings';
 import { useToast } from '@/state/toast';
+import { GeneratedImage } from '../images/GeneratedImage';
 import type { LiveReply } from './engine';
+import { replyPhase } from './phase';
 
 const SaveToKnowledgeDialog = lazy(() => import('../knowledge/SaveToKnowledge').then((m) => ({ default: m.SaveToKnowledgeDialog })));
 
@@ -197,13 +199,51 @@ function SearchStatus({ info, steps, live }: { info?: SearchInfo | null; steps: 
   );
 }
 
+/**
+ * Shown for the whole generation: while the request is processed, while the answer streams in,
+ * and while it is being stored. Hidden only once the reply is complete, failed or stopped.
+ */
+function GenerationIndicator({ live }: { live: LiveReply }) {
+  const phase = replyPhase(live);
+  if (phase !== 'thinking' && phase !== 'streaming' && phase !== 'saving') return null;
+  const image = Boolean(live.imageStage);
+  const label =
+    phase === 'saving'
+      ? image
+        ? 'Saving image…'
+        : 'Saving response…'
+      : phase === 'streaming'
+        ? image
+          ? 'Saving image…'
+          : 'Generating response…'
+        : image
+          ? live.imageStage === 'saving'
+            ? 'Saving image…'
+            : 'Creating your image…'
+          : live.researchSteps.length && !live.search
+          ? 'Researching…'
+          : live.sources.length
+            ? 'Reading sources…'
+            : 'Thinking…';
+  return (
+    <div role="status" aria-live="polite" data-generation-indicator={phase} className={cn('flex items-center gap-2 py-1.5 text-sm text-muted', live.content && 'mt-1')}>
+      <span className="flex gap-1" aria-hidden>
+        <span className="size-1.5 animate-bounce rounded-full bg-accent [animation-delay:-0.3s]" />
+        <span className="size-1.5 animate-bounce rounded-full bg-accent [animation-delay:-0.15s]" />
+        <span className="size-1.5 animate-bounce rounded-full bg-accent" />
+      </span>
+      {label}
+    </div>
+  );
+}
+
 function Reasoning({ text, live }: { text: string; live: boolean }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="mb-3">
       <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-1.5 text-[13px] text-muted hover:text-fg">
         <Brain className={cn('size-3.5', live && 'animate-pulse text-accent')} />
-        {live ? 'Thinking…' : 'Reasoning'}
+        Reasoning
         <ChevronDown className={cn('size-3.5 transition-transform', open && 'rotate-180')} />
       </button>
       {open && (
@@ -406,6 +446,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   const status = live ? live.status : m.status;
   const route = live ? live.route : m.route;
   const approval = live ? live.approval : m.approval;
+  const createdImages = live?.images.length ? live.images : (m.images ?? []);
 
   return (
     <div className="group flex gap-3">
@@ -418,21 +459,15 @@ export const AssistantMessage = memo(function AssistantMessage({
         {route && <RouteNote route={route} />}
         <SearchStatus info={search} steps={researchSteps} live={streaming} />
         {reasoning && <Reasoning text={reasoning} live={streaming && !content} />}
-        {live && live.status === 'connecting' && !content && (
-          <div className="flex items-center gap-2 py-1.5 text-sm text-muted">
-            <span className="flex gap-1">
-              <span className="size-1.5 animate-bounce rounded-full bg-accent [animation-delay:-0.3s]" />
-              <span className="size-1.5 animate-bounce rounded-full bg-accent [animation-delay:-0.15s]" />
-              <span className="size-1.5 animate-bounce rounded-full bg-accent" />
-            </span>
-            {live.researchSteps.length && !live.search ? 'Researching…' : live.sources.length ? 'Reading sources…' : 'Thinking…'}
-          </div>
-        )}
         {content && (
           <div className={cn('text-[15px] leading-[1.65]', streaming && 'caret-host')}>
             <Markdown content={content} sources={sources} streaming={streaming} />
           </div>
         )}
+        {createdImages.map((img) => (
+          <GeneratedImage key={img.id} info={img} />
+        ))}
+        {live && <GenerationIndicator live={live} />}
         {!live && status === 'processing' && <p className="animate-pulse py-1.5 text-sm text-muted">Generating…</p>}
         {status === 'stopped' && <p className="mt-2 text-xs text-subtle">Stopped before it finished</p>}
         {approval && (

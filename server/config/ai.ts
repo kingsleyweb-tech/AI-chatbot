@@ -19,7 +19,8 @@ export function normalizeAiConfig(raw: unknown): AiConfig {
   const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const d = DEFAULT_AI_CONFIG;
   return {
-    preferredProvider: r.preferredProvider === 'openrouter' || r.preferredProvider === 'gemini' ? r.preferredProvider : d.preferredProvider,
+    preferredProvider:
+      r.preferredProvider === 'openrouter' || r.preferredProvider === 'gemini' || r.preferredProvider === 'cloudflare' ? r.preferredProvider : d.preferredProvider,
     defaultModel: typeof r.defaultModel === 'string' && MODEL_ID.test(r.defaultModel) ? r.defaultModel : d.defaultModel,
     fallback: r.fallback === 'off' || r.fallback === 'same_provider' || r.fallback === 'any' ? r.fallback : d.fallback,
   };

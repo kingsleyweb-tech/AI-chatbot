@@ -1,5 +1,5 @@
 /**
- * Privacy Policy and Terms of Use, version 1.2, as shown on /privacy and /terms.
+ * Privacy Policy and Terms of Use, version 1.3, as shown on /privacy and /terms.
  *
  * Every statement must describe how Atlas AI works today (checked against the
  * code and the production configuration on 8 November 2026). No planned
@@ -26,12 +26,23 @@
  *   (server/account/retention.ts).
  * - Error reports are scrubbed of emails, phone numbers and tokens
  *   (src/lib/monitor.ts).
+ * - Cloudflare Workers AI (server/cloudflare, server/images): called directly
+ *   (no AI Gateway), only when the user picks a Cloudflare model or asks for an
+ *   image; never an automatic fallback. Image prompts are checked by rules and
+ *   by Llama Guard on Workers AI first; an edit also sends the source image.
+ *   Created images are stored in Firestore (users/{uid}/generatedImages and
+ *   generatedImageData), readable and deletable only by the owner, deleted with
+ *   the conversation or the account. Cloudflare's data-usage page (updated
+ *   16 October 2026): no training on Workers AI content; inputs and outputs not
+ *   kept once no longer needed for standard requests; operational metadata kept.
  */
 
 export const LEGAL_UPDATED = '8 November 2026';
 export const CONTACT_EMAIL = 'kingsleyanaab99@gmail.com';
 
 const GEMINI_TERMS = 'https://aistudio.google.com/docs/terms';
+const CLOUDFLARE_DATA = 'https://developers.cloudflare.com/workers-ai/platform/data-usage/';
+const CLOUDFLARE_PRIVACY = 'https://www.cloudflare.com/privacypolicy/';
 
 export interface LegalSection {
   heading: string;
@@ -54,7 +65,7 @@ export const PRIVACY: LegalDoc = {
       heading: 'Who runs Atlas AI',
       paragraphs: [
         'Atlas AI is independently owned and operated by Anaab Kingsley, an individual based in Ghana ("we", "us", "our"). Anaab Kingsley decides how and why your information is processed in Atlas AI.',
-        'Google (Gemini) and OpenRouter are third-party AI providers that Atlas AI connects to. They do not own or operate Atlas AI.',
+        'Google (Gemini), OpenRouter and Cloudflare (Workers AI) are third-party AI providers that Atlas AI connects to. They do not own or operate Atlas AI.',
         `Privacy questions and requests: ${CONTACT_EMAIL}, or Settings → Report an issue in the app.`,
       ],
     },
@@ -72,8 +83,9 @@ export const PRIVACY: LegalDoc = {
         'Acceptance records: the versions of the Terms of Use and Privacy Policy you accepted, the time of acceptance (from our server) and your sign-in method, with a history of earlier acceptances.',
         'Access requests: the name, email address, phone number and optional reason you give when you request access, and the decision on your request.',
         'Content you create: your conversations (your messages and the AI responses), images you attach to messages, memories, the "about me" and custom instructions you write, projects and project instructions, saved responses, the text extracted from documents you upload, and knowledge-base items (including web pages you add, which our server fetches).',
+        'Images Atlas AI creates for you: each image you ask for or ask to be edited, with the request text (prompt), the model used, the image format and size, the time it was created, the conversation it belongs to and, for an edited image, which image it was made from.',
         'Information generated from your content: conversation titles, summaries of long conversations, memory notes that Atlas AI saves automatically when memory is turned on, project summaries, and search indexes (numerical "embeddings") of your memories, conversations, documents and knowledge-base items, used to find relevant passages.',
-        'Settings and usage: your preferences (such as theme, language, response style, default model and web-search settings), and usage counts such as the number of requests and tokens per model and per day, and web-search counts.',
+        'Settings and usage: your preferences (such as theme, language, response style, default model and web-search settings), and usage counts such as the number of requests and tokens per model and per day, web-search counts, the number of images created, edited or refused per day, and the Cloudflare Workers AI usage (measured in "Neurons") of your requests.',
         'Web searches: the search queries Atlas AI sends for you and the results returned. These are saved with your account so that a repeated search can reuse them.',
         'Security records: sign-ins, failed sign-ins, sign-outs (including automatic sign-outs), password and phone changes, data exports and other account events, each with a general device description such as "Safari on iPhone".',
         'Text-message records: for each verification or recovery text, the phone number it was sent to, the time, its purpose and whether it was delivered and verified. Verification codes are not kept in these records.',
@@ -89,6 +101,7 @@ export const PRIVACY: LegalDoc = {
         'To create and secure your account, verify your email address and phone number, record your acceptance of these documents and decide whether to grant access (by an administrator, or automatically when automatic approval is turned on).',
         'To answer your messages and run the features you use, as described in "AI providers and how they use your data".',
         'To search the web when you ask, or when automatic search decides that a question needs current information.',
+        'To create or edit an image when you ask for one, check the request against our rules first, and keep the image in your account so that you can see, download and delete it.',
         'To show you your usage, apply usage and cost limits and prevent abuse.',
         'To respond to support reports and notify you in the app about replies and status changes.',
         'To keep a record of administrator actions (for example approving or suspending an account) for accountability.',
@@ -99,14 +112,17 @@ export const PRIVACY: LegalDoc = {
     {
       heading: 'AI providers and how they use your data',
       paragraphs: [
-        'Atlas AI does not train AI models on your information. To produce answers, it sends information to third-party AI providers. Google Gemini is the primary provider and OpenRouter is an additional provider. Requests normally go to Gemini; Atlas AI sends a request through OpenRouter when you choose a model offered there, or when a Gemini model is unavailable or cannot handle the request.',
+        'Atlas AI does not train AI models on your information. To produce answers, it sends information to third-party AI providers. Google Gemini is the primary provider and OpenRouter is an additional provider. Requests normally go to Gemini; Atlas AI sends a request through OpenRouter when you choose a model offered there, or when a Gemini model is unavailable or cannot handle the request. Cloudflare Workers AI is used only in the two cases described below, and never in place of Gemini or OpenRouter when they are unavailable.',
         'What is sent with a chat message: your message; earlier messages in the conversation (the most recent in full and a summary of older ones); images you attached to recent messages; your name, "about me", custom instructions and response preferences; relevant memories and project information; relevant excerpts from documents you attached and from your knowledge base; and web search results when a search was used.',
+        'Images: when your message asks Atlas AI to create a picture, or to change the picture it just created or an image you attached, our server sends the request text to Cloudflare Workers AI. It goes first to a safety model, which checks whether the request is allowed, and then, if it is, to an image model. To edit an image, the image is sent as well. Your name, memories, documents and other parts of the conversation are not sent with an image request. The created image is returned to our server, which stores it in your account.',
+        'Cloudflare chat models: if you choose a Cloudflare model in the model picker, your chat messages are sent to Cloudflare Workers AI with the same information as any other chat message.',
         'Background tasks also use these providers: creating conversation titles, summarising long conversations, saving memory notes and project summaries, and creating search embeddings of your memories, conversations, documents and knowledge-base items.',
-        'Gemini and OpenRouter have different data practices, and those practices are set by them, not by us:',
+        'Gemini, OpenRouter and Cloudflare have different data practices, and those practices are set by them, not by us:',
       ],
       bullets: [
         `Google Gemini. Atlas AI currently uses the Gemini API without a paid plan, so Google’s terms for unpaid services apply. Under those terms, Google uses the prompts and responses it receives to provide, improve and develop its products and machine-learning technologies, and human reviewers may read, annotate and process them. Google’s terms for paid services are different (Google says it does not use prompts or responses from paid services to improve its products), but they do not currently apply to Atlas AI. Google’s terms: ${GEMINI_TERMS}.`,
         'OpenRouter. OpenRouter forwards each request to a company that runs the chosen model (the model provider). OpenRouter’s privacy policy says it does not use inputs or outputs for model training, but model providers have their own policies, which differ from model to model. Several of the free models Atlas AI uses through OpenRouter, including the NVIDIA Nemotron chat models and the free embedding model, are available only from model providers that may store prompts and responses and use them to train or improve their models. OpenRouter: https://openrouter.ai/privacy and https://openrouter.ai/terms.',
+        `Cloudflare Workers AI. Cloudflare runs the models on its own network. Cloudflare says that it does not use content processed by Workers AI to train AI models, that for requests like the ones Atlas AI makes it does not keep inputs or outputs once they are no longer needed to provide the service, and that it may keep operational information such as times, token counts and error codes. Cloudflare: ${CLOUDFLARE_DATA} and ${CLOUDFLARE_PRIVACY}.`,
         'Providers may keep copies of the information they receive under their own policies. Deleting something in Atlas AI does not delete copies held by a provider.',
         'Do not submit passwords, financial credentials such as card or bank details, highly sensitive personal information (for example about health), confidential business information or other people’s personal information.',
       ],
@@ -115,7 +131,7 @@ export const PRIVACY: LegalDoc = {
       heading: 'Other service providers',
       paragraphs: ['These providers receive only what they need for their part of the service. Their own terms and privacy policies apply.'],
       bullets: [
-        'Google Firebase: sign-in (Firebase Authentication), the database that stores your account and all app data (Cloud Firestore) and, only if you allow it, Google Analytics.',
+        'Google Firebase: sign-in (Firebase Authentication), the database that stores your account and all app data, including the images Atlas AI creates for you (Cloud Firestore) and, only if you allow it, Google Analytics.',
         'Vercel: hosts the app and runs the server functions that every request passes through, including their logs.',
         'SerpAPI and Tavily: receive web-search queries. Tavily also receives the addresses of web pages to read during research.',
         'Vynfy: receives your phone number and sends the verification and recovery texts.',
@@ -155,7 +171,7 @@ export const PRIVACY: LegalDoc = {
         'We do not sell your personal information.',
         'Atlas AI does not show advertising.',
         'The administrator screens in Atlas AI show account details, access status, usage counts and the number of conversations, documents and memories an account has, but not their content, and the database rules do not let administrators read that content through the app. As the operator of the database, the owner has technical access to stored data through Google Cloud’s administration tools and uses it only to operate, secure or support Atlas AI, to deal with a problem you report, or where the law requires.',
-        'Atlas AI does not generate or edit images. Images you attach are sent to the AI model so that it can read them.',
+        'Atlas AI creates or edits an image only when you ask for one. Images you attach are otherwise sent to the AI model only so that it can read them.',
       ],
     },
     {
@@ -163,6 +179,7 @@ export const PRIVACY: LegalDoc = {
       paragraphs: ['Kept by Atlas AI:'],
       bullets: [
         'Your content (conversations, memories, documents, projects, knowledge base, saved responses): until you delete it or your account is deleted. You can delete individual items at any time.',
+        'Images Atlas AI created for you, with their prompts: until you delete the image in Images, delete the conversation it was created in, or your account is deleted. Deleting an image does not delete the chat message that showed it, and deleting only that message does not delete the image.',
         'Profile, settings, usage counts, security records, acceptance history, saved web-search results, support reports, notifications and text-message records: for as long as your account exists, then deleted with it.',
         'Verification and recovery codes: a code stops working after 5 minutes or after too many attempts. Codes that Atlas AI creates are stored only as one-way hashes; codes created by Vynfy are checked by Vynfy and not stored by Atlas AI.',
         'Account deletion: you can ask for your account to be deleted (see "Your rights"). An administrator schedules the deletion; the account is disabled at once and can still be restored for 30 days. After 30 days a daily job permanently deletes it, together with everything listed above and your sign-in account.',
@@ -175,7 +192,7 @@ export const PRIVACY: LegalDoc = {
       bullets: [
         'Vercel server logs (including error reports): kept for 1 hour on the Vercel plan Atlas AI uses, then deleted by Vercel.',
         'Google Analytics (only if you allowed it): event-level data is kept for no longer than 14 months, the longest retention period Google Analytics offers for this data; aggregated reports are kept by Google under its own terms.',
-        'AI, search and text-message providers keep the information they receive under their own policies. Atlas AI cannot delete those copies.',
+        'AI, search and text-message providers keep the information they receive under their own policies (see "AI providers and how they use your data" for what Cloudflare says about Workers AI). Atlas AI cannot delete those copies.',
       ],
     },
     {
@@ -187,7 +204,8 @@ export const PRIVACY: LegalDoc = {
         'See and update your name and phone number in Settings.',
         'Download a copy of your profile, conversations, memories, projects and activity in Settings → Security → Export your data.',
         'Turn memory and automatic web search on or off, and turn analytics on or off.',
-        'Delete individual conversations, memories, documents and other items.',
+        'Delete individual conversations, memories, documents and other items, and each image Atlas AI created for you (in Images).',
+        'Download each image Atlas AI created for you, in its original quality, with its Download button.',
         `Ask for a copy of your data, a correction, deletion of your account, or anything else about your information by writing to ${CONTACT_EMAIL} or using Settings → Report an issue. We aim to reply within 24 hours. Some requests, such as a full copy of your data, may take longer, and we deal with every request without undue delay. We may need to confirm your identity first.`,
         'If you are not satisfied with our answer, you can complain to Ghana’s Data Protection Commission (https://dataprotection.org.gh).',
       ],
@@ -195,7 +213,7 @@ export const PRIVACY: LegalDoc = {
     {
       heading: 'How your information is protected',
       bullets: [
-        'Database security rules allow each account to read and change only its own records. Support reports can be read only by their author and administrators.',
+        'Database security rules allow each account to read and change only its own records. Support reports can be read only by their author and administrators. Images Atlas AI created can be read and deleted only by your account, and only our server can add them.',
         'Sensitive operations (phone verification, password recovery, account changes, approvals and support reports) run on our server, which checks your identity on every request.',
         'Verification codes and recovery tokens are stored only as one-way hashes. The keys for the AI, search and text-message services are kept on the server and never sent to your browser.',
         'Information is sent over encrypted connections (HTTPS), and Google encrypts the stored database.',
@@ -224,7 +242,7 @@ export const TERMS: LegalDoc = {
     {
       heading: 'Who provides Atlas AI',
       paragraphs: [
-        'Atlas AI is independently owned and operated by Anaab Kingsley, an individual based in Ghana ("we", "us", "our"). We own the Atlas AI application, its name and branding and its software. Google (Gemini), OpenRouter and the other services named in these terms are independent third parties; they do not own Atlas AI.',
+        'Atlas AI is independently owned and operated by Anaab Kingsley, an individual based in Ghana ("we", "us", "our"). We own the Atlas AI application, its name and branding and its software. Google (Gemini), OpenRouter, Cloudflare (Workers AI) and the other services named in these terms are independent third parties; they do not own Atlas AI.',
       ],
     },
     {
@@ -252,6 +270,7 @@ export const TERMS: LegalDoc = {
         'Break any law, or infringe anyone’s intellectual property, privacy or other rights.',
         'Create or share content that is abusive, harassing or hateful, that sexually exploits children, or that promotes violence or self-harm.',
         'Use Atlas AI to create malware, phishing, spam, fraud or deceptive content, or to impersonate others.',
+        'Ask Atlas AI to create or edit images that sexualise children; sexual or intimate images of a real person; deepfakes, face swaps or fake photos of a real person; forged or counterfeit documents, money or records; or images that impersonate a person, company or organisation. Atlas AI checks image requests automatically and refuses those that appear to break these rules. The check is not perfect, and you remain responsible for what you ask for.',
         'Upload personal information about other people without a lawful reason.',
         'Try to gain unauthorised access to accounts, data or systems, test or bypass security, or interfere with the service.',
         'Scrape, overload or automate the service, get around usage or cost limits, or resell access.',
@@ -266,18 +285,18 @@ export const TERMS: LegalDoc = {
         'Responses are not professional advice. Do not rely on them for medical, legal, financial, safety or other important decisions without checking with a qualified person.',
         'Web search results and sources come from third-party websites that we do not control.',
         'You are responsible for how you use responses, including checking facts and making sure your use is lawful.',
-        'Atlas AI does not generate or edit images.',
+        'Atlas AI can create an image, or edit one, when you ask. Created images can contain mistakes, such as distorted details or misspelled text, and may look similar to existing works, places or people. Check an image before you use or publish it.',
       ],
     },
     {
       heading: 'Third-party AI services',
       bullets: [
-        'Atlas AI uses third-party AI services to provide its AI features: Google Gemini, the primary provider, and OpenRouter, an additional provider, together with the model providers that OpenRouter forwards requests to.',
+        'Atlas AI uses third-party AI services to provide its AI features: Google Gemini, the primary provider, and OpenRouter, an additional provider, together with the model providers that OpenRouter forwards requests to. Cloudflare Workers AI creates and edits images, and answers chat messages only when you choose one of its models.',
         'When you use AI features, the information you submit, including prompts, messages, attached images, uploaded documents and relevant conversation context, may be sent to these providers to generate a response.',
         'These providers process that information under their own terms and privacy policies, which differ from provider to provider. Some may keep it or use it to improve or train their models. The Privacy Policy explains what is known about each.',
         'We do not own or operate the underlying AI models. Their availability, behaviour and data practices are set by their providers and may change.',
         'Do not submit passwords, financial credentials, highly sensitive personal information or confidential information to Atlas AI.',
-        `Provider terms: Google Gemini API (${GEMINI_TERMS}) and OpenRouter (https://openrouter.ai/terms and https://openrouter.ai/privacy).`,
+        `Provider terms: Google Gemini API (${GEMINI_TERMS}), OpenRouter (https://openrouter.ai/terms and https://openrouter.ai/privacy) and Cloudflare (${CLOUDFLARE_DATA} and ${CLOUDFLARE_PRIVACY}).`,
       ],
     },
     {
@@ -292,7 +311,7 @@ export const TERMS: LegalDoc = {
     {
       heading: 'Ownership of AI-generated outputs',
       bullets: [
-        'We do not claim ownership of the responses Atlas AI generates for you ("outputs"). To the extent we have any rights in your outputs, we transfer them to you.',
+        'We do not claim ownership of the responses and images Atlas AI generates for you ("outputs"). To the extent we have any rights in your outputs, we transfer them to you.',
         'You may use outputs for any lawful purpose, subject to these terms and to the terms of the AI provider that produced them.',
         'Outputs may not be unique: other people may receive similar responses. Whether an output is protected by copyright, or is free of other people’s rights, depends on the law and on the output, and we cannot confirm either. Check before you rely on or publish an output.',
       ],
@@ -306,7 +325,7 @@ export const TERMS: LegalDoc = {
     {
       heading: 'Usage limits and abuse prevention',
       paragraphs: [
-        'To control cost and prevent abuse, we limit web searches, research, file uploads, text messages, password-recovery requests and support reports, and AI providers apply their own limits to AI requests. We may change these limits, and we may block or slow requests that look automated or abusive.',
+        'To control cost and prevent abuse, we limit web searches, research, image creation, file uploads, text messages, password-recovery requests and support reports, and AI providers apply their own limits to AI requests. Image creation uses a free daily allowance from Cloudflare; when it is used up, Atlas AI stops creating images until it resets at 00:00 UTC and does not switch to paid usage. We may change these limits, and we may block or slow requests that look automated or abusive.',
       ],
     },
     {
@@ -325,7 +344,7 @@ export const TERMS: LegalDoc = {
     {
       heading: 'Third-party services',
       paragraphs: [
-        'Atlas AI relies on third-party services: Google (Firebase Authentication, Cloud Firestore, Google Analytics if you allow it, and Gemini), OpenRouter and the model providers it forwards requests to, SerpAPI and Tavily (web search), Vynfy (text messages) and Vercel (hosting). Their availability and terms are outside our control, and we are not responsible for their acts or omissions, except where the law makes us responsible.',
+        'Atlas AI relies on third-party services: Google (Firebase Authentication, Cloud Firestore, Google Analytics if you allow it, and Gemini), OpenRouter and the model providers it forwards requests to, Cloudflare (Workers AI), SerpAPI and Tavily (web search), Vynfy (text messages) and Vercel (hosting). Their availability and terms are outside our control, and we are not responsible for their acts or omissions, except where the law makes us responsible.',
       ],
     },
     {

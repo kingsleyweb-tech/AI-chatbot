@@ -107,6 +107,8 @@ export async function deleteConversation(uid: string, cid: string) {
 
 /** Delete a conversation and all of its messages directly (offline fallback). */
 async function deleteConversationLocal(uid: string, cid: string) {
+  // pictures created in this chat go with it (metadata and image data)
+  await import('@/features/images/images').then((m) => m.deleteConversationImagesLocal(uid, cid)).catch((err) => console.warn('[db] could not delete chat images', err));
   while (true) {
     const snap = await getDocs(query(paths.messages(uid, cid), limit(400)));
     if (snap.empty) break;
@@ -151,7 +153,7 @@ export async function saveAssistantFallback(
   uid: string,
   cid: string,
   id: string,
-  data: Pick<Message, 'content' | 'model' | 'sources' | 'reasoning'> & {
+  data: Pick<Message, 'content' | 'model' | 'sources' | 'reasoning' | 'images'> & {
     status: 'complete' | 'stopped' | 'error';
     error: Message['error'];
   },

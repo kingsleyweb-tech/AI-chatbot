@@ -1,9 +1,10 @@
-import { lazy, Suspense, useEffect, type ReactNode } from 'react';
+import { lazy, Suspense, useEffect, useSyncExternalStore, type ReactNode } from 'react';
 import { AnalyticsConsentBanner } from './components/AnalyticsConsent';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { SessionGuard } from './features/shell/SessionGuard';
 import { LogoMark } from './components/Logo';
+import { sessionEnding, subscribeSessionEnding } from './lib/session';
 import { useVisualViewport } from './lib/viewport';
 import { AuthProvider, useAuth } from './state/auth';
 import { CatalogProvider } from './state/catalog';
@@ -17,6 +18,7 @@ const MemoryPage = lazy(() => import('./features/memory/MemoryPage'));
 const ProjectsPage = lazy(() => import('./features/projects/ProjectsPage'));
 const ProjectPage = lazy(() => import('./features/projects/ProjectPage'));
 const SavedPage = lazy(() => import('./features/saved/SavedPage'));
+const ImagesPage = lazy(() => import('./features/images/ImagesPage'));
 const DocumentsPage = lazy(() => import('./features/documents/DocumentsPage'));
 const KnowledgePage = lazy(() => import('./features/knowledge/KnowledgePage'));
 const SettingsPage = lazy(() => import('./features/settings/SettingsPage'));
@@ -94,6 +96,15 @@ function usePrefetchApp() {
 function Routed() {
   useVisualViewport();
   usePrefetchApp();
+  // While signing out, show only the splash until the page reloads on /login (see session.ts).
+  const ending = useSyncExternalStore(subscribeSessionEnding, sessionEnding);
+  if (ending) {
+    return (
+      <div className="app-frame">
+        <Splash />
+      </div>
+    );
+  }
   return (
     // The consent banner takes its own row below the app, so it never covers a button.
     <div className="app-frame grid grid-rows-[minmax(0,1fr)_auto]">
@@ -124,6 +135,7 @@ function Routed() {
                 <Route path="projects" element={<ProjectsPage />} />
                 <Route path="projects/:projectId" element={<ProjectPage />} />
                 <Route path="saved" element={<SavedPage />} />
+                <Route path="images" element={<ImagesPage />} />
                 <Route path="documents" element={<DocumentsPage />} />
                 <Route path="knowledge" element={<KnowledgePage />} />
                 <Route path="settings/:section?" element={<SettingsPage />} />

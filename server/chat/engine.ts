@@ -30,9 +30,15 @@ import { routeModel, nextInChain } from '../router/route.js';
 import { detectTask } from '../router/task.js';
 import { ProviderError } from '../providers/types.js';
 import { gatherWebContext } from '../search/web.js';
+import { cloudflareConfigured } from '../cloudflare/client.js';
+import { reserveNeurons } from '../cloudflare/budget.js';
+import { imageModel, editModel } from '../config/images.js';
+import { detectImageIntent, IMAGE_REPLY_PREFIX } from '../images/intent.js';
+import { ImageError, runImageTurn } from '../images/generate.js';
 import type {
   ApprovalRequest,
   ChatRequestBody,
+  GeneratedImageInfo,
   ModelInfo,
   ResearchStep,
   RouteInfo,
@@ -109,9 +115,13 @@ interface ConversationDoc {
   projectKey?: string | null;
   historySummary?: string;
   historySummaryCount?: number;
+  /** the last picture created in this chat (for follow-up edits like "make it more realistic") */
+  lastImage?: { id: string; messageId: string } | null;
 }
 
 const APPROVAL_STOP = Symbol('approval_required');
+/** the reply was an image (or an image refusal); no text model runs */
+const IMAGE_DONE = Symbol('image_done');
 
 /** Honest statements about what this model / app can and cannot do for this request. */
 function capabilityNotes(
@@ -131,9 +141,13 @@ function capabilityNotes(
       `You are running as ${model.name}, which accepts: ${inputs}. Never claim to see images, hear audio or read files that were not provided to you.`,
     );
   }
-  if (task.intent === 'imageGen' || task.intent === 'imageEdit') {
+  if (cloudflareConfigured()) {
     notes.push(
-      'Image generation and image editing are not available in this app. If the user asks you to create or edit an image, say so plainly. You may offer a detailed description, or a prompt they could use in an image tool. Never claim you produced or edited an image.',
+      'Atlas AI creates and edits pictures with a separate image model when the user asks for one directly (for example "Generate an image of a lion in a forest", or, after a picture, "make it more realistic"). You, the text model, cannot create images yourself and never output image data or links. If the user seems to want a picture, suggest they ask directly, e.g. "Create an image of ...". Never claim you produced or edited an image in this reply.',
+    );
+  } else if (task.intent === 'imageGen' || task.intent === 'imageEdit') {
+    notes.push(
+      'Image generation and image editing are not available on this server right now. If the user asks you to create or edit an image, say so plainly. You may offer a detailed description, or a prompt they could use in an image tool. Never claim you produced or edited an image.',
     );
   }
   return notes;
@@ -143,6 +157,12 @@ function capabilityNotes(
 const activeRequests = new Set<string>();
 
 export function friendlyError(err: unknown): Extract<StreamEvent, { type: 'error' }> {
+  if (err instanceof ImageError) {
+    return { type: 'error', code: err.code, message: err.message, retryable: err.retryable, suggestion: err.suggestion };
+  }
+  if (err instanceof ProviderError && err.code === 'daily_limit' && /cloudflare/i.test(err.message)) {
+    return { type: 'error', code: err.code, message: err.message, retryable: false, suggestion: 'Try again after 00:00 UTC, or choose a Gemini or OpenRouter model. Atlas AI never switches to paid usage.' };
+  }
   if (err instanceof ProviderError) {
     const suggestion =
       err.code === 'insufficient_credits'
@@ -215,6 +235,16 @@ export async function runChat(
     docMetas.filter((d) => d).map((d) => ({ name: d!.data.name ?? '', mime: d!.data.mime ?? '' })),
   );
   const needsVision = task.needsVision;
+  // Image requests (Cloudflare Workers AI): detected without any model call.
+  const lastAssistant = [...body.messages].reverse().find((m) => m.role === 'assistant');
+  const attachedImage = lastUser.attachments?.find((a) => a.kind === 'image');
+  const lastImage = convDoc?.data.lastImage ?? null;
+  const imageIntent = cloudflareConfigured()
+    ? detectImageIntent(lastUser.content, {
+        hasImageAttachment: Boolean(attachedImage),
+        previousImage: Boolean(lastImage?.id && lastAssistant && IMAGE_REPLY_PREFIX.test(lastAssistant.content)),
+      })
+    : null;
   const settings: UserSettings = {
     ...(userDoc?.data.settings ?? {}),
     displayName: userDoc?.data.displayName,
@@ -280,6 +310,7 @@ export async function runChat(
         let contextUsed: { memories: number; documents: number; conversations: number; knowledge: number; web: number } | null = null;
         let focus: ReturnType<typeof detectFocus> = null;
         let knownProjects: LoadedProject[] = [];
+        const images: GeneratedImageInfo[] = [];
         /** analytics counters for usage/{day} (codes only, never message text) */
         const counters: Record<string, number> = {};
         const count = (path: string[], n = 1) => {
@@ -295,6 +326,56 @@ export async function runChat(
         try {
           // keep-alive comment so proxies flush headers immediately
           controller.enqueue(encoder.encode(': ok\n\n'));
+
+          // ---- Image request: handled by the image model, not a chat model ----
+          if (imageIntent) {
+            const model = imageIntent.kind === 'edit' ? editModel() : imageModel();
+            usedModel = model.id;
+            send({ type: 'start', model: model.id });
+            send({ type: 'image_progress', stage: 'checking' });
+            try {
+              const r = await runImageTurn({
+                db,
+                uid,
+                conversationId: body.conversationId,
+                messageId: body.assistantMessageId,
+                intent: imageIntent,
+                attachment: attachedImage && attachedImage.kind === 'image' ? attachedImage.dataUrl : null,
+                previousImageId: lastImage?.id ?? null,
+                signal,
+                onStage: (stage) => send({ type: 'image_progress', stage }),
+              });
+              const info: GeneratedImageInfo = {
+                id: r.meta.id,
+                model: r.meta.model,
+                mime: r.meta.mime,
+                width: r.meta.width,
+                height: r.meta.height,
+                prompt: r.meta.prompt,
+                kind: r.meta.kind,
+                sourceImageId: r.meta.sourceImageId,
+                stored: r.stored,
+              };
+              images.push(info);
+              usedModel = r.meta.model;
+              send({ type: 'image', image: { ...info, dataUrl: `data:${r.meta.mime};base64,${Buffer.from(r.bytes).toString('base64')}` } });
+              const shown = r.meta.prompt.length > 300 ? `${r.meta.prompt.slice(0, 297)}…` : r.meta.prompt;
+              content = `${r.meta.kind === 'edit' ? 'Edited the image' : 'Created an image'}: “${shown}”`;
+              if (!r.stored) content += '\n\nThis image could not be saved to your account. Download it now to keep it.';
+              count(['images', r.meta.kind === 'edit' ? 'edits' : 'generations']);
+            } catch (err) {
+              if (signal.aborted) throw err;
+              if (err instanceof ImageError && !err.retryable) {
+                // a refusal (safety rules, daily limits) is the answer itself, not a failure to retry
+                content = err.suggestion ? `${err.message}\n\n${err.suggestion}` : err.message;
+                count(['images', 'refused']);
+              } else throw err;
+            }
+            send({ type: 'delta', text: content });
+            finishReason = 'stop';
+            send({ type: 'done', finishReason, model: usedModel });
+            throw IMAGE_DONE;
+          }
 
           const models: ModelInfo[] = catalog?.models ?? [];
           const nameOf = (id: string) => models.find((m) => m.id === id)?.name ?? id;
@@ -535,7 +616,14 @@ export async function runChat(
               vision: info ? info.capabilities.vision : needsVision,
               budgetTokens: budget,
             });
+            const onCloudflare = providerFor(modelId).id === 'cloudflare';
+            let cfReservation: Awaited<ReturnType<typeof reserveNeurons>> | null = null;
             try {
+              if (onCloudflare) {
+                // free daily allowance only: refuse (and fall back) rather than ever run into paid usage
+                cfReservation = await reserveNeurons(db, 60);
+                if (!cfReservation.ok) throw new ProviderError('daily_limit', 'Atlas AI has used today\u2019s free Cloudflare Workers AI allowance. It resets at 00:00 UTC.', 429);
+              }
               send({ type: 'start', model: modelId });
               usedModel = modelId;
               for await (const chunk of providerFor(modelId).stream({
@@ -573,8 +661,12 @@ export async function runChat(
               }
               lastErr = null;
               markHealthy(modelId);
+              if (cfReservation?.ok) await cfReservation.settle(usage?.neurons ?? 0, { uid, model: modelId, type: 'text', ok: true });
               break;
             } catch (err) {
+              if (cfReservation?.ok) {
+                await cfReservation.settle(usage?.neurons ?? 0, { uid, model: modelId, type: 'text', ok: false, error: err instanceof ProviderError ? err.code : signal.aborted ? 'aborted' : 'internal' });
+              }
               if (signal.aborted) throw err;
               lastErr = err;
               if (err instanceof ProviderError && !content) markFailed(modelId, err.code);
@@ -599,7 +691,7 @@ export async function runChat(
           }
           send({ type: 'done', finishReason, model: usedModel });
         } catch (err) {
-          if (err === APPROVAL_STOP) {
+          if (err === APPROVAL_STOP || err === IMAGE_DONE) {
             // status and errorEvent were already set; nothing more to send
           } else if (signal.aborted) {
             status = 'stopped';
@@ -617,6 +709,10 @@ export async function runChat(
         // The whole job is also registered with waitUntil (below), so it
         // completes when the browser disconnects.
         const created = await placeholder;
+        function lastImageField() {
+          const img = images.find((i) => i.stored);
+          return img ? { lastImage: { id: img.id, messageId: body.assistantMessageId } } : {};
+        }
         const writes: Write[] = [
           {
             op: 'set',
@@ -636,6 +732,7 @@ export async function runChat(
               contextUsed,
               researchSteps: researchSteps.slice(0, 20),
               usage,
+              ...(images.length ? { images } : {}),
               error: errorEvent
                 ? {
                     code: errorEvent.code,
@@ -649,12 +746,12 @@ export async function runChat(
           },
           created
             ? // only if the chat still exists: a chat deleted while its reply was generating stays deleted
-              { op: 'set', path: convPath, merge: true, data: { updatedAt: SERVER_TIME, lastModel: usedModel }, precondition: { exists: true } }
+              { op: 'set', path: convPath, merge: true, data: { updatedAt: SERVER_TIME, lastModel: usedModel, ...lastImageField() }, precondition: { exists: true } }
             : {
                 op: 'increment',
                 path: convPath,
                 increments: { messageCount: 1 },
-                data: { updatedAt: SERVER_TIME, lastModel: usedModel },
+                data: { updatedAt: SERVER_TIME, lastModel: usedModel, ...lastImageField() },
               },
         ];
         if (routeInfo) count(['routing', 'switched']);

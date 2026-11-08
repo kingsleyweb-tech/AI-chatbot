@@ -68,7 +68,7 @@ From the OpenRouter Terms, last updated 31 August 2026:
 | **Google Vertex AI** | Allowed; no consumer-use restriction found | Not for services likely to be accessed by under-18s | Not used without permission | No (billing; new-account credits only) | Read directly |
 | **Mistral (La Plateforme)** | To confirm | To confirm | Free mode: data may be used for training unless opted out (secondary sources disagree) | Yes (rate-limited) | Secondary sources only |
 | **Groq (GroqCloud)** | **Possible restriction:** a secondary source quotes "not for consumer use" | To confirm | Not used unless permitted (secondary) | Yes (rate-limited; described as for prototyping) | Secondary sources only |
-| **Cloudflare Workers AI** | Allowed as part of Cloudflare services (to confirm) | To confirm | Reported not used for training | Yes (10,000 Neurons/day hard cap) | Secondary sources only |
+| **Cloudflare Workers AI** (in use since Terms/Privacy 1.3: images, and chat models the user selects) | Allowed as part of Cloudflare services (to confirm in the Cloudflare terms) | To confirm | Not used: "Cloudflare does not use Customer Content processed by Workers AI to train AI models"; inputs and outputs not kept after the request for standard inference; operational metadata kept (data-usage page, updated 16 Oct 2026) | Yes (10,000 Neurons/day; Atlas AI caps itself at 9,000 and never enables paid usage) | Data-usage page read directly; terms of service not yet read |
 
 Rows marked "secondary sources" must be checked against the provider's own legal pages before any decision.
 
@@ -76,7 +76,7 @@ Rows marked "secondary sources" must be checked against the provider's own legal
 
 - **Clearly permitted (on the terms read):** Google Vertex AI, Anthropic Claude API (with the AI disclosure, which Atlas AI already makes by being an AI assistant; add an explicit line in the interface to be safe), and OpenRouter as a platform, subject to each model's terms. **All of these except OpenRouter's free models are paid.**
 - **Unclear, for counsel:** the Gemini API (AI Studio), paid or unpaid, because of "not for consumer use".
-- **Not yet assessable:** OpenAI (current text not read), Mistral, Groq (possible consumer restriction) and Cloudflare (secondary sources only).
+- **Not yet assessable:** OpenAI (current text not read), Mistral, Groq (possible consumer restriction). Cloudflare: data use read directly; the terms on end-user apps and minimum age still to confirm.
 
 ## Recommended architecture
 
@@ -108,3 +108,4 @@ Atlas AI already routes every request through one server-side provider layer (`s
 - Groq legal framework: https://console.groq.com/docs/legal/contractual-framework-overview
 - Mistral data use: https://help.mistral.ai/en/articles/347617-do-you-use-my-user-data-to-train-your-artificial-intelligence-models
 - Cloudflare Workers AI pricing: https://developers.cloudflare.com/workers-ai/platform/pricing/
+- Cloudflare Workers AI data usage: https://developers.cloudflare.com/workers-ai/platform/data-usage/ (updated 16 October 2026)
