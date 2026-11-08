@@ -12,6 +12,8 @@ npx firebase deploy --only firestore:rules,firestore:indexes --project ai-app-6e
 
 Existing email/password accounts (including administrators) are asked to verify a phone number once at their next sign-in.
 
+The current rules also enforce account status: a suspended or deleted profile (`accountStatus`) and sessions older than `sessionsValidAfter` are refused, security events and admin logs are read-only for clients, and the new collections (`securityEvents`, `adminLogs`, `convIndex`, `projectMemory`, recovery records) are covered. Until these rules are deployed, suspension still works through Firebase Auth (the account is disabled and its tokens revoked) and the API checks, but the database itself does not refuse an already-issued token until it expires (up to an hour).
+
 ## 2. Vercel
 
 1. In Vercel, **Add New > Project** and import the GitHub repository. The framework preset (Vite), build command and output directory come from `vercel.json`.
@@ -23,6 +25,7 @@ Existing email/password accounts (including administrators) are asked to verify 
    - `FIREBASE_PROJECT_ID`: `ai-app-6efa7`
    - all `VITE_FIREBASE_*` values from `.env.local` (with `VITE_FIREBASE_AUTH_DOMAIN=auto`, see below)
    - phone verification: `FIREBASE_SERVICE_ACCOUNT`, `OTP_HMAC_SECRET`, `VYNFY_API_KEY` (all Sensitive), `VYNFY_SENDER_ID`
+   - account administration: `CRON_SECRET` (Sensitive, 16+ characters) for the daily purge of accounts scheduled for deletion (`crons` in `vercel.json`; Hobby allows one run a day)
 3. Deploy. API routes run as Node functions with a 60-second limit (`vercel.json`). Long answers keep streaming as long as tokens keep arriving within that window. On the Hobby plan, a reply that takes more than 60 seconds in total is cut off. What streamed so far is kept, and **Continue** resumes it.
 4. In Firebase **Authentication > Settings > Authorized domains**, add the Vercel domain.
 
@@ -37,19 +40,21 @@ Installed apps (Home Screen / "Install app") and Safari partition third-party st
 
 Email/password sign-in works without this.
 
-### Sign in with Apple
+### Apple accounts
 
-Apple is enabled in Firebase but cannot work until it has Apple Developer credentials (Firebase currently answers "Code flow is not enabled for Apple"). An Apple Developer Program membership is required.
+Sign in with Apple has been removed from the sign-in screens. It never worked in this project (Firebase answered "Code flow is not enabled for Apple"), so no Apple accounts are expected. Nothing was deleted: the Apple provider setting in Firebase, the server's handling of `apple.com` sign-ins and any existing profile data are unchanged, and the admin **Users** page lists any Apple account under an "Apple (legacy)" filter.
 
-1. developer.apple.com > Certificates, Identifiers & Profiles:
-   - **Identifiers > App IDs**: create or pick an App ID with **Sign in with Apple** enabled.
-   - **Identifiers > Services IDs**: create one (e.g. `com.yourname.atlasai.web`), enable **Sign in with Apple**, configure: primary App ID as above; **Domains**: `ai-app-6efa7.firebaseapp.com` and your app domain; **Return URLs**: `https://ai-app-6efa7.firebaseapp.com/__/auth/handler` and `https://your-app.vercel.app/__/auth/handler`.
-   - **Keys**: create a key with **Sign in with Apple**, download the `.p8` file (once only), note the **Key ID**.
-   - Note your **Team ID** (top right of the developer portal).
-2. Firebase **Authentication > Sign-in method > Apple**: enter the Services ID, Team ID, Key ID and the private key contents. Save.
-3. If Apple asks for domain verification, follow its instructions for each domain.
+If an Apple account does exist, its owner can get in by:
 
-Apple shares the user's name only on the first sign-in; Atlas AI stores it on the account then. Users who hide their email get a private relay address, which is fine.
+1. **Password reset by email.** On **Forgot password**, enter the account email and choose **Email me a reset link instead**. Firebase adds a password to the same account (same user ID and data). They then sign in with email and password, which also requires verifying a Ghana mobile number once. Accounts using Apple's private relay address receive the email through Apple's relay.
+2. **Asking the administrator,** who can find the account on the **Users** page.
+
+To bring Apple back later, complete the Apple Developer setup (Services ID, key, Team ID) in Firebase and restore the button from git history (`src/features/auth/AuthPages.tsx`, `src/lib/authProviders.ts`).
+
+### Account administration
+
+- **Users** (Settings > Users, administrators only) shows statistics and every account from Firebase Auth and Firestore. Suspend disables the Auth account, revokes its tokens, sets `accountStatus: suspended` and records a security event and an admin log. Delete schedules permanent deletion after 30 days (the account is disabled at once and can be restored until then); the daily cron or **Delete permanently now** (typed email, acknowledgement and a second confirmation) removes the user's data, phone mapping, allowlist entry and Auth account.
+- Administrators cannot act on themselves or the owner (`ADMIN_EMAILS`), and only the owner can act on another administrator. Every decision is checked again on the server.
 
 ### Phone verification (SMS)
 
@@ -58,6 +63,7 @@ Email/password accounts must verify a Ghana mobile number with a 6-digit text co
 1. Firebase **Project settings > Service accounts > Generate new private key**. Paste the JSON (or its base64) into Vercel as `FIREBASE_SERVICE_ACCOUNT` (Sensitive), then delete the downloaded file.
 2. Vercel: `OTP_HMAC_SECRET` (Sensitive, 32+ random bytes), `VYNFY_API_KEY` (Sensitive), `VYNFY_SENDER_ID`, optionally `OTP_DAILY_CAP`. Leave `VYNFY_SANDBOX` unset in production.
 3. Each text costs one Vynfy SMS credit. Only allowlisted accounts can request codes, with per-account, per-number and app-wide limits.
+4. **Password recovery by text** (`/api/recovery`) uses the same provider and secrets. It responds the same way whether or not an email has an account, and every reset revokes all sessions. Each recovery text is also one Vynfy credit; sending is rate limited per account, per IP address and app-wide.
 
 ## 3. Install on iPhone
 

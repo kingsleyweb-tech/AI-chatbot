@@ -1,13 +1,14 @@
 import { limit, orderBy, query } from 'firebase/firestore';
 import { Brain, MoreHorizontal, Pencil, Plus, Power, Search, Trash2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { ConversationsTab, ProjectsTab } from './MemoryTabs';
 import { Link } from 'react-router-dom';
 import { MEMORY_CATEGORIES, type MemoryCategory } from '@shared/types';
 import { Badge, Button, ConfirmDialog, Dialog, EmptyState, IconButton, Label, Menu, PageHeader, Select, Spinner, Switch, Textarea } from '@/components/ui';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { deleteAllMemories, deleteMemory, paths, saveMemory } from '@/lib/db';
 import { useQuery } from '@/lib/hooks';
-import type { Memory } from '@/lib/types';
+import type { Memory, ProjectBrief } from '@/lib/types';
 import { cn, relativeTime } from '@/lib/utils';
 import { useUid } from '@/state/auth';
 import { useSettings } from '@/state/settings';
@@ -16,11 +17,13 @@ import { Page } from '../shell/Page';
 
 const label = (c: string) => c.charAt(0).toUpperCase() + c.slice(1);
 
-function MemoryEditor({ open, memory, onClose }: { open: boolean; memory: Memory | null; onClose: () => void }) {
+function MemoryEditor({ open, memory, onClose, projects }: { open: boolean; memory: Memory | null; onClose: () => void; projects: ProjectBrief[] }) {
   const uid = useUid();
   const toast = useToast();
   const [text, setText] = useState('');
   const [category, setCategory] = useState<MemoryCategory>('fact');
+  const [importance, setImportance] = useState('3');
+  const [project, setProject] = useState('');
   const [busy, setBusy] = useState(false);
   const [lastOpen, setLastOpen] = useState(false);
   if (open !== lastOpen) {
@@ -28,6 +31,8 @@ function MemoryEditor({ open, memory, onClose }: { open: boolean; memory: Memory
     if (open) {
       setText(memory?.text ?? '');
       setCategory(memory?.category ?? 'fact');
+      setImportance(String(memory?.importance ?? 3));
+      setProject(memory?.project ?? '');
     }
   }
 
@@ -36,7 +41,7 @@ function MemoryEditor({ open, memory, onClose }: { open: boolean; memory: Memory
     if (!t) return;
     setBusy(true);
     try {
-      const id = await saveMemory(uid, { id: memory?.id, text: t, category, reason: memory ? memory.reason : 'Added manually.' });
+      const id = await saveMemory(uid, { id: memory?.id, text: t, category, importance: Number(importance), project: project || null, reason: memory ? memory.reason : 'Added manually.' });
       onClose();
       api('memory', { json: { action: 'reembed', ids: [id] } }).catch(() => undefined);
     } catch {
@@ -72,6 +77,28 @@ function MemoryEditor({ open, memory, onClose }: { open: boolean; memory: Memory
           <Label htmlFor="mem-cat">Category</Label>
           <Select id="mem-cat" value={category} onChange={setCategory} options={MEMORY_CATEGORIES.map((c) => ({ value: c, label: label(c) }))} />
         </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <Label htmlFor="mem-imp">Importance</Label>
+            <Select
+              id="mem-imp"
+              value={importance}
+              onChange={setImportance}
+              options={[
+                { value: '5', label: '5: always use' },
+                { value: '4', label: '4: important' },
+                { value: '3', label: '3: normal' },
+                { value: '2', label: '2: minor' },
+                { value: '1', label: '1: rarely relevant' },
+              ]}
+            />
+          </div>
+          <div>
+            <Label htmlFor="mem-proj">Applies to</Label>
+            <Select id="mem-proj" value={project} onChange={setProject} options={[{ value: '', label: 'All conversations' }, ...projects.map((p) => ({ value: p.id, label: p.name }))]} />
+          </div>
+        </div>
+        <p className="text-xs text-muted">Memories tied to a project are only used when that project is being discussed.</p>
       </div>
     </Dialog>
   );
@@ -88,6 +115,9 @@ export default function MemoryPage() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [toDelete, setToDelete] = useState<Memory | null>(null);
   const [clearOpen, setClearOpen] = useState(false);
+  const [tab, setTab] = useState<'memories' | 'projects' | 'conversations'>('memories');
+  const projectsQ = useQuery<ProjectBrief>(query(paths.projectMemory(uid), limit(200)), [uid]);
+  const projectName = useMemo(() => new Map(projectsQ.data.map((p) => [p.id, p.name])), [projectsQ.data]);
 
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
@@ -116,7 +146,7 @@ export default function MemoryPage() {
     >
       <PageHeader
         title="Memory"
-        description="Things Atlas AI has learned about you across conversations. They are added to future chats when relevant."
+        description="What Atlas AI remembers about you and your projects across conversations. Only memories relevant to the current chat are used, and a project's memories are never mixed into another project."
         actions={
           <Button variant="primary" icon={<Plus className="size-4" />} onClick={() => openEditor(null)} className="hidden lg:inline-flex">
             Add memory
@@ -137,6 +167,31 @@ export default function MemoryPage() {
         <Switch label="Use memory" checked={settings.memoryEnabled} onChange={(v) => update({ memoryEnabled: v })} />
       </div>
 
+      <div className="mb-4 flex gap-1 border-b border-border" role="tablist">
+        {(
+          [
+            ['memories', `Memories (${data.length})`],
+            ['projects', `Projects (${projectsQ.data.length})`],
+            ['conversations', 'Conversations'],
+          ] as const
+        ).map(([id, text]) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={tab === id}
+            onClick={() => setTab(id)}
+            className={cn('-mb-px border-b-2 px-3 py-2 text-sm transition-colors', tab === id ? 'border-accent font-medium text-fg' : 'border-transparent text-muted hover:text-fg')}
+          >
+            {text}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'projects' && <ProjectsTab projects={projectsQ.data} loading={projectsQ.loading} />}
+      {tab === 'conversations' && <ConversationsTab />}
+      {tab === 'memories' && (
+      <>
       <div className="mb-4 flex flex-col gap-2 sm:flex-row">
         <div className="flex h-10 flex-1 items-center gap-2 rounded-[10px] border border-border px-3 focus-within:border-accent">
           <Search className="size-4 text-subtle" />
@@ -176,6 +231,8 @@ export default function MemoryPage() {
                 <p className="text-[14px] leading-relaxed">{m.text}</p>
                 <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted">
                   <Badge>{label(m.category)}</Badge>
+                  {(m.importance ?? 3) >= 4 && <Badge tone="accent">Important</Badge>}
+                  {m.project && <Badge>{projectName.get(m.project) ?? 'Project'}</Badge>}
                   {!m.active && <Badge tone="warn">Disabled</Badge>}
                   <span>{m.origin === 'manual' ? 'Added by you' : 'Learned'}</span>
                   <span>·</span>
@@ -220,8 +277,10 @@ export default function MemoryPage() {
           </Button>
         </div>
       )}
+      </>
+      )}
 
-      <MemoryEditor open={editorOpen} memory={editing} onClose={() => setEditorOpen(false)} />
+      <MemoryEditor open={editorOpen} memory={editing} projects={projectsQ.data} onClose={() => setEditorOpen(false)} />
       <ConfirmDialog
         open={Boolean(toDelete)}
         onClose={() => setToDelete(null)}
@@ -235,10 +294,15 @@ export default function MemoryPage() {
         open={clearOpen}
         onClose={() => setClearOpen(false)}
         title="Delete all memories?"
-        message="This permanently removes everything Atlas AI has remembered about you. Conversations are not affected."
+        message="This permanently removes every saved memory. Project briefs and conversations are not affected; manage them in their own tabs."
         confirmLabel="Delete all"
         onConfirm={async () => {
-          await deleteAllMemories(uid);
+          try {
+            await api('memory', { json: { action: 'clearMemories' } });
+          } catch (err) {
+            if (err instanceof ApiError && err.status !== 0 && err.status < 500) throw err;
+            await deleteAllMemories(uid);
+          }
           toast('All memories deleted.', 'success');
         }}
       />

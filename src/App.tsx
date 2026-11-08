@@ -18,6 +18,7 @@ const SavedPage = lazy(() => import('./features/saved/SavedPage'));
 const DocumentsPage = lazy(() => import('./features/documents/DocumentsPage'));
 const KnowledgePage = lazy(() => import('./features/knowledge/KnowledgePage'));
 const SettingsPage = lazy(() => import('./features/settings/SettingsPage'));
+const UsersPage = lazy(() => import('./features/admin/UsersPage'));
 
 export function Splash() {
   return (
@@ -67,6 +68,7 @@ function Routed() {
               <Route path="documents" element={<DocumentsPage />} />
               <Route path="knowledge" element={<KnowledgePage />} />
               <Route path="settings/:section?" element={<SettingsPage />} />
+              <Route path="admin/users" element={<UsersPage />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

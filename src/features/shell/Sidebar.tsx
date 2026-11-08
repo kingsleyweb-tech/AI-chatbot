@@ -1,5 +1,5 @@
 import { limit, orderBy, query } from 'firebase/firestore';
-import { Bookmark, Brain, FileText, FolderClosed, Library, LogOut, MoreHorizontal, PanelLeftClose, Pencil, Search, Settings, SquarePen, Trash2, X } from 'lucide-react';
+import { Bookmark, Brain, FileText, FolderClosed, Library, LogOut, MoreHorizontal, PanelLeftClose, Pencil, Search, Settings, SquarePen, Trash2, Users, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { NavLink, useMatch, useNavigate } from 'react-router-dom';
 import { Logo } from '@/components/Logo';
@@ -112,7 +112,7 @@ export function useDeleteConversation() {
 
 export function Sidebar({ onSearch, onClose, onCollapse }: { onSearch: () => void; onClose?: () => void; onCollapse?: () => void }) {
   const uid = useUid();
-  const { user, profile, signOut } = useAuth();
+  const { user, profile, admin, signOut } = useAuth();
   const navigate = useNavigate();
   const toast = useToast();
   const [count, setCount] = useState(PAGE);
@@ -182,6 +182,7 @@ export function Sidebar({ onSearch, onClose, onCollapse }: { onSearch: () => voi
         <NavItem to="/documents" icon={<FileText className="size-[17px]" />} label="Documents" />
         <NavItem to="/knowledge" icon={<Library className="size-[17px]" />} label="Knowledge" />
         <NavItem to="/memory" icon={<Brain className="size-[17px]" />} label="Memory" />
+        {admin && <NavItem to="/admin/users" icon={<Users className="size-[17px]" />} label="Users" />}
       </div>
 
       <div className="scroll-thin touch-scroll mt-3 min-h-0 flex-1 overflow-y-auto px-2 pb-3">

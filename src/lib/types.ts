@@ -152,7 +152,29 @@ export interface Memory {
   origin: 'auto' | 'manual';
   sourceConversationId?: string | null;
   sourceTitle?: string | null;
+  /** 1 (minor) to 5 (always relevant); missing means 3 */
+  importance?: number;
+  /** project-memory key (p_slug) when the memory belongs to one project */
+  project?: string | null;
   createdAt?: Timestamp | null;
+  updatedAt?: Timestamp | null;
+}
+
+/** Automatic project brief (users/{uid}/projectMemory/{key}), written by the server. */
+export interface ProjectBrief {
+  id: string;
+  name: string;
+  aliases?: string[];
+  linkedProjectId?: string | null;
+  description?: string;
+  technologies?: string[];
+  architecture?: string;
+  progress?: string;
+  decisions?: string[];
+  bugs?: string[];
+  tasks?: string[];
+  conversations?: { id: string; title: string; at: number }[];
+  origin?: 'auto' | 'manual';
   updatedAt?: Timestamp | null;
 }
 

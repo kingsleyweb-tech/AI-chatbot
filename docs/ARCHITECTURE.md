@@ -100,10 +100,14 @@ Sources carry title, site, URL, snippet and a publication date only when the pro
 
 ## Memory (`server/memory`)
 
-- After each exchange, a small utility model returns JSON operations (`add`, `update`, `delete`) with a category and a reason, given the new exchange and the most similar existing memories. Near-duplicates (cosine ≥ 0.9) become updates.
-- Memories are embedded (`memoryVectors/{id}`). At query time, all memories are included if there are 25 or fewer. Otherwise they are ranked by similarity to the message, with a lexical fallback when embeddings are unavailable.
-- Conversation summaries (`convVectors/{cid}`) enable "related earlier conversations" recall.
-- Users can view, search, edit, disable and delete memories, or turn memory off entirely, in **Memory** or **Settings**.
+Four layers, assembled per request in `server/chat/engine.ts`. All of it works the same whichever provider (Gemini or OpenRouter) answers, because only the prompt changes.
+
+1. **Structured memories** (`memories/{id}`): after each exchange a utility model returns `add`/`update`/`delete` operations with category, importance (1 to 5), reason and, when it concerns one project, a project key. Near-duplicates (cosine at least 0.9) become updates; contradictions update the older memory. At query time, general instructions and preferences with importance 3 or more are always included, the focused project's memories are included, and the rest are ranked by similarity (all included when there are 25 or fewer). Memories of other projects are never included.
+2. **Project memory** (`projectMemory/{p_slug}`): a brief per named project (description, aliases, stack, architecture, progress, decisions, bugs, tasks, conversations), updated in the background. The focus project is detected from the message (name or alias), the linked Atlas project, a semantic match (at least 0.72) or the conversation's `projectKey`, in that order.
+3. **Conversation history index** (`convIndex/s0000...` shards of 120 entries plus `meta`): every exchange is stored as a short excerpt with an int8-packed embedding and project tag. Retrieval fuses keyword and semantic ranking (reciprocal rank fusion), keeps at most two excerpts per conversation, filters by the focus project, and skips turns already in the context window. This answers questions like "what did we decide about Project Alpha?" from older chats.
+4. **Rolling summary** (`historySummary` on the conversation): turns older than the last 16 are folded into a summary that keeps instructions, decisions and open tasks. This runs even when memory is off, since it only concerns the current chat.
+
+Users manage all of this in **Memory** (tabs for memories, projects and conversations) and can turn memory off. Deleting a conversation (`/api/memory` `deleteConversation`) removes its messages, summary vector, index entries and the automatic memories learned from it, and rebuilds or removes project briefs that used it; manual memories and saved responses are kept.
 
 ## Documents (`server/docs`)
 
@@ -118,7 +122,10 @@ All user data is under `users/{uid}`:
 | `users/{uid}` | `email`, `displayName`, `settings` (theme, accent, defaultModel, customInstructions, aboutMe, style, tone, level, language, memoryEnabled, webSearchDefault, sendOnEnter, voiceName) |
 | `…/conversations/{cid}` | `title`, `projectId`, `saved`, `model`, `lastModel`, `documentIds[]`, `messageCount`, `summary`, timestamps |
 | `…/conversations/{cid}/messages/{mid}` | `role`, `content`, `attachments[]` (compressed images, document references), `model`, `status`, `sources[]`, `usage`, `reasoning`, `error` |
-| `…/memories/{id}` | `text`, `category`, `reason`, `active`, `origin`, `sourceConversationId`, `sourceTitle` |
+| `…/memories/{id}` | `text`, `category`, `importance`, `project`, `reason`, `active`, `origin`, `sourceConversationId`, `sourceTitle` |
+| `…/projectMemory/{p_slug}` | project brief (server-written) |
+| `…/convIndex/{shard}` | conversation history excerpts and packed embeddings (server-written) |
+| `…/securityEvents/{id}` | `type`, `at`, `device`, `provider`, `by`, `detail` (server-written, owner read-only) |
 | `…/memoryVectors/{id}`, `…/convVectors/{cid}` | embeddings and the model that produced them |
 | `…/projects/{id}` | `name`, `instructions` |
 | `…/documents/{id}` | `name`, `mime`, `size`, `status`, `error`, `chunkCount`, `pageCount`, `warning` |
@@ -130,6 +137,8 @@ All user data is under `users/{uid}`:
 | `config/access` | `allowedEmails[]`, `adminEmails[]` (admin-write) |
 | `config/public` | `registrationOpen` (public read, admin-write) |
 | `config/limits` | search budgets, Deep Research budget, cache lifetimes (approved read, admin-write) |
+| `adminLogs/{id}` | administrator actions (server-written, admin read-only) |
+| `recovery/{id}`, `otpRecovery/{uid}`, `rateLimits/{key}` | password-recovery state and counters (server only, no client access) |
 
 ## Knowledge base (`server/knowledge`, `src/features/knowledge`)
 
@@ -140,7 +149,7 @@ All user data is under `users/{uid}`:
 
 ## Authentication (`src/state/auth.tsx`, `src/lib/authProviders.ts`, `api/phone.ts`)
 
-- Sign-in: Google, Apple and email/password (Firebase Auth). Popups in the browser; a full-page redirect in installed apps or when a popup is blocked, completed by `getRedirectResult` at start-up. `onAuthStateChanged` is the only source of truth; access checks run with a sequence guard, and the UI shows a loading state (never the login form) while they run.
+- Sign-in: Google and email/password (Firebase Auth). Apple was removed from the UI; existing `apple.com` accounts are still recognised by the server. Popups in the browser; a full-page redirect in installed apps or when a popup is blocked, completed by `getRedirectResult` at start-up. `onAuthStateChanged` is the only source of truth; access checks run with a sequence guard, and the UI shows a loading state (never the login form) while they run.
 - Access states: `loading`, `signed-out`, `phone` (password account without a verified phone), `unverified` (email), `denied`, `error` (with retry), `allowed`. Flow for email sign-ups: register, verify phone, verify email, approval check, app.
 - **Phone verification** (password accounts only): `/api/phone` sends a 6-digit code (crypto random, 5-minute expiry, single use) through a swappable `SmsProvider` (Vynfy). Codes are stored only as HMACs in server-only `otp/{uid}`; limits are 60 s between sends, 5 per hour and 10 per day per account and per number, an app-wide daily cap, and 5 attempts per code counted with optimistic concurrency. `phoneNumbers/{hash}` keeps one account per number. On success the server sets the `phoneVerified` custom claim (service account) and writes `phoneNumber`, `phoneVerified`, `phoneVerifiedAt` to the profile.
 - Enforcement is server-side: the Firestore rules' `verified()` and every API (`requireAllowedUser`) reject password sign-ins without the claim. Only allowlisted accounts can trigger texts.
@@ -155,6 +164,8 @@ All user data is under `users/{uid}`:
 - `config/access` is admin-write only, with a validated shape.
 - Everything else is denied.
 - `config/limits` is admin-write only, with a validated shape.
+- `accountActive()`: profiles with `accountStatus` `suspended` or `deleted` are refused, as are tokens issued before `sessionsValidAfter` (sign out everywhere, password reset). Clients cannot set `accountStatus`, `sessionsValidAfter`, `purgeAfter` or similar server-owned keys.
+- Suspension is enforced three times: Firebase Auth (disabled account, revoked refresh tokens), these rules, and `assertAccountActive` in every API.
 - Covered by `tests/rules/` (22 rules cases plus 4 end-to-end phone-verification cases, run in the Firestore and Auth emulators).
 
 Secrets: `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `SERPAPI_API_KEY`, `TAVILY_API_KEY`, `VYNFY_API_KEY`, `OTP_HMAC_SECRET` and `FIREBASE_SERVICE_ACCOUNT` are read only in `server/env.ts`. They are never logged and never sent to the browser.

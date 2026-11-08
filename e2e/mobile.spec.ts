@@ -58,7 +58,29 @@ test('deep links to protected pages also require sign-in', async ({ page }) => {
 test('password reset screen renders without overflow', async ({ page }) => {
   await page.goto('/reset');
   await expect(page.getByRole('heading', { name: 'Reset your password' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Text me a code' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Email me a reset link instead' })).toBeVisible();
   await noHorizontalScroll(page);
+});
+
+test('reset rejects an invalid email before contacting the server', async ({ page }) => {
+  let called = false;
+  await page.route('**/api/recovery', (route) => {
+    called = true;
+    return route.abort();
+  });
+  await page.goto('/reset');
+  await page.getByLabel('Email').fill('not-an-email');
+  await page.getByRole('button', { name: 'Text me a code' }).click();
+  await expect(page.getByText('Enter a valid email address.')).toBeVisible();
+  expect(called).toBe(false);
+});
+
+test('admin and security pages require sign-in', async ({ page }) => {
+  for (const path of ['/admin/users', '/settings/security']) {
+    await page.goto(path);
+    await expect(page).toHaveURL(/\/login$/);
+  }
 });
 
 test('PWA metadata for Add to Home Screen is present', async ({ page, request }) => {

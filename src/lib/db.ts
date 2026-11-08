@@ -16,6 +16,7 @@ import {
   type DocumentData,
   type QueryDocumentSnapshot,
 } from 'firebase/firestore';
+import { api, ApiError } from './api';
 import { db } from './firebase';
 import type { Attachment, Conversation, Memory, Message, Project, UserSettings } from './types';
 import { newId } from './utils';
@@ -38,6 +39,8 @@ export const paths = {
   savedItem: (uid: string, id: string) => doc(db, 'users', uid, 'savedResponses', id),
   usage: (uid: string) => collection(db, 'users', uid, 'usage'),
   convVector: (uid: string, cid: string) => doc(db, 'users', uid, 'convVectors', cid),
+  projectMemory: (uid: string) => collection(db, 'users', uid, 'projectMemory'),
+  securityEvents: (uid: string) => collection(db, 'users', uid, 'securityEvents'),
 };
 
 export function fromSnap<T>(snap: QueryDocumentSnapshot<DocumentData>): T {
@@ -85,8 +88,24 @@ export async function attachDocument(uid: string, cid: string, documentId: strin
   });
 }
 
-/** Delete a conversation and all of its messages. */
+/**
+ * Delete a conversation with the server-side policy: messages, summary,
+ * history-index entries, automatic memories taken from it and project-memory
+ * references. Falls back to deleting the chat itself when the server cannot
+ * be reached (the server cleans the rest up on the next delete).
+ */
 export async function deleteConversation(uid: string, cid: string) {
+  try {
+    await api('memory', { json: { action: 'deleteConversation', conversationId: cid } });
+    return;
+  } catch (err) {
+    if (!(err instanceof ApiError) || (err.status !== 0 && err.status < 500)) throw err;
+  }
+  await deleteConversationLocal(uid, cid);
+}
+
+/** Delete a conversation and all of its messages directly (offline fallback). */
+async function deleteConversationLocal(uid: string, cid: string) {
   while (true) {
     const snap = await getDocs(query(paths.messages(uid, cid), limit(400)));
     if (snap.empty) break;
@@ -201,6 +220,8 @@ export async function saveMemory(uid: string, m: Partial<Memory> & { text: strin
       category: m.category ?? 'fact',
       reason: m.reason ?? 'Added manually.',
       active: m.active ?? true,
+      ...(m.importance !== undefined ? { importance: Math.min(5, Math.max(1, Math.round(m.importance))) } : {}),
+      ...(m.project !== undefined ? { project: m.project } : {}),
       updatedAt: serverTimestamp(),
       ...(m.id ? {} : { origin: 'manual', createdAt: serverTimestamp(), sourceConversationId: null }),
     },

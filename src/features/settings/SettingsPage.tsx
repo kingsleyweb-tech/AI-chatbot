@@ -23,7 +23,7 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Button, ConfirmDialog, Input, Label, Select, Spinner, Switch, Textarea } from '@/components/ui';
 import { paths } from '@/lib/db';
@@ -39,10 +39,13 @@ import { useSettings } from '@/state/settings';
 import { useToast } from '@/state/toast';
 import { ModelPicker } from '../chat/ModelPicker';
 import { Page } from '../shell/Page';
+import { PhoneManager, SecuritySection } from './AccountSecurity';
+import { maskPhone, PageTitle, providerLabel, Row, Section } from './parts';
 
-type SectionId = 'account' | 'appearance' | 'personalization' | 'general' | 'models' | 'memory' | 'usage' | 'access' | 'about';
+type SectionId = 'account' | 'security' | 'appearance' | 'personalization' | 'general' | 'models' | 'memory' | 'usage' | 'access' | 'about';
 const SECTIONS: { id: SectionId; label: string; admin?: boolean }[] = [
   { id: 'account', label: 'Account' },
+  { id: 'security', label: 'Security' },
   { id: 'appearance', label: 'Appearance' },
   { id: 'personalization', label: 'Personalization' },
   { id: 'general', label: 'General' },
@@ -52,32 +55,6 @@ const SECTIONS: { id: SectionId; label: string; admin?: boolean }[] = [
   { id: 'access', label: 'Access', admin: true },
   { id: 'about', label: 'About' },
 ];
-
-/** Title of the open sub-page; a group with the same title does not repeat it. */
-const PageTitle = createContext('');
-
-function Row({ title, description, children }: { title: string; description?: ReactNode; children: ReactNode }) {
-  return (
-    <div className="flex flex-col gap-2 py-3 sm:min-h-12 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
-      <div className="min-w-0">
-        <div className="text-[15px]">{title}</div>
-        {description && <div className="mt-0.5 text-xs text-muted">{description}</div>}
-      </div>
-      <div className="shrink-0 sm:max-w-[60%]">{children}</div>
-    </div>
-  );
-}
-
-/** Grouped, inset list section: small header above a rounded card. */
-function Section({ title, children }: { title: string; children: ReactNode }) {
-  const page = useContext(PageTitle);
-  return (
-    <section className="mb-7">
-      {title !== page && <h2 className="mb-1.5 px-4 text-[13px] font-medium text-muted">{title}</h2>}
-      <div className="divide-y divide-border overflow-hidden rounded-2xl bg-elevated [&>*]:px-4">{children}</div>
-    </section>
-  );
-}
 
 /** A tappable row in the main list: icon, label, value and chevron. */
 function NavRow({ to, icon: Icon, label, value }: { to?: string; icon: LucideIcon; label: string; value?: ReactNode }) {
@@ -107,11 +84,6 @@ function Group({ title, children }: { title?: string; children: ReactNode }) {
   );
 }
 
-function providerLabel(id: string) {
-  return id === 'google.com' ? 'Google' : id === 'apple.com' ? 'Apple' : id === 'password' ? 'Email and password' : id;
-}
-const maskPhone = (p: string) => (p.length > 8 ? `${p.slice(0, 4)} ${'\u2022'.repeat(p.length - 8)} ${p.slice(-4)}` : p);
-
 /** Text setting that saves on blur, so typing doesn't write on every keystroke. */
 function useDraft(value: string, save: (v: string) => Promise<void>) {
   const [draft, setDraft] = useState(value);
@@ -130,7 +102,7 @@ function useDraft(value: string, save: (v: string) => Promise<void>) {
 }
 
 function AccountSection() {
-  const { user, profile, admin, provider, signOut } = useAuth();
+  const { user, profile, admin, signOut } = useAuth();
   const uid = useUid();
   const toast = useToast();
   const name = useDraft(profile?.displayName ?? user?.displayName ?? '', async (v) => {
@@ -139,6 +111,7 @@ function AccountSection() {
     toast('Name updated.', 'success');
   });
   return (
+    <>
     <Section title="Account">
       <Row title="Email" description={admin ? 'Administrator' : 'Approved user'}>
         <span className="break-all text-sm text-muted">{user?.email}</span>
@@ -147,12 +120,6 @@ function AccountSection() {
         <div className="flex gap-2">
           <Input value={name.draft} maxLength={80} onChange={(e) => name.setDraft(e.target.value)} onBlur={name.commit} className="sm:w-60" />
         </div>
-      </Row>
-      <Row title="Phone number" description={profile?.phoneVerified ? 'Verified by text message.' : provider === 'password' ? undefined : 'Optional for Google sign-in. Add one to secure your account.'}>
-        <span className="inline-flex items-center gap-1.5 text-sm text-muted">
-          {profile?.phoneVerified && <ShieldCheck className="size-4 text-accent" />}
-          {profile?.phoneNumber ? maskPhone(profile.phoneNumber) : 'Not added'}
-        </span>
       </Row>
       <Row title="Sign-in method">
         <span className="text-sm text-muted">{user?.providerData.map((p) => providerLabel(p.providerId)).join(', ')}</span>
@@ -163,6 +130,8 @@ function AccountSection() {
         </Button>
       </Row>
     </Section>
+    <PhoneManager />
+    </>
   );
 }
 
@@ -883,8 +852,10 @@ function SettingsHome() {
           value={profile?.phoneNumber ? maskPhone(profile.phoneNumber) : provider === 'password' ? 'Not added' : 'Not required'}
         />
         <NavRow to="/settings/account" icon={KeyRound} label="Sign-in method" value={provider ? providerLabel(provider) : ''} />
+        <NavRow to="/settings/security" icon={ShieldCheck} label="Security and activity" />
         <NavRow to="/settings/usage" icon={BarChart3} label="Usage" />
-        {admin && <NavRow to="/settings/access" icon={Users} label="Access" value="Admin" />}
+        {admin && <NavRow to="/admin/users" icon={Users} label="Users" value="Admin" />}
+        {admin && <NavRow to="/settings/access" icon={ShieldCheck} label="Access and registration" value="Admin" />}
       </Group>
 
       <Group title="Theme">
@@ -984,6 +955,7 @@ export default function SettingsPage() {
         </div>
         <PageTitle.Provider value={current.label}>
           {current.id === 'account' && <AccountSection />}
+          {current.id === 'security' && <SecuritySection />}
           {current.id === 'appearance' && <AppearanceSection />}
           {current.id === 'personalization' && <PersonalizationSection />}
           {current.id === 'general' && <GeneralSection />}
