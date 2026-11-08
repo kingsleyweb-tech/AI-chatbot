@@ -32,7 +32,7 @@ export class FakeDb {
     let rows = [...this.docs.entries()]
       .filter(([p]) => p.startsWith(coll + '/') && p.split('/').length === depth)
       .filter(([, d]) => (opts.where ?? []).every(([f, op, v]) => op === 'EQUAL' && d[f] === v))
-      .map(([p, d]) => ({ id: p.split('/').pop()!, path: p, data: structuredClone(d) as T }));
+      .map(([p, d]) => ({ id: p.split('/').pop()!, path: p, data: structuredClone(d) as T, updateTime: this.times.get(p) }));
     if (opts.orderBy) {
       const f = opts.orderBy;
       rows.sort((a, b) => ((a.data as Record<string, number>)[f] > (b.data as Record<string, number>)[f] ? 1 : -1) * (opts.direction === 'DESCENDING' ? -1 : 1));
@@ -67,6 +67,28 @@ export class FakeDb {
         this.docs.set(w.path, d);
       }
     }
+  }
+  async count(coll: string, where: [string, string, unknown][] = []) {
+    return (await this.list(coll, { where })).length;
+  }
+  async listCollectionIds(docPath: string) {
+    const depth = docPath.split('/').length;
+    const ids = new Set<string>();
+    for (const p of this.docs.keys()) {
+      const parts = p.split('/');
+      if (p.startsWith(docPath + '/') && parts.length > depth + 1) ids.add(parts[depth]);
+    }
+    return [...ids];
+  }
+  /** includes "missing" parents of nested documents, like listDocuments?showMissing=true */
+  async listDocumentPaths(coll: string, pageSize = 300) {
+    const depth = coll.split('/').length + 1;
+    const out = new Set<string>();
+    for (const p of this.docs.keys()) {
+      if (!p.startsWith(coll + '/')) continue;
+      out.add(p.split('/').slice(0, depth).join('/'));
+    }
+    return [...out].slice(0, pageSize);
   }
   /** paths under a prefix */
   under(prefix: string) {

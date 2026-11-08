@@ -8,9 +8,15 @@ rules_version = '2';
 // - Email/password sign-ins additionally need the phoneVerified custom claim,
 //   which only the server sets after a correct SMS code. Google and Apple
 //   sign-ins do not need it.
-// - One-time-code records (otp, otpPhones, otpStats) and phone ownership
-//   (phoneNumbers) are server-only: no client rule matches them, so the
-//   catch-all at the bottom denies every read and write.
+// - Suspended or deleted accounts, and sessions that started before a
+//   revocation (users/{uid}.sessionsValidAfter), are refused everywhere:
+//   accountActive() is part of verified().
+// - One-time-code and recovery records (otp, otpPhones, otpStats, otpRecovery,
+//   recovery, rateLimits) and phone ownership (phoneNumbers) are server-only:
+//   no client rule matches them, so the catch-all at the bottom denies every
+//   read and write.
+// - Security events (users/{uid}/securityEvents) and admin activity logs
+//   (adminLogs) are written only by the server; owners / admins can read them.
 // - Every user-owned record lives under users/{uid}/... and is only
 //   accessible to that uid. Admins cannot read other users' data.
 // - The backend talks to Firestore with the caller's own ID token, so these
@@ -25,8 +31,21 @@ service cloud.firestore {
       return request.auth.token.firebase.sign_in_provider != 'password'
         || request.auth.token.get('phoneVerified', false) == true;
     }
+    function profilePath() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+    // Account not suspended or deleted, and this session not revoked.
+    function accountActive() {
+      return !exists(profilePath())
+        || (get(profilePath()).data.get('accountStatus', 'active') == 'active'
+          && request.auth.token.auth_time >= get(profilePath()).data.get('sessionsValidAfter', 0));
+    }
     function verified() {
-      return signedIn() && request.auth.token.email_verified == true && phoneOk();
+      return signedIn() && request.auth.token.email_verified == true && phoneOk() && accountActive();
+    }
+    function serverOnlyProfileKeys() {
+      return ['phoneNumber', 'phoneVerified', 'phoneVerifiedAt', 'accountStatus', 'sessionsValidAfter',
+        'suspendedAt', 'suspendedReason', 'deletionScheduledAt', 'purgeAfter', 'lastAuthTime'];
     }
     function email() {
       return request.auth.token.email.lower();
@@ -123,12 +142,18 @@ service cloud.firestore {
     }
 
     match /users/{uid} {
-      // Phone fields and account status are written only by the server.
-      allow read, delete: if isOwner(uid);
+      // Phone fields, account status and session revocation are written only by the server.
+      // Deleting the account record is an administrator (server) operation.
+      allow read: if isOwner(uid);
       allow create: if isOwner(uid)
-        && !request.resource.data.keys().hasAny(['phoneNumber', 'phoneVerified', 'phoneVerifiedAt', 'accountStatus']);
+        && !request.resource.data.keys().hasAny(serverOnlyProfileKeys());
       allow update: if isOwner(uid)
-        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['phoneNumber', 'phoneVerified', 'phoneVerifiedAt', 'accountStatus']);
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(serverOnlyProfileKeys());
+
+      match /securityEvents/{eid} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
 
       match /conversations/{cid} {
         allow read, delete: if isOwner(uid);
@@ -178,8 +203,14 @@ service cloud.firestore {
       // projects, savedResponses, usage, memoryVectors, convVectors, ...
       match /{collection}/{docId} {
         allow read, write: if isOwner(uid)
-          && collection in ['projects', 'savedResponses', 'usage', 'memoryVectors', 'convVectors', 'searchCache'];
+          && collection in ['projects', 'savedResponses', 'usage', 'memoryVectors', 'convVectors', 'searchCache', 'projectMemory', 'convIndex'];
       }
+    }
+
+    // Administrator activity log: readable by admins, written only by the server.
+    match /adminLogs/{id} {
+      allow read: if isAdmin();
+      allow write: if false;
     }
 
     // Deny everything else.

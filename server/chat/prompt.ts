@@ -19,6 +19,12 @@ export interface PromptContext {
   projectInstructions?: string | null;
   memories?: string;
   relatedConversations?: { title: string; summary: string }[];
+  /** excerpts of earlier exchanges retrieved from past conversations */
+  pastExchanges?: string;
+  /** rolling summary of the earlier part of this conversation */
+  historySummary?: string;
+  /** structured brief of the project in focus */
+  projectBrief?: { name: string; text: string } | null;
   documents?: string;
   failedDocuments?: string[];
   /** knowledge base excerpts ([K1] ...) */
@@ -90,10 +96,28 @@ export function buildSystemPrompt(ctx: PromptContext): string {
         `If the user corrects one, follow the correction.\n${ctx.memories}`,
     );
   }
+  if (ctx.projectBrief?.text) {
+    parts.push(
+      `## Project memory: ${ctx.projectBrief.name}\nWhat you know about this project of the user's from earlier conversations. ` +
+        `It may be outdated; the user's latest statements win. Only use it for this project.\n${ctx.projectBrief.text.slice(0, 4000)}`,
+    );
+  }
   if (ctx.relatedConversations?.length) {
     parts.push(
       `## Possibly related earlier conversations (summaries)\n` +
         ctx.relatedConversations.map((c) => `- "${c.title}": ${c.summary}`).join('\n'),
+    );
+  }
+  if (ctx.pastExchanges) {
+    parts.push(
+      `## Relevant excerpts from earlier conversations\nRetrieved from the user's past chats for this message (chat title and date). ` +
+        `Use them when the user refers to something discussed before; say which chat it came from when helpful. ` +
+        `If they don't cover what the user asks about, say you can't find it in past conversations rather than guessing.\n\n${ctx.pastExchanges}`,
+    );
+  }
+  if (ctx.historySummary) {
+    parts.push(
+      `## Earlier in this conversation (summary)\nThe oldest messages of this chat are summarized here; the recent ones follow in full.\n${ctx.historySummary.slice(0, 3500)}`,
     );
   }
   if (ctx.documents) {

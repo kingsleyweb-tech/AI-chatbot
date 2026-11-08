@@ -1,0 +1,76 @@
+/**
+ * Account security events and administrator activity logs.
+ *
+ * Both are written only by the server with privileged credentials:
+ *   users/{uid}/securityEvents/{id}   readable by the account owner, never writable by clients
+ *   adminLogs/{id}                    readable by administrators, never writable by clients
+ * Entries carry codes and coarse metadata only: never passwords, codes, tokens
+ * or full phone numbers.
+ */
+import { randomBytes } from 'node:crypto';
+import type { Firestore } from '../firestore.js';
+
+export const SECURITY_EVENTS = [
+  'login',
+  'login_failed',
+  'password_reset',
+  'password_changed',
+  'phone_verified',
+  'phone_changed',
+  'phone_removed',
+  'provider_linked',
+  'sessions_revoked',
+  'account_suspended',
+  'account_reactivated',
+  'account_deletion_scheduled',
+  'account_restored',
+  'data_exported',
+] as const;
+export type SecurityEventType = (typeof SECURITY_EVENTS)[number];
+
+export const ADMIN_ACTIONS = ['user_suspended', 'user_reactivated', 'user_deletion_scheduled', 'user_restored', 'user_purged', 'user_approved', 'user_unapproved'] as const;
+export type AdminAction = (typeof ADMIN_ACTIONS)[number];
+
+/** Short, sortable id: time first so documents list in order. */
+export function eventId(now = Date.now()) {
+  return `${String(now).padStart(14, '0')}_${randomBytes(4).toString('hex')}`;
+}
+
+/** Coarse device description from a user agent ("Safari on iPhone"); never the full string. */
+export function deviceLabel(ua: string | null | undefined): string {
+  if (!ua) return 'Unknown device';
+  const os = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android' : /Mac OS X|Macintosh/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : /Linux/.test(ua) ? 'Linux' : 'Unknown OS';
+  const browser = /Edg\//.test(ua) ? 'Edge' : /OPR\//.test(ua) ? 'Opera' : /CriOS|Chrome\//.test(ua) ? 'Chrome' : /FxiOS|Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
+  return `${browser} on ${os}`;
+}
+
+export async function recordSecurityEvent(
+  db: Firestore,
+  uid: string,
+  type: SecurityEventType,
+  meta: { provider?: string; device?: string; by?: 'user' | 'admin' | 'system'; detail?: string } = {},
+  now = Date.now(),
+): Promise<void> {
+  await db
+    .set(`users/${uid}/securityEvents/${eventId(now)}`, {
+      type,
+      at: new Date(now),
+      provider: meta.provider ?? null,
+      device: meta.device ?? null,
+      by: meta.by ?? 'user',
+      detail: meta.detail?.slice(0, 200) ?? null,
+    })
+    .catch((err) => console.warn('[security] event not recorded', type, err instanceof Error ? err.message : err));
+}
+
+export async function recordAdminAction(
+  db: Firestore,
+  entry: { action: AdminAction; adminUid: string; adminEmail: string | null; targetUid: string; targetEmail: string | null; detail?: string },
+  now = Date.now(),
+): Promise<void> {
+  await db.set(`adminLogs/${eventId(now)}`, {
+    ...entry,
+    detail: entry.detail?.slice(0, 300) ?? null,
+    at: new Date(now),
+  });
+}

@@ -11,6 +11,10 @@ export interface MemoryDoc {
   origin: 'auto' | 'manual';
   sourceConversationId?: string | null;
   sourceTitle?: string | null;
+  /** 1 (minor) .. 5 (essential); missing = 3 */
+  importance?: number;
+  /** projectMemory slug when the memory is about one project, else null (applies everywhere) */
+  project?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -45,24 +49,46 @@ export async function loadMemories(db: Firestore, uid: string): Promise<LoadedMe
 export function selectRelevant(
   memories: LoadedMemory[],
   query: { text: string; vector?: number[] | null; model?: string | null },
-  limit = 12,
+  opts: { focusProject?: string | null; limit?: number } = {},
 ): LoadedMemory[] {
-  if (memories.length <= SEND_ALL_BELOW) return memories;
-  const ranked = rank(memories, query, (m) => ({
+  const limit = opts.limit ?? 12;
+  const focus = opts.focusProject ?? null;
+  // never mix projects: memories tagged with another project are left out
+  const pool = memories.filter((m) => !m.data.project || m.data.project === focus);
+  const general = (m: LoadedMemory) => !m.data.project;
+  const ranked = rank(pool, query, (m) => ({
     text: m.data.text,
     vector: m.vector?.embedding,
     model: m.vector?.model,
   }));
-  // Instructions and preferences are always useful; keep a few regardless of score.
-  const always = memories.filter((m) => m.data.category === 'instruction').slice(0, 5);
-  const relevant = ranked.filter((r) => r.score > 0.3).map((r) => r.item);
+  const scored = new Map(ranked.map((r) => [r.item, r.score]));
+  const byScore = (a: LoadedMemory, b: LoadedMemory) => (scored.get(b) ?? 0) - (scored.get(a) ?? 0) || importanceOf(b) - importanceOf(a);
+  // standing instructions and important preferences apply to every message
+  const always = pool
+    .filter((m) => general(m) && (m.data.category === 'instruction' || m.data.category === 'preference') && importanceOf(m) >= 3)
+    .sort((a, b) => importanceOf(b) - importanceOf(a))
+    .slice(0, 6);
+  // the focused project's own memories are always relevant to it
+  const projectOwn = focus ? pool.filter((m) => m.data.project === focus).sort(byScore).slice(0, 6) : [];
   const out = [...always];
-  for (const m of relevant) if (!out.includes(m) && out.length < limit) out.push(m);
+  for (const m of projectOwn) if (!out.includes(m)) out.push(m);
+  if (pool.length <= SEND_ALL_BELOW) {
+    for (const m of [...pool].sort(byScore)) if (!out.includes(m)) out.push(m);
+    return out;
+  }
+  // more important memories need a slightly lower relevance score
+  const threshold = (m: LoadedMemory) => 0.3 - (importanceOf(m) - 3) * 0.03;
+  for (const r of ranked) {
+    if (out.length >= limit) break;
+    if (!out.includes(r.item) && r.score > threshold(r.item)) out.push(r.item);
+  }
   return out;
 }
 
+export const importanceOf = (m: LoadedMemory) => Math.min(5, Math.max(1, Math.round(m.data.importance ?? 3)));
+
 export function formatMemories(memories: LoadedMemory[]): string {
-  return memories.map((m) => `- [${m.data.category}] ${m.data.text}`).join('\n');
+  return memories.map((m) => `- [${m.data.category}${importanceOf(m) >= 4 ? ', important' : ''}] ${m.data.text}`).join('\n');
 }
 
 interface MemoryOp {
@@ -71,6 +97,9 @@ interface MemoryOp {
   text?: string;
   category?: string;
   reason?: string;
+  importance?: number;
+  /** true when the memory only applies to the exchange's project */
+  projectSpecific?: boolean;
 }
 
 const EXTRACT_PROMPT = `You manage the long-term memory of a personal AI assistant.
@@ -84,11 +113,16 @@ If the user corrects a memory, UPDATE it. If the user asks you to forget somethi
 Never duplicate an existing memory; update it instead.
 Write each memory as one short third-person sentence, e.g. "Prefers concise answers with code examples."
 
+Rate each memory's importance 1-5 (5 = standing instruction or core fact the assistant should always know; 1 = minor detail).
+If the exchange is about a specific named project the user works on (an app, product, research or business project), give its name in "project"
+(reuse the exact name from KNOWN PROJECTS when it is the same project), else null. Mark a memory "projectSpecific": true when it only applies
+to that project (e.g. its tech stack or a decision about it); general preferences are false.
+
 Respond with JSON only:
-{"operations":[{"op":"add","text":"...","category":"preference|personal|project|technical|instruction|decision|fact|topic","reason":"why this is worth remembering"},
-{"op":"update","id":"<existing id>","text":"...","reason":"..."},
+{"project":null,"operations":[{"op":"add","text":"...","category":"preference|personal|project|technical|instruction|decision|fact|topic","importance":3,"projectSpecific":false,"reason":"why this is worth remembering"},
+{"op":"update","id":"<existing id>","text":"...","importance":3,"reason":"..."},
 {"op":"delete","id":"<existing id>","reason":"..."}]}
-Return {"operations":[]} when nothing should change.`;
+Return {"project":null,"operations":[]} when nothing should change.`;
 
 /**
  * Memory pipeline step run after each assistant reply: extract candidate
@@ -101,14 +135,21 @@ export async function extractAndStoreMemories(args: {
   conversationTitle?: string | null;
   userText: string;
   assistantText: string;
-}): Promise<{ added: number; updated: number; deleted: number }> {
+  /** names of the user's known projects, so the extractor reuses them */
+  knownProjects?: string[];
+  /** maps a project name to its projectMemory slug */
+  slugFor?: (name: string) => string;
+  complete?: typeof utilityComplete;
+  embedFn?: typeof embed;
+}): Promise<{ added: number; updated: number; deleted: number; project: string | null }> {
   const { db, uid } = args;
-  const result = { added: 0, updated: 0, deleted: 0 };
+  const embedder = args.embedFn ?? embed;
+  const result = { added: 0, updated: 0, deleted: 0, project: null as string | null };
   if (args.userText.trim().length < 8) return result;
 
   const existing = await loadMemories(db, uid);
   const exchange = `USER: ${args.userText.slice(0, 4000)}\n\nASSISTANT: ${args.assistantText.slice(0, 2000)}`;
-  const queryEmbedding = await embed([args.userText.slice(0, 2000)]);
+  const queryEmbedding = await embedder([args.userText.slice(0, 2000)]);
   const related = rank(
     existing,
     { text: args.userText, vector: queryEmbedding?.vectors[0], model: queryEmbedding?.model },
@@ -117,23 +158,28 @@ export async function extractAndStoreMemories(args: {
     .slice(0, 20)
     .map((r) => r.item);
 
-  const raw = await utilityComplete(
+  const raw = await (args.complete ?? utilityComplete)(
     [
       { role: 'system', content: EXTRACT_PROMPT },
       {
         role: 'user',
-        content: `EXISTING MEMORIES:\n${related.map((m) => `${m.id}: ${m.data.text}`).join('\n') || '(none)'}\n\nLATEST EXCHANGE:\n${exchange}`,
+        content:
+          `KNOWN PROJECTS: ${(args.knownProjects ?? []).join('; ') || '(none)'}\n\n` +
+          `EXISTING MEMORIES:\n${related.map((m) => `${m.id}: ${m.data.text}`).join('\n') || '(none)'}\n\nLATEST EXCHANGE:\n${exchange}`,
       },
     ],
-    { json: true, maxTokens: 700 },
+    { json: true, maxTokens: 800 },
   );
-  const parsed = parseJsonObject<{ operations?: MemoryOp[] }>(raw);
-  const ops = (parsed?.operations ?? []).slice(0, 6);
+  const parsed = parseJsonObject<{ project?: unknown; operations?: MemoryOp[] }>(raw);
+  const rawProject = typeof parsed?.project === 'string' ? parsed.project.trim() : '';
+  result.project = rawProject && rawProject.toLowerCase() !== 'null' ? rawProject.slice(0, 80) : null;
+  const projectSlug = result.project && args.slugFor ? args.slugFor(result.project) : null;
+  const ops = (Array.isArray(parsed?.operations) ? parsed.operations : []).slice(0, 6);
   if (!ops.length) return result;
 
   const validIds = new Set(existing.map((m) => m.id));
   const toEmbed = ops.filter((o) => (o.op === 'add' || o.op === 'update') && o.text?.trim());
-  const embedded = await embed(toEmbed.map((o) => o.text!.trim()));
+  const embedded = await embedder(toEmbed.map((o) => o.text!.trim()));
   const writes: Write[] = [];
 
   for (const op of ops) {
@@ -166,9 +212,14 @@ export async function extractAndStoreMemories(args: {
     }
 
     const id = targetId ?? crypto.randomUUID().replace(/-/g, '').slice(0, 20);
+    const importance = typeof op.importance === 'number' && Number.isFinite(op.importance) ? Math.min(5, Math.max(1, Math.round(op.importance))) : 3;
+    const scope =
+      op.op === 'add' || typeof op.projectSpecific === 'boolean' ? { project: op.projectSpecific && projectSlug ? projectSlug : null } : {};
     const base = {
       text,
       reason,
+      importance,
+      ...scope,
       active: true,
       updatedAt: SERVER_TIME,
       sourceConversationId: args.conversationId,

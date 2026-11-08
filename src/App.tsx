@@ -34,7 +34,7 @@ function Protected({ children }: { children: ReactNode }) {
   if (access === 'signed-out') return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   if (access === 'phone') return <Navigate to="/verify-phone" replace />;
   if (access === 'unverified') return <Navigate to="/verify" replace />;
-  if (access === 'denied' || access === 'error') return <Navigate to="/denied" replace />;
+  if (access === 'denied' || access === 'error' || access === 'suspended' || access === 'deleted') return <Navigate to="/denied" replace />;
   return <>{children}</>;
 }
 

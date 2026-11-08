@@ -1,6 +1,7 @@
 import { onAuthStateChanged, signOut as fbSignOut, type User } from 'firebase/auth';
 import { doc, getDoc, onSnapshot, serverTimestamp, setDoc, updateDoc, FirestoreError } from 'firebase/firestore';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { ACCOUNT_BLOCK_EVENT, api } from '@/lib/api';
 import { completeRedirect } from '@/lib/authProviders';
 import { auth, db, firebaseConfigured } from '@/lib/firebase';
 import { paths } from '@/lib/db';
@@ -15,10 +16,12 @@ export const BOOTSTRAP_ADMINS = ['kingsleyanaab604@gmail.com'];
  * phone       email/password account that has not verified a phone number
  * unverified  email address not verified yet
  * denied      not on the approved list
+ * suspended   suspended by an administrator
+ * deleted     scheduled for deletion by an administrator
  * error       access or profile could not be checked (retry offered)
  * allowed     full access
  */
-export type AccessState = 'loading' | 'signed-out' | 'phone' | 'unverified' | 'denied' | 'allowed' | 'error';
+export type AccessState = 'loading' | 'signed-out' | 'phone' | 'unverified' | 'denied' | 'suspended' | 'deleted' | 'allowed' | 'error';
 
 interface AuthCtx {
   user: User | null;
@@ -63,6 +66,24 @@ interface Decision {
   admin: boolean;
   provider: string | null;
   error?: string;
+  /** the session was revoked (password reset, sign out everywhere): sign out */
+  revoked?: boolean;
+}
+
+/**
+ * Ask the server why the rules refused this account: the profile of a
+ * suspended or deleted account, or of a revoked session, is unreadable.
+ */
+async function blockedState(provider: string | null): Promise<Decision | null> {
+  try {
+    const s = await api<{ accountStatus?: string; sessionRevoked?: boolean }>('account', { json: { action: 'status' } });
+    if (s.accountStatus === 'suspended') return { state: 'suspended', admin: false, provider };
+    if (s.accountStatus === 'deleted') return { state: 'deleted', admin: false, provider };
+    if (s.sessionRevoked) return { state: 'signed-out', admin: false, provider, revoked: true };
+  } catch {
+    /* fall through to the normal decision */
+  }
+  return null;
 }
 
 async function checkAccess(user: User, forceToken: boolean): Promise<Decision> {
@@ -74,6 +95,9 @@ async function checkAccess(user: User, forceToken: boolean): Promise<Decision> {
     // Email/password accounts must verify a phone number (enforced again by the rules and APIs).
     if (provider === 'password' && t.claims.phoneVerified !== true) return { state: 'phone', admin: false, provider };
   } catch (err) {
+    // A disabled account cannot refresh its token: suspended or scheduled for deletion.
+    if ((err as { code?: string })?.code === 'auth/user-disabled') return { state: 'suspended', admin: false, provider };
+    if ((err as { code?: string })?.code === 'auth/user-token-expired') return { state: 'signed-out', admin: false, provider, revoked: true };
     if (!offline(err)) return { state: 'error', admin: false, provider, error: 'Could not check your session. Please try again.' };
   }
   if (!user.emailVerified) return { state: 'unverified', admin: false, provider };
@@ -85,7 +109,7 @@ async function checkAccess(user: User, forceToken: boolean): Promise<Decision> {
     const admin = admins.includes(email);
     return { state: admin || allowed.includes(email) ? 'allowed' : 'denied', admin, provider };
   } catch (err) {
-    if (err instanceof FirestoreError && err.code === 'permission-denied') return { state: 'denied', admin: false, provider };
+    if (err instanceof FirestoreError && err.code === 'permission-denied') return (await blockedState(provider)) ?? { state: 'denied', admin: false, provider };
     if (offline(err)) {
       // Offline: trust the cached decision so the installed app opens without network.
       const cached = readCache(user.uid);
@@ -160,6 +184,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAdmin(r.admin);
     setProvider(r.provider);
     setAccessError(r.error ?? null);
+    if (r.revoked) {
+      writeCache(u.uid, null);
+      setSignInError('You were signed out because your password was changed or all sessions were signed out. Please sign in again.');
+      await fbSignOut(auth).catch(() => undefined);
+      return;
+    }
     if (r.state === 'allowed') {
       writeCache(u.uid, r.admin ? 'admin' : 'allowed');
       try {
@@ -174,6 +204,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       }
       if (mine !== seq.current) return;
+      // one login event per sign-in session (deduplicated on the server)
+      void api('account', { json: { action: 'session' } }).catch(() => undefined);
     } else if (r.state !== 'error') {
       writeCache(u.uid, null);
     }
@@ -189,6 +221,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(u);
       void evaluate(u);
     });
+  }, [evaluate]);
+
+  // An API call reported a suspended/deleted account or a revoked session: re-check now.
+  useEffect(() => {
+    const onBlocked = () => {
+      if (auth.currentUser) void evaluate(auth.currentUser, true);
+    };
+    window.addEventListener(ACCOUNT_BLOCK_EVENT, onBlocked);
+    return () => window.removeEventListener(ACCOUNT_BLOCK_EVENT, onBlocked);
   }, [evaluate]);
 
   // Live profile (settings) subscription once allowed.

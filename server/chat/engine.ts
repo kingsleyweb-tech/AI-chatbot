@@ -18,7 +18,10 @@ import {
   generateTitle,
   relatedConversations,
   updateConversationSummary,
+  updateHistorySummary,
 } from '../memory/conversations.js';
+import { formatHistory, indexExchange, loadIndex, searchHistory, tagConversationProject, type IndexEntry } from '../memory/history.js';
+import { detectFocus, formatProject, loadProjects, projectSlug, updateProjectMemory, type LoadedProject } from '../memory/projects.js';
 import { getCatalog, providerFor } from '../providers/registry.js';
 import { loadAiConfig } from '../config/ai.js';
 import { routeModel, nextInChain } from '../router/route.js';
@@ -100,6 +103,10 @@ interface ConversationDoc {
   projectId?: string | null;
   messageCount?: number;
   summaryAt?: string;
+  /** projectMemory slug this chat is about */
+  projectKey?: string | null;
+  historySummary?: string;
+  historySummaryCount?: number;
 }
 
 const APPROVAL_STOP = Symbol('approval_required');
@@ -212,6 +219,8 @@ export async function runChat(
   };
   const memoryOn = body.options.memory && settings.memoryEnabled !== false;
   const projectId = body.options.projectId ?? convDoc?.data.projectId ?? null;
+  /** turns in the conversation including this user message (the client sends at most the last 80) */
+  const totalTurns = Math.max(convDoc?.data.messageCount ?? 0, body.messages.length);
 
   const encoder = new TextEncoder();
   let closed = false;
@@ -244,6 +253,8 @@ export async function runChat(
         let routeInfo: RouteInfo | null = null;
         let approval: ApprovalRequest | null = null;
         let contextUsed: { memories: number; documents: number; conversations: number; knowledge: number; web: number } | null = null;
+        let focus: ReturnType<typeof detectFocus> = null;
+        let knownProjects: LoadedProject[] = [];
         /** analytics counters for usage/{day} (codes only, never message text) */
         const counters: Record<string, number> = {};
         const count = (path: string[], n = 1) => {
@@ -346,22 +357,60 @@ export async function runChat(
             }
           }
 
-          const [memories, related, project, docs, web] = await Promise.all([
-            memoryOn
-              ? loadMemories(db, uid)
-                  .then((m) => selectRelevant(m, query))
-                  .catch(() => [])
-              : Promise.resolve([]),
-            memoryOn
-              ? relatedConversations({ db, uid, excludeId: body.conversationId, query }).catch(
-                  () => [],
-                )
-              : Promise.resolve([]),
+          // ---- Project focus (decides which memories and past chats may be used) ----
+          const [project, projects, historyIndex] = await Promise.all([
             projectId
               ? db
                   .get<{ name?: string; instructions?: string }>(`${base}/projects/${projectId}`)
                   .catch(() => null)
               : Promise.resolve(null),
+            memoryOn ? loadProjects(db, uid).catch(() => [] as LoadedProject[]) : Promise.resolve([] as LoadedProject[]),
+            memoryOn ? loadIndex(db, uid).catch(() => [] as IndexEntry[]) : Promise.resolve([] as IndexEntry[]),
+          ]);
+          focus = memoryOn
+            ? detectFocus({
+                text: queryText,
+                vector: query.vector,
+                model: query.model,
+                projects,
+                linkedProjectName: project?.data.name ?? null,
+                conversationProject: convDoc?.data.projectKey ?? null,
+              })
+            : null;
+          knownProjects = projects;
+          const focusBrief = focus ? projects.find((p) => p.slug === focus!.slug) : undefined;
+          // turns of this chat already in the context window are not retrieved again
+          const sentFrom = totalTurns - body.messages.length;
+          const pastHits = memoryOn
+            ? await searchHistory({
+                db,
+                uid,
+                query,
+                focusProject: focus?.slug ?? null,
+                entries: historyIndex,
+                exclude: (e) => e.c === body.conversationId && e.k >= sentFrom,
+              }).catch(() => [])
+            : [];
+          const convProject = new Map(historyIndex.map((e) => [e.c, e.p]));
+
+          const [memories, related, docs, web] = await Promise.all([
+            memoryOn
+              ? loadMemories(db, uid)
+                  .then((m) => selectRelevant(m, query, { focusProject: focus?.slug ?? null }))
+                  .catch(() => [])
+              : Promise.resolve([]),
+            memoryOn
+              ? relatedConversations({ db, uid, excludeId: body.conversationId, query })
+                  .then((r) =>
+                    r.filter(
+                      (c) =>
+                        !pastHits.some((h) => h.conversationId === c.id) &&
+                        // with a project in focus, other projects' chats stay out
+                        (!focus || convProject.get(c.id) === focus.slug),
+                    ),
+                  )
+                  .catch(() => [])
+              : Promise.resolve([]),
             body.options.documentIds.length
               ? retrieveDocuments({
                   db,
@@ -417,7 +466,7 @@ export async function runChat(
           contextUsed = {
             memories: memories.length,
             documents: docs?.sources.length ?? 0,
-            conversations: related.length,
+            conversations: new Set([...related.map((r) => r.id), ...pastHits.map((h) => h.conversationId)]).size,
             knowledge: knowledge?.sources.length ?? 0,
             web: web?.sources.length ?? 0,
           };
@@ -425,7 +474,7 @@ export async function runChat(
             type: 'context',
             memories: memories.length,
             documents: docs?.sources.length ?? 0,
-            conversations: related.length,
+            conversations: new Set([...related.map((r) => r.id), ...pastHits.map((h) => h.conversationId)]).size,
             knowledge: knowledge?.sources.length ?? 0,
           });
 
@@ -435,6 +484,9 @@ export async function runChat(
             projectInstructions: project?.data.instructions,
             memories: memories.length ? formatMemories(memories) : undefined,
             relatedConversations: related,
+            pastExchanges: pastHits.length ? formatHistory(pastHits) : undefined,
+            historySummary: convDoc?.data.historySummary || undefined,
+            projectBrief: focus && focusBrief ? { name: focus.name, text: formatProject(focusBrief.data) } : null,
             documents: docs?.text || undefined,
             failedDocuments: docs?.failed,
             knowledge: knowledge?.text || undefined,
@@ -622,24 +674,71 @@ export async function runChat(
                   await db.set(convPath, { title: t, titleSet: true }, true).catch(() => undefined);
                 }
               }
-              const jobs: Promise<unknown>[] = [];
+              const warn = (what: string) => (err: unknown) => console.warn(`[${what}] failed`, err instanceof Error ? err.message : err);
+              const total = totalTurns + 1;
+              const jobs: Promise<unknown>[] = [
+                // conversation context, not long-term memory: runs even with memory off
+                updateHistorySummary({
+                  db,
+                  uid,
+                  conversationId: body.conversationId,
+                  state: conv,
+                  total,
+                }).catch(warn('history-summary')),
+              ];
               if (memoryOn) {
                 jobs.push(
-                  extractAndStoreMemories({
-                    db,
-                    uid,
-                    conversationId: body.conversationId,
-                    conversationTitle: title,
-                    userText: lastUser.content,
-                    assistantText: content,
-                  }).catch((err) =>
-                    console.warn(
-                      '[memory] extraction failed',
-                      err instanceof Error ? err.message : err,
-                    ),
-                  ),
+                  (async () => {
+                    const extracted = await extractAndStoreMemories({
+                      db,
+                      uid,
+                      conversationId: body.conversationId,
+                      conversationTitle: title,
+                      userText: lastUser.content,
+                      assistantText: content,
+                      knownProjects: knownProjects.map((p) => p.data.name),
+                      slugFor: projectSlug,
+                    }).catch((err) => {
+                      warn('memory')(err);
+                      return null;
+                    });
+                    // the project this exchange is about: named by the extractor, else the focus / chat's project
+                    const projectName = extracted?.project ?? focus?.name ?? null;
+                    const slug = projectName ? projectSlug(projectName) : (conv.projectKey ?? null);
+                    const tasks: Promise<unknown>[] = [
+                      indexExchange({
+                        db,
+                        uid,
+                        conversationId: body.conversationId,
+                        position: total - 2,
+                        title,
+                        project: slug,
+                        userText: lastUser.content,
+                        assistantText: content,
+                      }).catch(warn('history-index')),
+                    ];
+                    if (projectName) {
+                      tasks.push(
+                        updateProjectMemory({
+                          db,
+                          uid,
+                          name: projectName,
+                          linkedProjectId: focus?.reason === 'linked' ? projectId : null,
+                          conversationId: body.conversationId,
+                          conversationTitle: title,
+                          userText: lastUser.content,
+                          assistantText: content,
+                        }).catch(warn('project-memory')),
+                      );
+                      if (slug && slug !== conv.projectKey) {
+                        tasks.push(db.set(convPath, { projectKey: slug }, true).catch(warn('project-key')));
+                        tasks.push(tagConversationProject(db, uid, body.conversationId, slug).catch(warn('project-tag')));
+                      }
+                    }
+                    await Promise.all(tasks);
+                  })(),
                 );
-                const count = body.messages.length + 1;
+                const count = total;
                 if (count === 2 || count % 6 === 0) {
                   jobs.push(
                     updateConversationSummary({

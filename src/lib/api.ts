@@ -20,6 +20,10 @@ async function token(): Promise<string> {
   return user.getIdToken();
 }
 
+/** Server codes meaning the account can no longer be used in this session. */
+export const ACCOUNT_BLOCK_CODES = new Set(['account_suspended', 'account_deleted', 'session_revoked']);
+export const ACCOUNT_BLOCK_EVENT = 'atlas:account-blocked';
+
 async function toError(res: Response): Promise<ApiError> {
   let code = 'http_' + res.status;
   let message = res.statusText || 'Request failed.';
@@ -32,7 +36,17 @@ async function toError(res: Response): Promise<ApiError> {
   } catch {
     if (res.status === 404) message = 'The server API is not available. Is the backend running?';
   }
+  // Let the auth state re-check the account (suspended, deleted or signed out everywhere).
+  if (ACCOUNT_BLOCK_CODES.has(code)) window.dispatchEvent(new CustomEvent(ACCOUNT_BLOCK_EVENT, { detail: code }));
   return new ApiError(res.status, code, message, details);
+}
+
+/** Signed-out endpoints (password recovery). */
+export async function publicApi<T>(path: string, json: unknown): Promise<T> {
+  if (!navigator.onLine) throw new ApiError(0, 'offline', 'You are offline.');
+  const res = await fetch(`/api/${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(json) });
+  if (!res.ok) throw await toError(res);
+  return (await res.json()) as T;
 }
 
 export async function api<T>(path: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {

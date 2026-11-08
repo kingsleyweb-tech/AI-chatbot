@@ -14,6 +14,8 @@ export interface AuthUser {
   provider: string;
   /** set by the server (custom claim) once the account's phone number is verified */
   phoneVerified: boolean;
+  /** when this sign-in session started (seconds since epoch) */
+  authTime: number;
   /** raw Firebase ID token; forwarded to Firestore REST so security rules apply */
   token: string;
 }
@@ -61,6 +63,7 @@ export async function requireUser(request: Request): Promise<AuthUser> {
     emailVerified: payload.email_verified === true,
     provider: String((payload.firebase as { sign_in_provider?: string } | undefined)?.sign_in_provider ?? ''),
     phoneVerified: payload.phoneVerified === true,
+    authTime: typeof payload.auth_time === 'number' ? payload.auth_time : Number(payload.iat ?? 0),
     token: match[1],
   };
 }

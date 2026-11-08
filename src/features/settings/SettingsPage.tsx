@@ -148,7 +148,7 @@ function AccountSection() {
           <Input value={name.draft} maxLength={80} onChange={(e) => name.setDraft(e.target.value)} onBlur={name.commit} className="sm:w-60" />
         </div>
       </Row>
-      <Row title="Phone number" description={profile?.phoneVerified ? 'Verified by text message.' : provider === 'password' ? undefined : 'Not needed when you sign in with Google or Apple.'}>
+      <Row title="Phone number" description={profile?.phoneVerified ? 'Verified by text message.' : provider === 'password' ? undefined : 'Optional for Google sign-in. Add one to secure your account.'}>
         <span className="inline-flex items-center gap-1.5 text-sm text-muted">
           {profile?.phoneVerified && <ShieldCheck className="size-4 text-accent" />}
           {profile?.phoneNumber ? maskPhone(profile.phoneNumber) : 'Not added'}

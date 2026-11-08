@@ -114,7 +114,7 @@ describe.runIf(process.env.FIREBASE_AUTH_EMULATOR_HOST)('phone verification end 
     expect(await fsStatus(token, 'PATCH', `users/${uid}?updateMask.fieldPaths=phoneVerified`, { phoneVerified: { booleanValue: false } })).toBe(403);
     expect((await phone(token, { action: 'status' })).body).toMatchObject({ verified: true });
     // The code was single use.
-    expect((await phone(token, { action: 'verify', code })).body).toMatchObject({ verified: true });
+    expect((await phone(token, { action: 'verify', code })).body.error).toMatchObject({ code: 'no_code' });
   });
 
   it('accounts that are not approved cannot trigger texts', async (ctx) => {
@@ -139,16 +139,37 @@ describe.runIf(process.env.FIREBASE_AUTH_EMULATOR_HOST)('phone verification end 
     expect(r.body.error).toMatchObject({ code: 'phone_in_use' });
   });
 
-  it('Google sign-ins skip phone verification', async (ctx) => {
+  it('Google sign-ins do not need a phone but can add, change and remove one', async (ctx) => {
     if (!up) ctx.skip();
+    await fsStatus('owner', 'PATCH', 'config/access', {
+      allowedEmails: { arrayValue: { values: ['ama@example.com', 'kofi@example.com', 'ama.g@example.com'].map((v) => ({ stringValue: v })) } },
+      adminEmails: { arrayValue: {} },
+    });
     const fakeIdToken = JSON.stringify({ sub: 'g-123', email: 'ama.g@example.com', email_verified: true });
-    const r = await authCall<{ idToken: string }>('accounts:signInWithIdp', {
+    const r = await authCall<{ idToken: string; localId: string }>('accounts:signInWithIdp', {
       postBody: `id_token=${encodeURIComponent(fakeIdToken)}&providerId=google.com`,
       requestUri: 'http://localhost',
       returnSecureToken: true,
     });
     expect((decodeJwt(r.idToken).firebase as { sign_in_provider: string }).sign_in_provider).toBe('google.com');
-    expect((await phone(r.idToken, { action: 'status' })).body).toMatchObject({ required: false, verified: true });
-    expect((await phone(r.idToken, { action: 'send', phone: '0201234567' })).body.error).toMatchObject({ code: 'not_required' });
+    expect((await phone(r.idToken, { action: 'status' })).body).toMatchObject({ required: false, verified: true, phoneVerified: false });
+    const send = await phone(r.idToken, { action: 'send', phone: '0201234567' });
+    expect(send.status).toBe(200);
+    const code = /code is (\d{6})/.exec(sent.at(-1)!.message)![1];
+    expect((await phone(r.idToken, { action: 'verify', code })).body).toMatchObject({ ok: true, verified: true });
+    const look = await authCall<{ users: { customAttributes?: string }[] }>(`projects/${PROJECT}/accounts:lookup`, { localId: [r.localId] }, true);
+    expect(JSON.parse(look.users[0].customAttributes!)).toMatchObject({ phoneVerified: true });
+    // Google accounts may remove their number again
+    expect((await phone(r.idToken, { action: 'remove' })).status).toBe(200);
+    const after = await authCall<{ users: { customAttributes?: string }[] }>(`projects/${PROJECT}/accounts:lookup`, { localId: [r.localId] }, true);
+    expect(JSON.parse(after.users[0].customAttributes ?? '{}').phoneVerified).toBeUndefined();
+  });
+
+  it('email/password accounts cannot remove their verified number', async (ctx) => {
+    if (!up) ctx.skip();
+    const token = (await signIn('ama@example.com')).idToken;
+    const r = await phone(token, { action: 'remove' });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toMatchObject({ code: 'phone_required' });
   });
 });

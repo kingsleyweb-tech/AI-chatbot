@@ -11,7 +11,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNod
 import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { LogoMark, TAGLINE } from '@/components/Logo';
 import { Button, Input, Label, Spinner } from '@/components/ui';
-import { api, ApiError } from '@/lib/api';
+import { api, ApiError, publicApi } from '@/lib/api';
 import { authErrorMessage, signInWithProvider, type SocialProvider } from '@/lib/authProviders';
 import { auth, db } from '@/lib/firebase';
 import { cn } from '@/lib/utils';
@@ -31,6 +31,8 @@ function routeFor(access: AccessState, from = '/'): string | null {
       return '/verify';
     case 'denied':
     case 'error':
+    case 'suspended':
+    case 'deleted':
       return '/denied';
     case 'signed-out':
       return '/login';
@@ -78,12 +80,6 @@ const GoogleIcon = (
   </svg>
 );
 
-const AppleIcon = (
-  <svg viewBox="0 0 24 24" className="size-[18px]" fill="currentColor" aria-hidden="true">
-    <path d="M16.37 12.6c-.02-2.3 1.88-3.4 1.96-3.46-1.07-1.56-2.73-1.78-3.32-1.8-1.41-.14-2.76.83-3.47.83-.72 0-1.82-.81-2.99-.79-1.54.02-2.96.9-3.75 2.27-1.6 2.78-.41 6.89 1.15 9.14.76 1.1 1.67 2.34 2.86 2.3 1.15-.05 1.58-.74 2.97-.74 1.38 0 1.77.74 2.98.72 1.23-.02 2.01-1.12 2.76-2.23.87-1.28 1.23-2.52 1.25-2.58-.03-.01-2.39-.92-2.4-3.66zM14.1 5.86c.63-.77 1.06-1.83.94-2.9-.91.04-2.02.61-2.67 1.37-.58.67-1.1 1.76-.96 2.8 1.02.08 2.06-.52 2.69-1.27z" />
-  </svg>
-);
-
 function SocialButtons({ onError }: { onError: (m: string) => void }) {
   const [busy, setBusy] = useState<SocialProvider | null>(null);
   const go = async (id: SocialProvider) => {
@@ -105,15 +101,6 @@ function SocialButtons({ onError }: { onError: (m: string) => void }) {
       <Button variant="outline" size="lg" className="w-full" loading={busy === 'google'} disabled={busy !== null} onClick={() => go('google')} icon={GoogleIcon}>
         Continue with Google
       </Button>
-      <button
-        type="button"
-        onClick={() => go('apple')}
-        disabled={busy !== null}
-        className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-fg px-4 text-[15px] font-medium text-bg transition-opacity hover:opacity-90 disabled:opacity-60"
-      >
-        {busy === 'apple' ? <Spinner className="size-4 text-bg" /> : AppleIcon}
-        Continue with Apple
-      </button>
     </div>
   );
 }
@@ -194,6 +181,9 @@ function Login() {
       await signInWithEmailAndPassword(auth, email.trim(), password);
     } catch (err) {
       setError(authErrorMessage(err));
+      // best-effort security event for the account owner (silent for unknown addresses)
+      const code = (err as { code?: string }).code;
+      if (code === 'auth/invalid-credential' || code === 'auth/wrong-password') void publicApi('recovery', { action: 'failedLogin', email: email.trim() }).catch(() => undefined);
       setBusy(false);
     }
   };
@@ -258,7 +248,7 @@ function Register() {
   if (!regOpen) {
     return (
       <Shell>
-        <Heading title="Registration is closed" subtitle="Atlas AI is invitation-only. Ask the administrator to approve your email, or sign in with an approved Google or Apple account." />
+        <Heading title="Registration is closed" subtitle="Atlas AI is invitation-only. Ask the administrator to approve your email, or sign in with an approved Google account." />
         <Link to="/login" className="block text-center text-sm font-medium text-accent hover:underline">
           Back to sign in
         </Link>
@@ -330,54 +320,202 @@ function Register() {
   );
 }
 
+type ResetStep = 'email' | 'code' | 'password' | 'done' | 'link-sent';
+
+/**
+ * Password reset. Email/password accounts with a verified phone get a
+ * 6-digit code by text message; the email link stays available for everyone
+ * else. The page never says whether an address has an account.
+ */
 function Reset() {
+  const navigate = useNavigate();
+  const [step, setStep] = useState<ResetStep>('email');
   const [email, setEmail] = useState('');
-  const [sent, setSent] = useState(false);
+  const [rid, setRid] = useState('');
+  const [masked, setMasked] = useState('');
+  const [code, setCode] = useState('');
+  const [resetToken, setResetToken] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [show, setShow] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  return (
-    <Shell>
-      <Link to="/login" className="mb-6 inline-flex items-center gap-1.5 text-sm text-muted hover:text-fg">
-        <ArrowLeft className="size-4" /> Back
-      </Link>
-      <h1 className="mb-1 text-xl font-semibold tracking-tight">Reset your password</h1>
-      <p className="mb-6 text-sm text-muted">We’ll email you a link to choose a new password.</p>
-      {sent ? (
-        <div className="flex gap-3 rounded-xl border border-border bg-surface p-4 text-sm">
+  const resend = useCountdown();
+  const expiry = useCountdown();
+
+  const run = async (fn: () => Promise<void>) => {
+    setBusy(true);
+    setError('');
+    try {
+      await fn();
+    } catch (err) {
+      setError(phoneError(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const start = () =>
+    run(async () => {
+      const r = await publicApi<{ recoveryId: string; phoneMasked: string; expiresIn: number; resendIn: number }>('recovery', { action: 'start', email: email.trim() });
+      setRid(r.recoveryId);
+      setMasked(r.phoneMasked);
+      setCode('');
+      resend.start(r.resendIn);
+      expiry.start(r.expiresIn);
+      setStep('code');
+    });
+
+  const sendLink = () =>
+    run(async () => {
+      try {
+        await sendPasswordResetEmail(auth, email.trim(), { url: window.location.origin + '/login' });
+      } catch (err) {
+        if ((err as { code?: string }).code !== 'auth/user-not-found') throw new ApiError(400, 'email', authErrorMessage(err));
+      }
+      setStep('link-sent');
+    });
+
+  const back = (
+    <Link to="/login" className="mb-6 inline-flex items-center gap-1.5 text-sm text-muted hover:text-fg">
+      <ArrowLeft className="size-4" /> Back to sign in
+    </Link>
+  );
+
+  if (step === 'done') {
+    return (
+      <Shell>
+        <Heading title="Password changed" subtitle="Your password has been updated and every device was signed out. Sign in with your new password." />
+        <Button variant="primary" size="lg" className="w-full" onClick={() => navigate('/login', { replace: true })}>
+          Go to sign in
+        </Button>
+      </Shell>
+    );
+  }
+
+  if (step === 'link-sent') {
+    return (
+      <Shell>
+        {back}
+        <h1 className="mb-1 text-xl font-semibold tracking-tight">Check your email</h1>
+        <div className="mt-4 flex gap-3 rounded-xl border border-border bg-surface p-4 text-sm">
           <Mail className="mt-0.5 size-4 shrink-0 text-accent" />
           <p>
             If an account exists for <b>{email}</b>, a reset link is on its way. Check your inbox and spam folder.
           </p>
         </div>
-      ) : (
+      </Shell>
+    );
+  }
+
+  if (step === 'code') {
+    return (
+      <Shell>
+        <button type="button" onClick={() => setStep('email')} className="mb-6 inline-flex items-center gap-1.5 text-sm text-muted hover:text-fg">
+          <ArrowLeft className="size-4" /> Change email
+        </button>
+        <h1 className="mb-1 text-xl font-semibold tracking-tight">Enter the code</h1>
+        <p className="mb-6 text-sm text-muted">
+          If <b className="font-medium text-fg">{email}</b> has a verified phone number, we sent a 6-digit code to <b className="font-medium text-fg">{masked}</b>.
+          {expiry.left > 0 ? ` It expires in ${Math.floor(expiry.left / 60)}:${String(expiry.left % 60).padStart(2, '0')}.` : ' The code has expired; request a new one.'}
+        </p>
+        <form
+          className="space-y-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (code.length !== 6) return setError('Enter the 6-digit code.');
+            void run(async () => {
+              const r = await publicApi<{ resetToken: string }>('recovery', { action: 'verify', recoveryId: rid, code });
+              setResetToken(r.resetToken);
+              setStep('password');
+            });
+          }}
+        >
+          <CodeBoxes value={code} onChange={setCode} disabled={busy} invalid={Boolean(error)} />
+          <ErrorText>{error}</ErrorText>
+          <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy}>
+            Verify code
+          </Button>
+        </form>
+        <div className="mt-4 flex flex-col items-center gap-2 text-sm">
+          <button type="button" className="text-accent disabled:text-subtle" disabled={busy || resend.left > 0} onClick={() => void start()}>
+            {resend.left > 0 ? `Resend code in ${resend.left} s` : 'Resend code'}
+          </button>
+          <button type="button" className="text-muted hover:text-fg" disabled={busy} onClick={() => void sendLink()}>
+            No text message? Email me a reset link instead
+          </button>
+        </div>
+      </Shell>
+    );
+  }
+
+  if (step === 'password') {
+    return (
+      <Shell>
+        <h1 className="mb-1 text-xl font-semibold tracking-tight">Choose a new password</h1>
+        <p className="mb-6 text-sm text-muted">Use at least 8 characters with letters and a number. All devices will be signed out.</p>
         <form
           className="space-y-3.5"
-          onSubmit={async (e) => {
+          onSubmit={(e) => {
             e.preventDefault();
-            setBusy(true);
-            setError('');
-            try {
-              await sendPasswordResetEmail(auth, email.trim(), { url: window.location.origin + '/login' });
-              setSent(true);
-            } catch (err) {
-              const code = (err as { code?: string }).code;
-              if (code === 'auth/user-not-found') setSent(true);
-              else setError(authErrorMessage(err));
-            } finally {
-              setBusy(false);
-            }
+            if (password.length < 8 || !/[A-Za-z]/.test(password) || !/\d/.test(password)) return setError('Use at least 8 characters with letters and at least one number.');
+            if (password !== confirm) return setError('The passwords do not match.');
+            void run(async () => {
+              await publicApi('recovery', { action: 'reset', recoveryId: rid, resetToken, password });
+              setPassword('');
+              setConfirm('');
+              setStep('done');
+            });
           }}
         >
           <div>
-            <Label htmlFor="email">Email</Label>
-            <Input id="email" type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+            <Label htmlFor="new-password">New password</Label>
+            <div className="relative">
+              <Input id="new-password" type={show ? 'text' : 'password'} autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} className="pr-10" />
+              <button type="button" aria-label={show ? 'Hide password' : 'Show password'} onClick={() => setShow(!show)} className="absolute top-1/2 right-2.5 -translate-y-1/2 text-subtle hover:text-fg">
+                {show ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+              </button>
+            </div>
+          </div>
+          <div>
+            <Label htmlFor="confirm-password">Confirm new password</Label>
+            <Input id="confirm-password" type={show ? 'text' : 'password'} autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
           </div>
           <ErrorText>{error}</ErrorText>
           <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy}>
-            Send reset link
+            Change password
           </Button>
         </form>
-      )}
+      </Shell>
+    );
+  }
+
+  return (
+    <Shell>
+      {back}
+      <h1 className="mb-1 text-xl font-semibold tracking-tight">Reset your password</h1>
+      <p className="mb-6 text-sm text-muted">Enter your account email. If it has a verified phone number, we will text you a 6-digit code.</p>
+      <form
+        className="space-y-3.5"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim())) return setError('Enter a valid email address.');
+          void start();
+        }}
+        noValidate
+      >
+        <div>
+          <Label htmlFor="email">Email</Label>
+          <Input id="email" type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+        </div>
+        <ErrorText>{error}</ErrorText>
+        <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy} icon={<Smartphone className="size-4" />}>
+          Text me a code
+        </Button>
+        <Button type="button" variant="ghost" className="w-full" disabled={busy || !email.trim()} onClick={() => void sendLink()}>
+          Email me a reset link instead
+        </Button>
+      </form>
     </Shell>
   );
 }
@@ -735,8 +873,28 @@ function Denied() {
   const { user, access, accessError, refreshAccess, signOut } = useAuth();
   const [busy, setBusy] = useState(false);
   if (access === 'loading' && !busy) return <Checking />;
-  if (access !== 'denied' && access !== 'error' && access !== 'loading') return <Navigate to={routeFor(access) ?? '/'} replace />;
+  if (access !== 'denied' && access !== 'error' && access !== 'suspended' && access !== 'deleted' && access !== 'loading') return <Navigate to={routeFor(access) ?? '/'} replace />;
   const isError = access === 'error';
+  if (access === 'suspended' || access === 'deleted') {
+    return (
+      <Shell>
+        <div className="mb-7 flex flex-col items-center text-center">
+          <div className="mb-5 flex size-12 items-center justify-center rounded-2xl bg-danger-soft text-danger">
+            <ShieldAlert className="size-6" />
+          </div>
+          <h1 className="text-[22px] font-semibold tracking-tight">{access === 'suspended' ? 'Account suspended' : 'Account scheduled for deletion'}</h1>
+          <p className="mt-1.5 text-sm text-muted">
+            {access === 'suspended'
+              ? 'An administrator has suspended this account, so it cannot be used right now. Your data has not been deleted. Contact the administrator if you think this is a mistake.'
+              : 'An administrator has scheduled this account for deletion. It can still be restored by the administrator for a limited time; after that it is permanently removed.'}
+          </p>
+        </div>
+        <Button variant="primary" size="lg" className="w-full" onClick={() => signOut()}>
+          Sign out
+        </Button>
+      </Shell>
+    );
+  }
   return (
     <Shell>
       <div className="mb-7 flex flex-col items-center text-center">

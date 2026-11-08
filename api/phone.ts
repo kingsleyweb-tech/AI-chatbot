@@ -1,10 +1,12 @@
 import { z } from 'zod';
 import { evaluateAccess, type AccessConfig } from '../server/access.js';
-import { adminConfigured, adminDb, mergeCustomClaims } from '../server/admin.js';
+import { deviceLabel, recordSecurityEvent } from '../server/account/events.js';
+import { accountAdmin, adminConfigured, adminDb, mergeCustomClaims } from '../server/admin.js';
 import { needsPhone, requireUser, type AuthUser } from '../server/auth.js';
-import { otpStatus, sendCode, verifyCode, type OtpDeps } from '../server/auth/otp.js';
+import { otpStatus, phoneKey, sendCode, verifyCode, type OtpDeps } from '../server/auth/otp.js';
+import { maskPhone } from '../server/auth/phone.js';
 import { env } from '../server/env.js';
-import { SERVER_TIME } from '../server/firestore.js';
+import { SERVER_TIME, type Write } from '../server/firestore.js';
 import { handle, HttpError, json, readJson } from '../server/http.js';
 import { getSmsProvider } from '../server/sms/provider.js';
 
@@ -12,6 +14,7 @@ const schema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('status') }),
   z.object({ action: z.literal('send'), phone: z.string().min(9).max(20) }),
   z.object({ action: z.literal('verify'), code: z.string().max(10) }),
+  z.object({ action: z.literal('remove') }),
 ]);
 
 async function deps(): Promise<OtpDeps> {
@@ -33,13 +36,23 @@ async function assertApproved(user: AuthUser, db: OtpDeps['db']) {
   if (!evaluateAccess(user.email, true, config, env().adminEmails).ok) {
     throw new HttpError(403, 'not_allowed', 'This account is not approved.');
   }
+  const profile = (await db.get<{ accountStatus?: string }>(`users/${user.uid}`))?.data;
+  if (profile?.accountStatus && profile.accountStatus !== 'active') {
+    throw new HttpError(403, 'account_suspended', 'This account is not active.');
+  }
 }
 
 /**
- * Phone verification for email/password accounts. Codes are generated,
- * stored (hashed) and checked only here; the browser never sees a code or
- * the SMS credentials. Success sets the phoneVerified custom claim that the
- * Firestore rules and every API require.
+ * Phone numbers for every account. Email/password accounts must verify one
+ * before using the app; Google accounts may add one later for account
+ * security and SMS password recovery. Codes are generated, stored (hashed)
+ * and checked only here; the browser never sees a code or the SMS
+ * credentials. Success sets the phoneVerified custom claim, which the
+ * Firestore rules and every API require for password sign-ins.
+ *
+ * Changing a number: the new number must be verified before it replaces the
+ * old one (the old number stays on the account until the new code is
+ * accepted, then its ownership record is released).
  */
 export const POST = handle(async (request) => {
   const user = await requireUser(request);
@@ -47,25 +60,48 @@ export const POST = handle(async (request) => {
   if (!parsed.success) throw new HttpError(400, 'bad_request', 'Invalid request.');
   const b = parsed.data;
   const required = user.provider === 'password';
+  const configured = adminConfigured() && Boolean(getSmsProvider()) && env().otpSecret.length >= 32;
 
   if (b.action === 'status') {
-    if (!needsPhone(user)) return json({ required, verified: true, configured: true });
-    const configured = adminConfigured() && Boolean(getSmsProvider()) && env().otpSecret.length >= 32;
-    if (!configured) return json({ required, verified: false, configured });
-    return json({ required, verified: false, configured, ...(await otpStatus(await deps(), user.uid)) });
+    if (!configured) return json({ required, verified: !needsPhone(user), phoneVerified: user.phoneVerified, configured });
+    const d = await deps();
+    return json({ required, verified: !needsPhone(user), phoneVerified: user.phoneVerified, configured, ...(await otpStatus(d, user.uid)) });
   }
 
-  if (!required) throw new HttpError(400, 'not_required', 'This sign-in method does not need phone verification.');
-  if (user.phoneVerified) return json({ ok: true, verified: true });
   const d = await deps();
+  const device = deviceLabel(request.headers.get('user-agent'));
 
   if (b.action === 'send') {
     await assertApproved(user, d.db);
     return json({ ok: true, ...(await sendCode(d, user.uid, b.phone)) });
   }
 
+  if (b.action === 'remove') {
+    await assertApproved(user, d.db);
+    // Password accounts need a verified number to sign in: they can change it, not remove it.
+    const account = await accountAdmin().get(user.uid);
+    if (!account || account.providers.includes('password')) {
+      throw new HttpError(400, 'phone_required', 'Accounts with a password need a verified phone number. You can change it instead.');
+    }
+    const profile = (await d.db.get<{ phoneNumber?: string | null }>(`users/${user.uid}`))?.data;
+    const writes: Write[] = [
+      { op: 'set', path: `users/${user.uid}`, data: { phoneNumber: null, phoneVerified: false, phoneVerifiedAt: null }, merge: true },
+      { op: 'set', path: `otp/${user.uid}`, data: { verifiedPhoneHash: null, codeHash: null }, merge: true },
+    ];
+    if (profile?.phoneNumber) {
+      const owner = await d.db.get<{ uid: string }>(`phoneNumbers/${phoneKey(d.secret, profile.phoneNumber)}`);
+      if (owner?.data.uid === user.uid) writes.push({ op: 'delete', path: owner.path });
+    }
+    await d.db.commit(writes);
+    await mergeCustomClaims(user.uid, { phoneVerified: null });
+    await recordSecurityEvent(d.db, user.uid, 'phone_removed', { provider: user.provider, device });
+    return json({ ok: true });
+  }
+
+  const previous = (await d.db.get<{ phoneNumber?: string | null }>(`users/${user.uid}`))?.data.phoneNumber ?? null;
   const { phone } = await verifyCode(d, user.uid, b.code.trim());
   await mergeCustomClaims(user.uid, { phoneVerified: true });
   await d.db.set(`users/${user.uid}`, { phoneNumber: phone, phoneVerified: true, phoneVerifiedAt: SERVER_TIME }, true);
-  return json({ ok: true, verified: true });
+  await recordSecurityEvent(d.db, user.uid, previous && previous !== phone ? 'phone_changed' : 'phone_verified', { provider: user.provider, device });
+  return json({ ok: true, verified: true, phoneMasked: maskPhone(phone) });
 });

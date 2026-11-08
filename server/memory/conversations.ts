@@ -101,3 +101,65 @@ export async function relatedConversations(args: {
     .slice(0, args.limit ?? 3)
     .map((r) => ({ id: r.item.id, title: r.item.data.title, summary: r.item.data.summary }));
 }
+
+/** Turns kept verbatim at the end of a conversation; older ones are summarized. */
+export const VERBATIM_TURNS = 16;
+/** Fold older turns into the summary once at least this many are unsummarized. */
+const FOLD_MIN = 6;
+
+export interface HistorySummaryState {
+  historySummary?: string;
+  /** number of turns (from the start) the summary covers */
+  historySummaryCount?: number;
+}
+
+/**
+ * Hierarchical (rolling) summary of a long conversation: the previous
+ * summary plus the next block of older turns are folded into a new summary,
+ * so the summary always covers everything before the last VERBATIM_TURNS
+ * turns without ever re-reading the whole chat. Kept on the conversation doc.
+ */
+export async function updateHistorySummary(args: {
+  db: Firestore;
+  uid: string;
+  conversationId: string;
+  state: HistorySummaryState;
+  /** total turns in the conversation after this exchange */
+  total: number;
+  complete?: typeof utilityComplete;
+}): Promise<boolean> {
+  const covered = args.state.historySummaryCount ?? 0;
+  const upTo = args.total - VERBATIM_TURNS;
+  if (upTo - covered < FOLD_MIN) return false;
+  const convPath = `users/${args.uid}/conversations/${args.conversationId}`;
+  const msgs = await args.db.list<{ role?: string; content?: string; status?: string }>(`${convPath}/messages`, {
+    orderBy: 'createdAt',
+    limit: Math.min(upTo, 600),
+  });
+  const block = msgs
+    .slice(covered, upTo)
+    .filter((m) => (m.data.role === 'user' || m.data.role === 'assistant') && m.data.content)
+    .map((m) => `${m.data.role === 'user' ? 'USER' : 'ASSISTANT'}: ${m.data.content!.slice(0, 1500)}`);
+  if (!block.length) return false;
+  const out = await (args.complete ?? utilityComplete)(
+    [
+      {
+        role: 'system',
+        content:
+          'You keep a running summary of the earlier part of a long conversation so an assistant can continue it. ' +
+          'Merge the PREVIOUS SUMMARY with the NEW TURNS into one updated summary (max 250 words). ' +
+          'Preserve: the user\'s instructions and preferences for this chat, facts they shared, decisions made, code or design choices, open questions and pending tasks. ' +
+          'Drop small talk. Never include secrets (passwords, keys). Plain text, short paragraphs or bullet points.',
+      },
+      { role: 'user', content: `PREVIOUS SUMMARY:\n${args.state.historySummary || '(none)'}\n\nNEW TURNS:\n${block.join('\n').slice(0, 24_000)}` },
+    ],
+    { maxTokens: 700 },
+  );
+  if (!out) return false;
+  await args.db.set(
+    convPath,
+    { historySummary: stripThinking(out).slice(0, 3000), historySummaryCount: upTo, historySummaryAt: SERVER_TIME },
+    true,
+  );
+  return true;
+}

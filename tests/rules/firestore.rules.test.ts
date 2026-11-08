@@ -9,9 +9,10 @@ const PROJECT = process.env.GCLOUD_PROJECT ?? 'demo-tessera';
 const BASE = `http://${HOST}/v1/projects/${PROJECT}/databases/(default)/documents`;
 
 const b64 = (o: object) => Buffer.from(JSON.stringify(o)).toString('base64url');
-function token(uid: string, email: string, verified = true, opts: { provider?: string; phoneVerified?: boolean } = {}) {
+function token(uid: string, email: string, verified = true, opts: { provider?: string; phoneVerified?: boolean; authTime?: number } = {}) {
   const { provider = 'password', phoneVerified = true } = opts;
   const now = Math.floor(Date.now() / 1000);
+  const authTime = opts.authTime ?? now;
   return `${b64({ alg: 'none', typ: 'JWT' })}.${b64({
     iss: `https://securetoken.google.com/${PROJECT}`,
     aud: PROJECT,
@@ -21,7 +22,7 @@ function token(uid: string, email: string, verified = true, opts: { provider?: s
     email_verified: verified,
     iat: now,
     exp: now + 3600,
-    auth_time: now,
+    auth_time: authTime,
     firebase: { sign_in_provider: provider },
     ...(phoneVerified ? { phoneVerified: true } : {}),
   })}.`;
@@ -260,5 +261,70 @@ describe('phone verification', () => {
       denied(await write(who, 'phoneNumbers/abc', { uid: 'mallory' }));
       denied(await write(who, 'otpStats/2026-11-08', { sent: 0 }));
     }
+  });
+});
+
+describe('account status, sessions and audit records', () => {
+  const NOW = Math.floor(Date.now() / 1000);
+
+  it('a suspended or deleted account loses access to its own data immediately', async () => {
+    ok(await write(OWNER, 'users/alice', { displayName: 'Alice', accountStatus: 'suspended' }));
+    denied(await read(ALLOWED, 'users/alice'));
+    denied(await read(ALLOWED, 'users/alice/conversations/c1'));
+    denied(await write(ALLOWED, 'users/alice/conversations/c5', { title: 'x', projectId: null, saved: false }));
+    ok(await write(OWNER, 'users/alice', { displayName: 'Alice', accountStatus: 'deleted' }));
+    denied(await read(ALLOWED, 'users/alice/memories/m1'));
+    ok(await write(OWNER, 'users/alice', { displayName: 'Alice', accountStatus: 'active' }));
+    ok(await read(ALLOWED, 'users/alice/memories/m1'));
+  });
+
+  it('sessions that started before a revocation are refused', async () => {
+    ok(await write(OWNER, 'users/alice', { displayName: 'Alice', accountStatus: 'active', sessionsValidAfter: NOW - 60 }));
+    const OLD = token('alice', 'alice@example.com', true, { authTime: NOW - 3600 });
+    const FRESH = token('alice', 'alice@example.com', true, { authTime: NOW - 10 });
+    denied(await read(OLD, 'users/alice/conversations/c1'));
+    ok(await read(FRESH, 'users/alice/conversations/c1'));
+  });
+
+  it('clients cannot clear their own suspension or revocation', async () => {
+    ok(await write(OWNER, 'users/alice', { displayName: 'Alice', accountStatus: 'active', sessionsValidAfter: NOW - 60 }));
+    denied(await call(ALLOWED, 'PATCH', 'users/alice?updateMask.fieldPaths=sessionsValidAfter', { sessionsValidAfter: 0 }));
+    denied(await call(ALLOWED, 'PATCH', 'users/alice?updateMask.fieldPaths=purgeAfter', { purgeAfter: 0 }));
+    denied(await call(ALLOWED, 'PATCH', 'users/alice?updateMask.fieldPaths=lastAuthTime', { lastAuthTime: 1 }));
+    denied(await del(ALLOWED, 'users/alice'));
+  });
+
+  it('security events are readable by their owner only and written by the server only', async () => {
+    ok(await write(OWNER, 'users/alice/securityEvents/e1', { type: 'login', at: NOW }));
+    ok(await read(ALLOWED, 'users/alice/securityEvents/e1'));
+    denied(await write(ALLOWED, 'users/alice/securityEvents/e2', { type: 'login', at: NOW }));
+    denied(await del(ALLOWED, 'users/alice/securityEvents/e1'));
+    denied(await read(BOB, 'users/alice/securityEvents/e1'));
+  });
+
+  it('admin activity logs are readable by admins only and never writable by clients', async () => {
+    ok(await write(OWNER, 'adminLogs/l1', { action: 'user_suspended' }));
+    ok(await read(ADMIN, 'adminLogs/l1'));
+    denied(await read(ALLOWED, 'adminLogs/l1'));
+    denied(await write(ADMIN, 'adminLogs/l2', { action: 'user_purged' }));
+    denied(await del(ADMIN, 'adminLogs/l1'));
+  });
+
+  it('recovery records are server-only', async () => {
+    ok(await write(OWNER, 'recovery/abc', { codeHash: 'h', attempts: 0 }));
+    for (const who of [ALLOWED, ADMIN, null]) {
+      denied(await read(who, 'recovery/abc'));
+      denied(await write(who, 'recovery/abc', { codeHash: 'mine', attempts: 0 }));
+      denied(await read(who, 'otpRecovery/alice'));
+      denied(await read(who, 'rateLimits/x'));
+    }
+  });
+
+  it('project memory and the history index are private to their owner', async () => {
+    ok(await write(ALLOWED, 'users/alice/projectMemory/p_alpha', { name: 'Project Alpha' }));
+    ok(await write(ALLOWED, 'users/alice/convIndex/s0000', { entries: [] }));
+    denied(await read(BOB, 'users/alice/projectMemory/p_alpha'));
+    denied(await read(BOB, 'users/alice/convIndex/s0000'));
+    denied(await read(ADMIN, 'users/alice/convIndex/s0000'));
   });
 });

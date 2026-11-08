@@ -13,17 +13,15 @@ test('signed-out visitors are sent to the sign-in screen', async ({ page }) => {
   await noHorizontalScroll(page);
 });
 
-test('sign-in offers Google, Apple and email in that order', async ({ page }) => {
+test('sign-in offers Google then email, and no Apple option', async ({ page }) => {
   await page.goto('/login');
   await expect(page.getByText('Your intelligent assistant for thinking, creating and discovering.')).toBeVisible();
   const google = page.getByRole('button', { name: 'Continue with Google' });
-  const apple = page.getByRole('button', { name: 'Continue with Apple' });
   await expect(google).toBeVisible();
-  await expect(apple).toBeVisible();
+  await expect(page.getByRole('button', { name: /Apple/ })).toHaveCount(0);
   await expect(page.getByText('OR CONTINUE WITH EMAIL')).toBeVisible();
-  const [g, a, e] = await Promise.all([google.boundingBox(), apple.boundingBox(), page.locator('#email').boundingBox()]);
-  expect(g!.y).toBeLessThan(a!.y);
-  expect(a!.y).toBeLessThan(e!.y);
+  const [g, e] = await Promise.all([google.boundingBox(), page.locator('#email').boundingBox()]);
+  expect(g!.y).toBeLessThan(e!.y);
   await noHorizontalScroll(page);
 });
 

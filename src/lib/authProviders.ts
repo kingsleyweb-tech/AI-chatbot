@@ -1,28 +1,13 @@
-import {
-  getAdditionalUserInfo,
-  getRedirectResult,
-  GoogleAuthProvider,
-  OAuthProvider,
-  signInWithPopup,
-  signInWithRedirect,
-  updateProfile,
-  type AuthProvider,
-  type UserCredential,
-} from 'firebase/auth';
+import { getRedirectResult, GoogleAuthProvider, signInWithPopup, signInWithRedirect, type AuthProvider } from 'firebase/auth';
 import { auth } from './firebase';
 import { isStandalone } from './utils';
 
-export type SocialProvider = 'google' | 'apple';
+/** Sign in with Apple was removed from the app; Google is the only social provider. */
+export type SocialProvider = 'google';
 
-function provider(id: SocialProvider): AuthProvider {
-  if (id === 'google') {
-    const p = new GoogleAuthProvider();
-    p.setCustomParameters({ prompt: 'select_account' });
-    return p;
-  }
-  const p = new OAuthProvider('apple.com');
-  p.addScope('email');
-  p.addScope('name');
+function provider(): AuthProvider {
+  const p = new GoogleAuthProvider();
+  p.setCustomParameters({ prompt: 'select_account' });
   return p;
 }
 
@@ -33,11 +18,11 @@ const NEEDS_REDIRECT = new Set(['auth/popup-blocked', 'auth/operation-not-suppor
 
 export function authErrorMessage(err: unknown, id?: SocialProvider): string {
   const code = (err as { code?: string })?.code ?? '';
-  const name = id === 'apple' ? 'Apple' : id === 'google' ? 'Google' : 'this provider';
+  const name = id === 'google' ? 'Google' : 'this provider';
   const map: Record<string, string> = {
     'auth/invalid-credential': 'Incorrect email or password.',
     'auth/invalid-email': 'Enter a valid email address.',
-    'auth/user-disabled': 'This account has been disabled.',
+    'auth/user-disabled': 'This account is suspended or scheduled for deletion. Contact the administrator if you think this is a mistake.',
     'auth/user-not-found': 'Incorrect email or password.',
     'auth/wrong-password': 'Incorrect email or password.',
     'auth/email-already-in-use': 'An account with this email already exists. Sign in instead.',
@@ -55,29 +40,14 @@ export function authErrorMessage(err: unknown, id?: SocialProvider): string {
     'auth/internal-error': `Sign in with ${name} failed. Please try again.`,
   };
   if (map[code]) return map[code];
-  // Apple returns this while the Service ID / key is missing in Firebase.
   if (/code flow is not enabled|OPERATION_NOT_ALLOWED/i.test(String((err as Error)?.message))) return `Sign in with ${name} is not set up yet.`;
   return `Something went wrong (${code || 'unknown error'}). Please try again.`;
-}
-
-/**
- * Apple shares the user's name only on the very first sign-in and Firebase
- * does not store it, so copy it onto the account when present.
- */
-async function keepAppleName(cred: UserCredential | null) {
-  if (!cred || cred.user.displayName) return;
-  const info = getAdditionalUserInfo(cred);
-  if (info?.providerId !== 'apple.com') return;
-  const p = (info.profile ?? {}) as { name?: { firstName?: string; lastName?: string } | string; firstName?: string; lastName?: string };
-  const n = typeof p.name === 'object' ? p.name : p;
-  const full = typeof p.name === 'string' ? p.name : [n?.firstName, n?.lastName].filter(Boolean).join(' ');
-  if (full) await updateProfile(cred.user, { displayName: full }).catch(() => undefined);
 }
 
 let inFlight = false;
 
 /**
- * Sign in with Google or Apple. Uses a popup in the browser and a full-page
+ * Sign in with Google. Uses a popup in the browser and a full-page
  * redirect in installed apps (where popups open outside the app and their
  * result can be lost) or when the popup is blocked. The auth state listener
  * is the single source of truth for what happens next.
@@ -85,17 +55,17 @@ let inFlight = false;
  * Returns 'cancelled' when the user closed the window, 'redirect' when the
  * page is navigating away.
  */
-export async function signInWithProvider(id: SocialProvider): Promise<'done' | 'cancelled' | 'redirect' | 'busy'> {
+export async function signInWithProvider(_id: SocialProvider = 'google'): Promise<'done' | 'cancelled' | 'redirect' | 'busy'> {
   if (inFlight) return 'busy';
   inFlight = true;
-  const p = provider(id);
+  const p = provider();
   try {
     if (isStandalone()) {
       await signInWithRedirect(auth, p);
       return 'redirect';
     }
     try {
-      await keepAppleName(await signInWithPopup(auth, p));
+      await signInWithPopup(auth, p);
       return 'done';
     } catch (err) {
       const code = (err as { code?: string }).code ?? '';
@@ -113,11 +83,11 @@ export async function signInWithProvider(id: SocialProvider): Promise<'done' | '
 
 /**
  * Complete a redirect sign-in after the page reloads. Must run once at
- * start-up, or redirect errors (and Apple's one-time name) are silently lost.
+ * start-up, or redirect errors are silently lost.
  */
 export async function completeRedirect(): Promise<string | null> {
   try {
-    await keepAppleName(await getRedirectResult(auth));
+    await getRedirectResult(auth);
     return null;
   } catch (err) {
     const code = (err as { code?: string }).code ?? '';

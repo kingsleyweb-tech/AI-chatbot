@@ -172,6 +172,56 @@ export class Firestore {
     return rows.filter((r) => r.document).map((r) => this.toDoc<T>(r.document!));
   }
 
+  /** Count documents in a collection (aggregation query: one read per 1000 documents). */
+  async count(collectionPath: string, where: [string, string, unknown][] = []): Promise<number> {
+    const parts = collectionPath.split('/');
+    const collectionId = parts.pop()!;
+    const parent = parts.length ? `/${parts.join('/')}` : '';
+    const structuredQuery: Record<string, unknown> = { from: [{ collectionId }] };
+    if (where.length) {
+      const filters = where.map(([field, op, value]) => ({ fieldFilter: { field: { fieldPath: field }, op, value: encodeValue(value) } }));
+      structuredQuery.where = filters.length === 1 ? filters[0] : { compositeFilter: { op: 'AND', filters } };
+    }
+    const res = await this.request(`${this.base}${parent}:runAggregationQuery`, {
+      method: 'POST',
+      body: JSON.stringify({ structuredAggregationQuery: { structuredQuery, aggregations: [{ alias: 'n', count: {} }] } }),
+    });
+    if (!res.ok) return this.fail(res, `count ${collectionId}`);
+    const rows = (await res.json()) as { result?: { aggregateFields?: { n?: { integerValue?: string } } } }[];
+    return Number(rows[0]?.result?.aggregateFields?.n?.integerValue ?? 0);
+  }
+
+  /** Names of the subcollections directly under a document. */
+  async listCollectionIds(docPath: string): Promise<string[]> {
+    const out: string[] = [];
+    let pageToken: string | undefined;
+    do {
+      const res = await this.request(`${this.base}/${docPath}:listCollectionIds`, {
+        method: 'POST',
+        body: JSON.stringify({ pageSize: 100, ...(pageToken ? { pageToken } : {}) }),
+      });
+      if (!res.ok) return this.fail(res, 'listCollectionIds');
+      const body = (await res.json()) as { collectionIds?: string[]; nextPageToken?: string };
+      out.push(...(body.collectionIds ?? []));
+      pageToken = body.nextPageToken;
+    } while (pageToken);
+    return out;
+  }
+
+  /**
+   * Paths of up to `pageSize` documents in a collection, including "missing"
+   * documents that only exist because they have subcollections (a query would
+   * skip those and leave orphaned data behind on deletion).
+   */
+  async listDocumentPaths(collectionPath: string, pageSize = 300): Promise<string[]> {
+    const qs = new URLSearchParams({ showMissing: 'true', pageSize: String(pageSize), 'mask.fieldPaths': '__name__' });
+    const res = await this.request(`${this.base}/${collectionPath}?${qs}`);
+    if (res.status === 404) return [];
+    if (!res.ok) return this.fail(res, 'listDocuments');
+    const body = (await res.json()) as { documents?: { name: string }[] };
+    return (body.documents ?? []).map((d) => d.name.slice(this.dbRoot.length + 1));
+  }
+
   async set(path: string, data: object, merge = false): Promise<void> {
     await this.commit([{ op: 'set', path, data, merge }]);
   }
