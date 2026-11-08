@@ -65,7 +65,7 @@ async function verifiedUser(email: string, phone: string) {
   await authCall(`projects/${PROJECT}/accounts:update`, { localId: r.localId, emailVerified: true }, true);
   let token = (await signIn(email)).idToken;
   // Registration records the Terms of Use / Privacy Policy acceptance through the real API.
-  expect((await call(accountApi, 'account', { action: 'acceptTerms', termsVersion: '1.0', privacyVersion: '1.0' }, token)).status).toBe(200);
+  expect((await call(accountApi, 'account', { action: 'acceptTerms', termsVersion: '1.1', privacyVersion: '1.1' }, token)).status).toBe(200);
   expect((await call(phoneApi, 'phone', { action: 'send', phone }, token)).status).toBe(200);
   expect((await call(phoneApi, 'phone', { action: 'verify', code: lastCode() }, token)).status).toBe(200);
   token = (await signIn(email)).idToken;
@@ -78,7 +78,7 @@ async function googleUser(email: string, sub: string) {
     requestUri: 'http://localhost',
     returnSecureToken: true,
   });
-  expect((await call(accountApi, 'account', { action: 'acceptTerms', termsVersion: '1.0', privacyVersion: '1.0' }, r.idToken)).status).toBe(200);
+  expect((await call(accountApi, 'account', { action: 'acceptTerms', termsVersion: '1.1', privacyVersion: '1.1' }, r.idToken)).status).toBe(200);
   return { uid: r.localId, token: r.idToken };
 }
 
@@ -111,7 +111,7 @@ describe.runIf(process.env.FIREBASE_AUTH_EMULATOR_HOST)('account security end to
 
     const start = await call(recoveryApi.POST, 'recovery', { action: 'start', email: 'ESI@example.com' });
     expect(start.status).toBe(200);
-    expect(start.body.phoneMasked).toBe('+233 •• ••• 2222');
+    expect(start.body.phoneMasked).toBeNull(); // never shown, real or made up
     expect(sent.at(-1)!.to).toBe('+233241112222');
     expect(sent.at(-1)!.message).toContain('password reset code');
 

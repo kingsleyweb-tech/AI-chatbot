@@ -65,9 +65,9 @@ test('the consent page is not reachable signed out, and the legal pages stay pub
   await expect(page).toHaveURL(/\/login$/);
   await page.goto('/terms');
   await expect(page.getByRole('heading', { level: 1 })).toContainText('Terms');
-  await expect(page.getByText(/Version 1\.0/)).toBeVisible();
+  await expect(page.getByText(/Version 1.1/)).toBeVisible();
   await page.goto('/privacy');
-  await expect(page.getByText(/Version 1\.0/)).toBeVisible();
+  await expect(page.getByText(/Version 1.1/)).toBeVisible();
 });
 
 test('registration cannot be submitted until the Terms and Privacy Policy are accepted', async ({ page }) => {

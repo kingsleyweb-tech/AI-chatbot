@@ -26,7 +26,7 @@ const google = (o: Partial<AuthUser> = {}): AuthUser => ({
 const password = (o: Partial<AuthUser> = {}): AuthUser => google({ uid: 'p1', email: 'kojo@example.com', provider: 'password', phoneVerified: true, name: null, ...o });
 
 /** current Terms/Privacy accepted (server/shared/legal.ts) */
-const C = { consent: { termsVersion: '1.0', privacyVersion: '1.0', acceptedAt: 1, method: 'google' as const } };
+const C = { consent: { termsVersion: '1.1', privacyVersion: '1.1', acceptedAt: 1, method: 'google' as const } };
 const consented = (uid: string) => db.docs.set(`users/${uid}`, { ...(db.docs.get(`users/${uid}`) ?? {}), ...C });
 
 beforeEach(() => {
@@ -67,7 +67,7 @@ describe('decideAccess', () => {
   it('asks for the current Terms of Use and Privacy Policy before approval, after account status', () => {
     expect(decideAccess(google(), { accessStatus: 'approved' }, cfg, OWNER).state).toBe('consent');
     expect(decideAccess(google({ email: 'owner@example.com' }), undefined, null, OWNER).state).toBe('consent');
-    expect(decideAccess(google(), { accessStatus: 'approved', consent: { termsVersion: '0.9', privacyVersion: '1.0' } }, cfg, OWNER).state).toBe('consent');
+    expect(decideAccess(google(), { accessStatus: 'approved', consent: { termsVersion: '0.9', privacyVersion: '1.1' } }, cfg, OWNER).state).toBe('consent');
     // consent never lifts a suspension or a rejection
     expect(decideAccess(google(), { accountStatus: 'suspended' }, cfg, OWNER).state).toBe('suspended');
     expect(decideAccess(google(), { ...C, accessStatus: 'rejected' }, cfg, OWNER).state).toBe('rejected');

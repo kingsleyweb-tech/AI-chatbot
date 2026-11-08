@@ -92,8 +92,8 @@ service cloud.firestore {
     // by the server). Keep the versions in sync with server/shared/legal.ts.
     function consentOk() {
       return exists(profilePath())
-        && get(profilePath()).data.get('consent', {}).get('termsVersion', '') == '1.0'
-        && get(profilePath()).data.get('consent', {}).get('privacyVersion', '') == '1.0';
+        && get(profilePath()).data.get('consent', {}).get('termsVersion', '') == '1.1'
+        && get(profilePath()).data.get('consent', {}).get('privacyVersion', '') == '1.1';
     }
     function isAllowed() {
       return consentOk() && (

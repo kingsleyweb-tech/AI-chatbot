@@ -157,7 +157,7 @@ All user data is under `users/{uid}`:
 
 ## Terms and Privacy acceptance (`server/shared/legal.ts`, `server/account/consent.ts`)
 
-- Current versions: Terms of Use **1.0**, Privacy Policy **1.0** (`TERMS_VERSION`, `PRIVACY_VERSION`). The Firestore rules' `consentOk()` repeats them, so **change both places together** when a document changes; everyone is then asked again.
+- Current versions: Terms of Use **1.1**, Privacy Policy **1.1** (1.0 was the first draft; its acceptances stay in the history) (`TERMS_VERSION`, `PRIVACY_VERSION`). The Firestore rules' `consentOk()` repeats them, so **change both places together** when a document changes; everyone is then asked again.
 - Order for every sign-in method (Google, email/password): authentication, then phone (password accounts) and email checks, then **consent**, then approval. Consent never overrides a rejection, suspension or deletion.
 - `/consent` ("Before you continue") shows links to both documents and an unticked checkbox; Continue stays disabled until it is ticked. Registration has the same checkbox and records acceptance straight after the account is created.
 - `/api/account` `acceptTerms` records `users/{uid}.consent = {termsVersion, privacyVersion, acceptedAt (server time), method}` and a history entry in `users/{uid}/consents/{id}` (`userId`, `termsAccepted`, `privacyAccepted`, versions, method, server time), plus a `terms_accepted` security event. Clients cannot write either (server-only key, no client rule).
