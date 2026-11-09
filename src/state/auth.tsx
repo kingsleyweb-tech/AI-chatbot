@@ -187,9 +187,11 @@ export async function acceptTermsOnServer(termsVersion: string, privacyVersion: 
 async function checkAccess(user: User, forceToken: boolean): Promise<Decision> {
   const email = user.email?.toLowerCase() ?? '';
   let provider: string | null = null;
+  let phoneVerified = false;
   try {
     const t = await user.getIdTokenResult(forceToken);
     provider = t.signInProvider ?? null;
+    phoneVerified = t.claims.phoneVerified === true;
     // Email/password accounts must verify a phone number (enforced again by the rules and APIs).
     if (provider === 'password' && t.claims.phoneVerified !== true) {
       // still store the new account, so administrators can see it
@@ -202,7 +204,9 @@ async function checkAccess(user: User, forceToken: boolean): Promise<Decision> {
     if ((err as { code?: string })?.code === 'auth/user-token-expired') return { state: 'signed-out', admin: false, provider, revoked: true };
     if (!offline(err)) return { state: 'error', admin: false, provider, error: 'Could not check your session. Please try again.' };
   }
-  if (!user.emailVerified) return { state: 'unverified', admin: false, provider };
+  // A verified phone number is enough to get in (the server decides the same way); the email is
+  // verified later from the dashboard reminder or Settings › Security.
+  if (!user.emailVerified && !phoneVerified) return { state: 'unverified', admin: false, provider };
   if (navigator.onLine) {
     const decided = await serverAccess(provider);
     if (decided) return decided;
@@ -212,8 +216,10 @@ async function checkAccess(user: User, forceToken: boolean): Promise<Decision> {
     const data = snap.exists() ? (snap.data() as { allowedEmails?: string[]; adminEmails?: string[] }) : {};
     const admins = [...BOOTSTRAP_ADMINS, ...(data.adminEmails ?? [])].map((e) => e.toLowerCase());
     const allowed = (data.allowedEmails ?? []).map((e) => e.toLowerCase());
-    const admin = admins.includes(email);
-    return { state: admin || allowed.includes(email) ? 'allowed' : 'denied', admin, provider };
+    // These lists match only a verified address (as on the server).
+    const admin = user.emailVerified && admins.includes(email);
+    const listed = user.emailVerified && allowed.includes(email);
+    return { state: admin || listed ? 'allowed' : 'denied', admin, provider };
   } catch (err) {
     if (err instanceof FirestoreError && err.code === 'permission-denied') return (await blockedState(provider)) ?? { state: 'denied', admin: false, provider };
     if (offline(err)) {

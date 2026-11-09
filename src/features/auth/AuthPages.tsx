@@ -261,16 +261,35 @@ function Login() {
     e.preventDefault();
     clearSignInError();
     setError('');
-    if (!email.trim() || !password) return setError('Enter your email and password.');
+    const id = email.trim();
+    if (!id || !password) return setError('Enter your email or phone number and your password.');
+    const byPhone = !id.includes('@');
+    if (byPhone && !/^\+?[\d\s()-]{9,20}$/.test(id))
+      return setError('Enter a valid email address or phone number.');
     setBusy(true);
+    if (byPhone) {
+      // The server checks the number and password, then names the account to sign in to.
+      try {
+        const r = await publicApi<{ email: string }>('recovery', {
+          action: 'phoneLogin',
+          phone: id,
+          password,
+        });
+        await signInWithEmailAndPassword(auth, r.email, password);
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : authErrorMessage(err));
+        setBusy(false);
+      }
+      return;
+    }
     try {
-      await signInWithEmailAndPassword(auth, email.trim(), password);
+      await signInWithEmailAndPassword(auth, id, password);
     } catch (err) {
       setError(authErrorMessage(err));
       // best-effort security event for the account owner (silent for unknown addresses)
       const code = (err as { code?: string }).code;
       if (code === 'auth/invalid-credential' || code === 'auth/wrong-password')
-        void publicApi('recovery', { action: 'failedLogin', email: email.trim() }).catch(
+        void publicApi('recovery', { action: 'failedLogin', email: id }).catch(
           () => undefined,
         );
       setBusy(false);
@@ -301,12 +320,14 @@ function Login() {
         <Divider />
         <form className="space-y-3.5" onSubmit={submit} noValidate>
           <div>
-            <Label htmlFor="email">Email</Label>
+            <Label htmlFor="email">Email or phone number</Label>
             <Input
               id="email"
-              type="email"
-              autoComplete="email"
-              inputMode="email"
+              type="text"
+              autoComplete="username"
+              autoCapitalize="none"
+              spellCheck={false}
+              placeholder="you@example.com or 024 123 4567"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
             />
@@ -388,6 +409,10 @@ function Register() {
     setError('');
     if (Object.keys(errors).length || !agreed) return;
     setBusy(true);
+    // Creating the account switches to the phone screen at once; it waits for this
+    // first text so it opens on the code for this number instead of asking for it again.
+    let sent!: (r: RegistrationSend | null) => void;
+    registrationSend = new Promise((resolve) => (sent = resolve));
     try {
       const e164 = toE164(countryByCode(v.country), v.phone)!;
       // An existing account with this email is refused here by Firebase
@@ -404,11 +429,13 @@ function Register() {
       );
       try {
         await api('phone', { json: { action: 'send', phone: e164 } });
+        sent({});
       } catch (err) {
-        rememberPhoneError(phoneError(err), v.phone);
+        sent({ error: phoneError(err), phone: v.phone });
       }
-      // The auth listener moves on to the code screen.
+      // The auth listener has moved on to the code screen.
     } catch (err) {
+      sent(null);
       setError(authErrorMessage(err));
       setBusy(false);
     }
@@ -847,38 +874,29 @@ interface SendResult {
   delivery?: DeliveryState;
 }
 
-const PHONE_ERROR_KEY = 'atlas.phoneError';
-/** Carry a failed first text (from registration) over to the phone screen. */
-function rememberPhoneError(message: string, phone: string) {
-  try {
-    sessionStorage.setItem(PHONE_ERROR_KEY, JSON.stringify({ message, phone }));
-  } catch {
-    /* storage unavailable */
-  }
+/** Outcome of the first text sent from the sign-up form (an error keeps the number they typed). */
+interface RegistrationSend {
+  error?: string;
+  phone?: string;
 }
-function takePhoneError(): { message: string; phone: string } | null {
-  try {
-    const v = sessionStorage.getItem(PHONE_ERROR_KEY);
-    sessionStorage.removeItem(PHONE_ERROR_KEY);
-    return v ? (JSON.parse(v) as { message: string; phone: string }) : null;
-  } catch {
-    return null;
-  }
-}
+/**
+ * The first text requested by the sign-up form, still in flight when the phone screen opens
+ * (creating the account signs in, which switches screens before the text is requested).
+ */
+let registrationSend: Promise<RegistrationSend | null> | null = null;
 
 function PhoneVerify() {
   const { user, access, refreshAccess, signOut } = useAuth();
   const [status, setStatus] = useState<PhoneStatus | null>(null);
   const [step, setStep] = useState<'number' | 'code'>('number');
-  const [carried] = useState(takePhoneError);
-  const [phone, setPhone] = useState(carried?.phone ?? '');
+  const [phone, setPhone] = useState('');
   const [masked, setMasked] = useState('');
   const [codeLength, setCodeLength] = useState(6);
   const [delivery, setDelivery] = useState<{ state: DeliveryState; error: string | null } | null>(
     null,
   );
   const [code, setCode] = useState('');
-  const [error, setError] = useState(carried?.message ?? '');
+  const [error, setError] = useState('');
   const [hint, setHint] = useState('');
   const [codeInvalid, setCodeInvalid] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -887,6 +905,13 @@ function PhoneVerify() {
 
   const load = useCallback(async () => {
     try {
+      // Just signed up: wait for the code the form is sending to the number given there.
+      const first = registrationSend ? await registrationSend : null;
+      registrationSend = null;
+      if (first?.error) {
+        setPhone(first.phone ?? '');
+        setError(first.error);
+      }
       const s = await api<PhoneStatus>('phone', { json: { action: 'status' } });
       setStatus(s);
       if (s.verified) {
@@ -930,18 +955,9 @@ function PhoneVerify() {
   }, [waiting]);
 
   if (access === 'loading') return <Checking />;
-  // Right after the phone step, offer the email step (it can be skipped).
-  if (access !== 'phone')
-    return (
-      <Navigate
-        to={
-          user && !user.emailVerified && SKIPPABLE.includes(access)
-            ? '/verify'
-            : (routeFor(access) ?? '/')
-        }
-        replace
-      />
-    );
+  // Phone verified: straight on. An unverified email is handled later by the dashboard
+  // reminder and Settings › Security.
+  if (access !== 'phone') return <Navigate to={routeFor(access) ?? '/'} replace />;
   if (!status) return <Checking />;
 
   if (!status.configured) {

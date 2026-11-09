@@ -178,6 +178,30 @@ function identityBase() {
   return `${host}/v1/projects/${e.projectId}`;
 }
 
+/**
+ * Check an email/password pair with Firebase Auth without keeping the session it creates
+ * (used by sign-in with a phone number). Never logs the password or the address.
+ */
+export async function checkPassword(email: string, password: string): Promise<'ok' | 'wrong' | 'disabled'> {
+  const e = env();
+  if (!e.firebaseApiKey) throw new HttpError(503, 'admin_unconfigured', 'Sign-in with a phone number is not available right now.');
+  const host = emulated() ? `http://${e.authEmulator}/identitytoolkit.googleapis.com` : 'https://identitytoolkit.googleapis.com';
+  const res = await fetch(`${host}/v1/accounts:signInWithPassword?key=${encodeURIComponent(e.firebaseApiKey)}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email, password, returnSecureToken: false }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (res.ok) return 'ok';
+  const reason = ((await res.json().catch(() => ({}))) as { error?: { message?: string } }).error?.message ?? '';
+  if (reason.startsWith('USER_DISABLED')) return 'disabled';
+  if (/INVALID_PASSWORD|INVALID_LOGIN_CREDENTIALS|EMAIL_NOT_FOUND/.test(reason)) return 'wrong';
+  if (reason.startsWith('TOO_MANY_ATTEMPTS'))
+    throw new HttpError(429, 'too_many_attempts', 'Too many sign-in attempts. Try again later or reset your password.', { retryAfter: 900 });
+  console.error(`[admin] password check failed: ${res.status}`);
+  throw new HttpError(502, 'auth_admin_failed', 'Could not sign you in right now. Please try again.');
+}
+
 async function identity<T>(method: string, body: object): Promise<T> {
   const res = await fetch(`${identityBase()}/${method}`, {
     method: 'POST',
