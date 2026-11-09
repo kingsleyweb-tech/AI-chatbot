@@ -35,6 +35,8 @@ export interface PromptContext {
   capabilityNotes?: string[];
   /** structure the answer as a research report */
   deepResearch?: boolean;
+  /** a spoken conversation (Voice Mode): the reply is read aloud */
+  voice?: boolean;
   now?: Date;
 }
 
@@ -62,6 +64,8 @@ export function buildSystemPrompt(ctx: PromptContext): string {
     `Current date: ${now.toISOString().slice(0, 10)}.`,
     [
       'Be accurate, helpful and natural. Reason carefully through hard problems.',
+      'Understand messages with typos, misspellings, missing punctuation, slang, shorthand or mixed languages: infer the intended meaning from context and answer that. ' +
+        'Do not point out or correct the user’s spelling unless they ask. Ask a short clarifying question only when the meaning is genuinely ambiguous.',
       'Format responses in Markdown: headings for long answers, lists, tables where useful, fenced code blocks with a language tag.',
       'Write math with LaTeX using $...$ inline and $$...$$ for display.',
       'If you are unsure or do not know, say so plainly. Never invent facts, citations, links, or memories.',
@@ -157,6 +161,17 @@ export function buildSystemPrompt(ctx: PromptContext): string {
   } else if (ctx.webSearchFailed) {
     parts.push(
       `Note: web search could not be used for this message (${ctx.webSearchFailed}). If the question needs current information, say briefly that you couldn't search the web, then answer from your own knowledge with that caveat.`,
+    );
+  }
+  if (ctx.voice) {
+    // last, so it overrides the Markdown and length guidance above for this reply
+    parts.push(
+      `## Spoken conversation\nThe user is talking with you out loud in Voice Mode: their message was transcribed from speech and your reply will be read aloud. ` +
+        `Answer like a person in conversation: natural, warm and direct, usually one to four short sentences; go longer only when the user asks for detail or the task needs it. ` +
+        `Do not use Markdown, headings, bullet lists, tables, emoji, URLs or citation numbers; say things in flowing sentences instead. ` +
+        `Write numbers, dates and units the way they are said aloud. Do not read out code or long data; describe it briefly and say it is in the chat. ` +
+        `The transcript may contain recognition mistakes, filler words or unfinished phrases: infer what was meant from the conversation so far. ` +
+        `If it is genuinely unclear, ask one short question. Remember and build on what was said earlier in this conversation.`,
     );
   }
   return parts.join('\n\n');

@@ -164,7 +164,10 @@ export async function purgeAccount(db: Firestore, actor: Actor | null, target: A
   }
   const smsLogs = await db.list('smsLog', { where: [['uid', 'EQUAL', target.uid]], limit: 500 });
   for (const l of smsLogs) await db.delete(l.path);
-  const documents = (await deleteTree(db, `users/${target.uid}`)) + (await deleteReportsOf(db, target.uid)) + smsLogs.length;
+  // ElevenLabs request history (no text, but tied to the account)
+  const voiceLogs = await db.list('elevenlabsRequests', { where: [['uid', 'EQUAL', target.uid]], limit: 500 });
+  for (const l of voiceLogs) await db.delete(l.path);
+  const documents = (await deleteTree(db, `users/${target.uid}`)) + (await deleteReportsOf(db, target.uid)) + smsLogs.length + voiceLogs.length;
   await db.commit(writes);
   if (await accountAdmin().get(target.uid)) await accountAdmin().remove(target.uid);
   if (actor) await log(db, 'user_purged', actor, target, `${documents} documents removed`);

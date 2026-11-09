@@ -3,6 +3,7 @@ import { Loader2, X } from 'lucide-react';
 import {
   forwardRef,
   useEffect,
+  useId,
   useLayoutEffect,
   useRef,
   useState,
@@ -250,6 +251,7 @@ export function Dialog({
   footer?: ReactNode;
   size?: 'sm' | 'md' | 'lg';
 }) {
+  const titleId = useId();
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
@@ -265,6 +267,8 @@ export function Dialog({
           className="vv-overlay z-50 flex items-start justify-center px-3 pt-[calc(env(safe-area-inset-top)+16px)] sm:items-center sm:p-4"
           role="dialog"
           aria-modal="true"
+          // named after its heading, so screen readers announce what opened
+          aria-labelledby={title ? titleId : undefined}
         >
           <motion.div
             className="absolute inset-0 bg-black/30 backdrop-blur-[2px] dark:bg-black/50"
@@ -289,7 +293,11 @@ export function Dialog({
             {(title || description) && (
               <div className="flex items-start gap-3 px-5 pt-5 pb-3">
                 <div className="min-w-0 flex-1">
-                  {title && <h2 className="text-base font-semibold tracking-tight">{title}</h2>}
+                  {title && (
+                    <h2 id={titleId} className="text-base font-semibold tracking-tight">
+                      {title}
+                    </h2>
+                  )}
                   {description && <p className="mt-1 text-sm text-muted">{description}</p>}
                 </div>
                 <IconButton label="Close" size="sm" onClick={onClose} className="-mr-1.5 -mt-0.5">

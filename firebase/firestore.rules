@@ -89,11 +89,13 @@ service cloud.firestore {
       return exists(profilePath()) ? get(profilePath()).data.get('accessStatus', '') : '';
     }
     // The current Terms of Use and Privacy Policy are accepted (users/{uid}.consent, written only
-    // by the server). Keep the versions in sync with server/shared/legal.ts.
+    // by the server). Keep the versions in sync with server/shared/legal.ts. During a version change
+    // the previous version is also accepted here, so publishing these rules before the new app is
+    // deployed never locks anyone out; the server asks everyone to accept the new version.
     function consentOk() {
       return exists(profilePath())
-        && get(profilePath()).data.get('consent', {}).get('termsVersion', '') == '1.3'
-        && get(profilePath()).data.get('consent', {}).get('privacyVersion', '') == '1.3';
+        && get(profilePath()).data.get('consent', {}).get('termsVersion', '') in ['1.3', '1.4']
+        && get(profilePath()).data.get('consent', {}).get('privacyVersion', '') in ['1.3', '1.4'];
     }
     function isAllowed() {
       return consentOk() && (

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detectImageIntent, isGenerateRequest } from '../server/images/intent.js';
+import { detectImageIntent, isGenerateRequest, normalizeTypos } from '../server/images/intent.js';
 import { aspectFor } from '../server/config/images.js';
 
 const none = { hasImageAttachment: false, previousImage: false };
@@ -93,5 +93,28 @@ describe('aspect ratio from the request', () => {
     expect(aspectFor('a phone wallpaper of a forest')).toBe('portrait');
     expect(aspectFor('a poster for a jazz night')).toBe('portrait');
     expect(aspectFor('a 16:9 banner for my channel')).toBe('landscape');
+  });
+});
+
+describe('image intent: misspelled requests', () => {
+  const none = { hasImageAttachment: false, previousImage: false };
+  it.each([
+    'genrate an imge of a cat',
+    'creat a picure of a sunset over the sea',
+    'pls drwa a dragon',
+    'can u genrate a logoo for my bakery',
+    'Desing a walpaper with mountains',
+    'make me a potrait of an old fisherman',
+  ])('understands "%s"', (text) => {
+    expect(detectImageIntent(text, none)?.kind).toBe('generate');
+  });
+  it('fixes the misspellings in the prompt sent to the image model', () => {
+    expect(detectImageIntent('genrate an imge of a cat', none)?.prompt).toBe('generate an image of a cat');
+    expect(normalizeTypos('Genrate a Picure')).toBe('Generate a Picture');
+  });
+  it('leaves real words and ordinary text alone', () => {
+    expect(normalizeTypos('put the crate in the image of the mage')).toBe('put the crate in the image of the mage');
+    expect(detectImageIntent('whch modl is best for genrating imges?', none)).toBeNull();
+    expect(detectImageIntent('creat a list of names for my logoo', none)).toBeNull();
   });
 });

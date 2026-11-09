@@ -41,7 +41,7 @@ function enc(v: unknown): unknown {
 }
 
 /** Accepted current Terms/Privacy (server/shared/legal.ts); seeded profiles get it unless a test sets `consent`. */
-const CONSENT = { termsVersion: '1.3', privacyVersion: '1.3', acceptedAt: 1, method: 'google' };
+const CONSENT = { termsVersion: '1.4', privacyVersion: '1.4', acceptedAt: 1, method: 'google' };
 
 async function call(who: Who, method: string, path: string, data?: object): Promise<number> {
   if (who === OWNER && method === 'PATCH' && data && /^users\/[^/?]+$/.test(path) && !('consent' in data)) data = { consent: CONSENT, ...data };
@@ -528,14 +528,23 @@ describe('Terms of Use and Privacy Policy consent', () => {
   it('an older accepted version is not enough after a document update', async () => {
     ok(await write(OWNER, 'users/alice', { displayName: 'Alice', consent: { termsVersion: '0.9', privacyVersion: '1.3', acceptedAt: 1, method: 'google' } }));
     denied(await read(ALLOWED, 'users/alice/conversations/c1'));
-    // accepted 1.2 (before Cloudflare image creation was added): must accept 1.3
+    // accepted 1.2 (before Cloudflare image creation was added): must accept a newer version
     ok(await write(OWNER, 'users/alice', { displayName: 'Alice', consent: { termsVersion: '1.2', privacyVersion: '1.2', acceptedAt: 1, method: 'google' } }));
     denied(await read(ALLOWED, 'users/alice/conversations/c1'));
   });
 
+  it('during the change to 1.4, accounts that accepted 1.3 keep their data access (the app asks them to accept 1.4)', async () => {
+    ok(await write(OWNER, 'users/alice', { displayName: 'Alice', accessStatus: 'approved', consent: { termsVersion: '1.3', privacyVersion: '1.3', acceptedAt: 1, method: 'google' } }));
+    ok(await read(ALLOWED, 'users/alice'));
+    ok(await write(OWNER, 'users/alice', { displayName: 'Alice', accessStatus: 'approved', consent: { termsVersion: '1.4', privacyVersion: '1.4', acceptedAt: 2, method: 'google' } }));
+    ok(await read(ALLOWED, 'users/alice'));
+    ok(await write(OWNER, 'users/alice', { displayName: 'Alice', accessStatus: 'approved', consent: { termsVersion: '1.3', privacyVersion: '1.4', acceptedAt: 2, method: 'google' } }));
+    ok(await read(ALLOWED, 'users/alice'));
+  });
+
   it('users cannot grant themselves consent, and cannot write the consent history', async () => {
     ok(await write(OWNER, 'users/alice', { displayName: 'Alice', consent: null }));
-    denied(await call(ALLOWED, 'PATCH', 'users/alice?updateMask.fieldPaths=consent', { consent: { termsVersion: '1.3', privacyVersion: '1.3', acceptedAt: 1, method: 'google' } }));
+    denied(await call(ALLOWED, 'PATCH', 'users/alice?updateMask.fieldPaths=consent', { consent: { termsVersion: '1.4', privacyVersion: '1.4', acceptedAt: 1, method: 'google' } }));
     ok(await write(OWNER, 'users/alice', { displayName: 'Alice' })); // accepted (seeded)
     denied(await call(ALLOWED, 'PATCH', 'users/alice?updateMask.fieldPaths=consent', { consent: { termsVersion: '9.9', privacyVersion: '9.9', acceptedAt: 1, method: 'google' } }));
     denied(await write(ALLOWED, 'users/alice/consents/x', { termsVersion: '1.3', privacyVersion: '1.3' }));

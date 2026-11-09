@@ -47,6 +47,11 @@ export const IMAGE_MODELS: ImageModel[] = [
 ];
 
 export const DEFAULT_IMAGE_MODEL = '@cf/black-forest-labs/flux-2-klein-4b';
+/**
+ * Tried once for a new picture when the main model is unavailable or errors (never for an edit:
+ * FLUX.1 [schnell] cannot edit, and never for a picture the main model's filter blocked).
+ */
+export const BACKUP_IMAGE_MODEL = '@cf/black-forest-labs/flux-1-schnell';
 
 /** Safety classifier (verified: replies "safe" or "unsafe\nS<n>", about 9 Neurons). */
 export const SAFETY_MODEL = '@cf/meta/llama-guard-3-8b';

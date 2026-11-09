@@ -19,7 +19,7 @@ import { CHUNK_BYTES, imageWrites, loadImage, metaPath, splitChunks } from '../s
 import { CloudflareProvider, mapCloudflareModel } from '../server/providers/cloudflare.js';
 import { routeModel } from '../server/router/route.js';
 import { detectTask } from '../server/router/task.js';
-import { imageModel, IMAGE_MODELS } from '../server/config/images.js';
+import { BACKUP_IMAGE_MODEL, imageModel, IMAGE_MODELS } from '../server/config/images.js';
 import { FakeDb } from './fakeDb.js';
 import { fakeModel } from './helpers.js';
 
@@ -227,16 +227,21 @@ describe('image storage', () => {
 function setup() {
   const db = new FakeDb();
   setAdminDb(db as unknown as Firestore);
-  const calls = { image: 0, chat: 0, lastForm: null as FormData | null };
+  const calls = { image: 0, chat: 0, lastForm: null as FormData | null, models: [] as string[] };
   const fake: CloudflareFake = {
-    async image(_model, body) {
+    async image(model, body) {
       calls.image++;
+      calls.models.push(model);
       calls.lastForm = body.form ?? null;
       const prompt = String(body.form?.get('prompt') ?? body.json?.prompt ?? '');
       if (prompt.includes('FLAGIMAGE')) {
         const { mapCloudflareError } = await import('../server/cloudflare/client.js');
         const body = JSON.stringify({ errors: [{ code: 3030, message: 'AiError: Your output has been flagged. Please choose another prompt / input image combination' }] });
         throw Object.assign(mapCloudflareError(400, body), { neurons: 0 });
+      }
+      if (prompt.includes('PRIMARYDOWN') && model !== BACKUP_IMAGE_MODEL) {
+        const { ProviderError } = await import('../server/providers/types.js');
+        throw Object.assign(new ProviderError('model_unavailable', 'This Cloudflare model is not available.', 400), { neurons: 0 });
       }
       if (prompt.includes('FAILIMAGE')) {
         const { ProviderError } = await import('../server/providers/types.js');
@@ -351,7 +356,32 @@ describe('image turns', () => {
     const { db } = setup();
     await expect(turn(db, { intent: { kind: 'generate', prompt: 'FAILIMAGE a cat' } })).rejects.toMatchObject({ code: 'provider_error' });
     const day = db.docs.get(usagePath(utcDay()))!;
+    // the main model and the one backup attempt both failed
+    expect(day['types.image_generate.failed']).toBe(2);
+  });
+
+  it('a new picture falls back once to FLUX.1 Schnell when the main model is down', async () => {
+    const { db, calls } = setup();
+    const r = await turn(db, { intent: { kind: 'generate', prompt: 'PRIMARYDOWN a red bicycle' } });
+    expect(calls.models).toEqual([imageModel().id, BACKUP_IMAGE_MODEL]);
+    expect(r.meta.model).toBe(BACKUP_IMAGE_MODEL);
+    const day = db.docs.get(usagePath(utcDay()))!;
     expect(day['types.image_generate.failed']).toBe(1);
+    expect(day['types.image_generate.ok']).toBe(1);
+  });
+
+  it('an edit never falls back (the backup cannot edit)', async () => {
+    const { db, calls } = setup();
+    const png = 'data:image/png;base64,' + Buffer.from(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52, 0, 0, 2, 0, 0, 0, 2, 0, 8, 2, 0, 0, 0])).toString('base64');
+    const err = await turn(db, { intent: { kind: 'edit', source: 'attachment', prompt: 'PRIMARYDOWN make it blue' }, attachment: png }).catch((e) => e);
+    expect(err).toMatchObject({ code: 'model_unavailable' });
+    expect(calls.models.every((m) => m !== BACKUP_IMAGE_MODEL)).toBe(true);
+  });
+
+  it('a flagged picture is not retried with the backup', async () => {
+    const { db, calls } = setup();
+    await turn(db, { intent: { kind: 'generate', prompt: 'FLAGIMAGE a Tesla car' } }).catch(() => undefined);
+    expect(calls.models).toEqual([imageModel().id]);
   });
 
   it("explains the image model's own output filter as a refusal with advice, not a retryable error", async () => {

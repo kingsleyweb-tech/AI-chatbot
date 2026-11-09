@@ -181,6 +181,8 @@ export interface ChatRequestBody {
     searchMode?: 'auto' | 'manual' | 'eager';
     /** multi-step research with a fixed search budget */
     deepResearch?: boolean;
+    /** spoken in Voice Mode: the reply is read aloud, so it is written to be heard */
+    voice?: boolean;
     memory: boolean;
     /** a paid model the user explicitly approved for this one request */
     approvedPaidModel?: string | null;

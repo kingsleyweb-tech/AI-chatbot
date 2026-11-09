@@ -37,6 +37,7 @@ import { paths } from '@/lib/db';
 import { db } from '@/lib/firebase';
 import { useDocument, useQuery } from '@/lib/hooks';
 import { ttsSupported } from '@/lib/speech';
+import { speechConfig, type SpeechConfig } from '@/lib/voice';
 import type { Accent, Theme, UsageDay, UserSettings } from '@/lib/types';
 import type { AiConfig } from '@shared/types';
 import { cn, formatTokens, isIOS, isStandalone, modelShortName } from '@/lib/utils';
@@ -47,6 +48,7 @@ import { useToast } from '@/state/toast';
 import { ModelPicker } from '../chat/ModelPicker';
 import { Page } from '../shell/Page';
 import { PhoneManager, SecuritySection } from './AccountSecurity';
+import { ElevenAdminPanel, ElevenVoiceRows } from './ElevenLabsSettings';
 import { maskPhone, PageTitle, providerLabel, Row, Section } from './parts';
 
 type SectionId = 'account' | 'security' | 'appearance' | 'personalization' | 'general' | 'models' | 'memory' | 'usage' | 'access' | 'about';
@@ -195,10 +197,15 @@ function AppearanceSection() {
 
 function GeneralSection() {
   const { settings, update } = useSettings();
+  const { admin } = useAuth();
   const lang = useDraft(settings.language === 'auto' ? '' : settings.language, async (v) => {
     await update({ language: v.trim() || 'auto' });
   });
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
+  const [voiceInfo, setVoiceInfo] = useState<SpeechConfig | null>(null);
+  useEffect(() => {
+    void speechConfig(true).then(setVoiceInfo);
+  }, []);
   useEffect(() => {
     if (!ttsSupported()) return;
     const load = () => setVoices(window.speechSynthesis.getVoices());
@@ -224,6 +231,18 @@ function GeneralSection() {
           />
         </Row>
       )}
+      <Row
+        title="Natural voice"
+        description={
+          voiceInfo?.configured === false
+            ? 'Not available on this server.'
+            : `A more natural voice for Read aloud and Voice Mode, from Cloudflare (free, with a small daily share${voiceInfo?.naturalVoice ? `: about ${voiceInfo.naturalVoice.charactersLeft.toLocaleString()} characters left for you today` : ''}). When it is used up, your device voice takes over.`
+        }
+      >
+        <Switch label="Natural voice" checked={settings.naturalVoice} disabled={voiceInfo?.configured === false} onChange={(v) => update({ naturalVoice: v })} />
+      </Row>
+      <ElevenVoiceRows info={voiceInfo?.elevenlabs} />
+      {admin && <ElevenAdminPanel />}
     </Section>
   );
 }

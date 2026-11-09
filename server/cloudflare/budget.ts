@@ -38,7 +38,7 @@ export interface Reservation {
 export interface UsageEntry {
   uid: string;
   model: string;
-  type: 'image_generate' | 'image_edit' | 'text' | 'safety';
+  type: 'image_generate' | 'image_edit' | 'text' | 'safety' | 'stt' | 'tts' | 'translate' | 'turn';
   ok: boolean;
   /** error code only (never text from the request) */
   error?: string | null;
@@ -124,9 +124,42 @@ export async function recordUsage(userDb: Firestore, neurons: number, e: UsageEn
         ...(kind === 'image_generate' || kind === 'image_edit'
           ? { [fieldPath('images', e.ok ? (kind === 'image_edit' ? 'edited' : 'generated') : 'failed')]: 1 }
           : {}),
+        ...(kind === 'stt' || kind === 'tts' || kind === 'translate' || kind === 'turn'
+          ? { [fieldPath('voice', kind, 'requests')]: 1, [fieldPath('voice', kind, 'neurons')]: n, ...(e.ok ? {} : { [fieldPath('voice', kind, 'failed')]: 1 }) }
+          : {}),
       },
     },
   ]);
+}
+
+/** A nested counter (a.b.c); also accepts the flat "a.b.c" key some stores return. */
+function counter(data: Record<string, unknown> | undefined, ...path: string[]): number {
+  if (!data) return 0;
+  let v: unknown = data;
+  for (const k of path) v = v && typeof v === 'object' ? (v as Record<string, unknown>)[k] : undefined;
+  if (v === undefined) v = data[path.join('.')];
+  return Number(v ?? 0) || 0;
+}
+
+/** Neurons one model used today, app-wide (for features with their own smaller share). */
+export async function modelNeuronsToday(userDb: Firestore, model: string, now = Date.now()): Promise<number> {
+  const db = await trustedDb(userDb);
+  const doc = await db.get<Record<string, unknown>>(usagePath(utcDay(now)));
+  return counter(doc?.data, 'models', model.replace(/[^A-Za-z0-9_]/g, '_'), 'neurons');
+}
+
+/** Neurons one person used today for a voice feature (stt, tts, translate). */
+export async function userVoiceNeuronsToday(userDb: Firestore, uid: string, kind: 'stt' | 'tts' | 'translate', now = Date.now()): Promise<number> {
+  const db = await trustedDb(userDb);
+  const doc = await db.get<Record<string, unknown>>(`users/${uid}/usage/${utcDay(now)}`);
+  return counter(doc?.data, 'voice', kind, 'neurons');
+}
+
+/** End-of-turn checks one person made today. */
+export async function userTurnChecksToday(userDb: Firestore, uid: string, now = Date.now()): Promise<number> {
+  const db = await trustedDb(userDb);
+  const doc = await db.get<Record<string, unknown>>(`users/${uid}/usage/${utcDay(now)}`);
+  return counter(doc?.data, 'voice', 'turn', 'requests');
 }
 
 /* ------------------------------ per-user limits ------------------------------ */

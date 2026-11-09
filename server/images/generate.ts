@@ -7,7 +7,7 @@
  * retried reply reuses an image that was already stored (no second charge)
  * or overwrites the same documents.
  */
-import { aspectFor, ASPECTS, editModel, imageModel, SAFETY_EST_NEURONS, SAFETY_MODEL, type ImageModel } from '../config/images.js';
+import { aspectFor, ASPECTS, BACKUP_IMAGE_MODEL, editModel, IMAGE_MODELS, imageModel, SAFETY_EST_NEURONS, SAFETY_MODEL, type ImageModel } from '../config/images.js';
 import { imageSize, runImageModel, sniffImageMime } from '../cloudflare/client.js';
 import { claimUserSlot, recordUsage, reserveNeurons } from '../cloudflare/budget.js';
 import type { Firestore } from '../firestore.js';
@@ -148,27 +148,34 @@ export async function runImageTurn(args: {
 
     // ---- generation ----
     args.onStage('generating');
+    const kind = isEdit ? 'image_edit' : 'image_generate';
     let result: Awaited<ReturnType<typeof runImageModel>>;
+    let usedModel = model;
     try {
       result = await runImageModel(model.id, buildRequest(model, intent.prompt, size, input), signal);
     } catch (err) {
-      const neurons = (err as { neurons?: number }).neurons ?? 0;
       const code = err instanceof ProviderError ? err.code : signal.aborted ? 'aborted' : 'internal';
       const flagged = providerFlagged(err);
-      await reservation.settle(neurons, { uid, model: model.id, type: isEdit ? 'image_edit' : 'image_generate', ok: false, error: flagged ? 'provider_flagged' : code });
-      if (flagged) {
-        // The image model's own output filter (separate from Atlas AI's check). Retrying the same
-        // prompt fails the same way, so this is a refusal with advice, not a retryable error.
-        throw new ImageError(
-          'image_flagged',
-          "Cloudflare's image model blocked this picture with its own safety filter. This often happens with brand names, logos, trademarked products or real people, even when the request is harmless.",
-          false,
-          'Try describing it without the brand or name, for example "a sleek modern electric sedan, silver, studio lighting".',
-        );
+      await reservation.settle((err as { neurons?: number }).neurons ?? 0, { uid, model: model.id, type: kind, ok: false, error: flagged ? 'provider_flagged' : code });
+      if (flagged) throw flaggedError();
+      // The main model is down: a new picture (never an edit) is tried once with the configured
+      // backup, inside its own reservation. Edits need the main model, which can edit.
+      const backup = backupImageModel(model);
+      if (isEdit || !backup || signal.aborted || !(err instanceof ProviderError) || !BACKUP_ON.has(err.code)) throw err;
+      const second = await reserveNeurons(db, backup.estNeurons);
+      if (!second.ok) throw err;
+      try {
+        result = await runImageModel(backup.id, buildRequest(backup, intent.prompt, size), signal);
+      } catch (err2) {
+        const flagged2 = providerFlagged(err2);
+        const code2 = err2 instanceof ProviderError ? err2.code : signal.aborted ? 'aborted' : 'internal';
+        await second.settle((err2 as { neurons?: number }).neurons ?? 0, { uid, model: backup.id, type: kind, ok: false, error: flagged2 ? 'provider_flagged' : code2 });
+        throw flagged2 ? flaggedError() : err2;
       }
-      throw err;
+      usedModel = backup;
+      await second.settle(result.neurons, { uid, model: backup.id, type: kind, ok: true });
     }
-    await reservation.settle(result.neurons, { uid, model: model.id, type: isEdit ? 'image_edit' : 'image_generate', ok: true });
+    if (usedModel === model) await reservation.settle(result.neurons, { uid, model: model.id, type: kind, ok: true });
 
     // ---- storage ----
     args.onStage('saving');
@@ -181,7 +188,7 @@ export async function runImageTurn(args: {
         conversationId: args.conversationId,
         messageId: args.messageId,
         prompt: intent.prompt,
-        model: model.id,
+        model: usedModel.id,
         kind: isEdit ? 'edit' : 'generate',
         sourceImageId,
         mime: result.mime,
@@ -194,6 +201,26 @@ export async function runImageTurn(args: {
   } finally {
     slot.release();
   }
+}
+
+/** Errors after which a new picture is tried once with the backup model. */
+const BACKUP_ON = new Set(['model_unavailable', 'provider_error', 'timeout']);
+
+/** The configured backup for generation (a different model), if any. */
+function backupImageModel(primary: ImageModel): ImageModel | null {
+  const b = IMAGE_MODELS.find((m) => m.id === BACKUP_IMAGE_MODEL);
+  return b && b.id !== primary.id ? b : null;
+}
+
+function flaggedError(): ImageError {
+  // The image model's own output filter (separate from Atlas AI's check). Retrying the same
+  // prompt fails the same way, so this is a refusal with advice, not a retryable error.
+  return new ImageError(
+    'image_flagged',
+    "Cloudflare's image model blocked this picture with its own safety filter. This often happens with brand names, logos, trademarked products or real people, even when the request is harmless.",
+    false,
+    'Try describing it without the brand or name, for example "a sleek modern electric sedan, silver, studio lighting".',
+  );
 }
 
 /** The image model refused its own output (Cloudflare: "Your output has been flagged…"). */

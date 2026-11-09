@@ -104,7 +104,7 @@ async function visibleOrder(page: Page, needles: string[]) {
 /** "New chat", then wait until the new-chat screen has actually rendered (navigation renders asynchronously). */
 async function newChat(page: Page) {
   await page.getByRole('button', { name: 'New chat' }).first().click();
-  await expect(page.getByText('What can I help you with today?')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Think through a decision' })).toBeVisible();
   await expect(composer(page)).toHaveValue('');
 }
 

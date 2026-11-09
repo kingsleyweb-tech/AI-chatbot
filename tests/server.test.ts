@@ -264,6 +264,12 @@ describe('prompt building', () => {
 
   it('reports a failed web search instead of results', () => {
     expect(buildSystemPrompt({ settings: {}, webSearchFailed: 'timeout' })).toContain("couldn't search");
+    // Voice Mode: replies are written to be heard (no Markdown), short, and keep the conversation's context
+    const spoken = buildSystemPrompt({ settings: {}, voice: true });
+    expect(spoken).toContain('## Spoken conversation');
+    expect(spoken).toMatch(/Do not use Markdown/);
+    expect(spoken.indexOf('## Spoken conversation')).toBeGreaterThan(spoken.indexOf('Format responses in Markdown'));
+    expect(buildSystemPrompt({ settings: {} })).not.toContain('Spoken conversation');
   });
 
   it('trims old turns to the budget but always keeps the latest turn', () => {

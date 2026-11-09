@@ -33,6 +33,9 @@ export function apiDevPlugin(): Plugin {
             const cf = (await server.ssrLoadModule('/server/cloudflare/client.ts')) as typeof import('../server/cloudflare/client.js');
             const { fakeCloudflare } = (await server.ssrLoadModule('/dev/fakeAi.ts')) as typeof import('./fakeAi.js');
             cf.setCloudflareFake(fakeCloudflare);
+            const sp = (await server.ssrLoadModule('/server/cloudflare/speech.ts')) as typeof import('../server/cloudflare/speech.js');
+            const { fakeSpeech } = (await server.ssrLoadModule('/dev/fakeAi.ts')) as typeof import('./fakeAi.js');
+            sp.setSpeechFake(fakeSpeech);
             for (const model of ['gemini:any', 'openrouter/any', '@cf/any']) {
               const provider = registry.providerFor(model) as ReturnType<typeof registry.providerFor> & { __scripted?: boolean };
               if (provider.__scripted) continue;

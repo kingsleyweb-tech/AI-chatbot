@@ -1,10 +1,11 @@
-import { ArrowUp, FileText, Globe, ImagePlus, Library, Loader2, Mic, Paperclip, Square, Telescope, Info, X } from 'lucide-react';
+import { ArrowUp, AudioLines, FileAudio, FileText, Globe, ImagePlus, Library, Loader2, Mic, Paperclip, Square, Telescope, Info, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
 import type { ImageAttachment, ModelInfo } from '@shared/types';
 import { IconButton, Menu } from '@/components/ui';
 import { DOC_ACCEPT } from '@/lib/extract';
 import { compressImage, IMAGE_TYPES } from '@/lib/image';
 import { useDictation } from '@/lib/speech';
+import { AUDIO_ACCEPT, micErrorMessage, Recorder, recordingSupported, speechConfig, transcribeAudio } from '@/lib/voice';
 import type { DocumentMeta } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/state/toast';
@@ -31,6 +32,8 @@ export interface ComposerProps {
   placeholder?: string;
   autoFocus?: boolean;
   initialText?: string;
+  /** opens Voice Mode (talk with Atlas AI hands-free) */
+  onStartVoice?: () => void;
 }
 
 export function Composer(props: ComposerProps) {
@@ -47,6 +50,80 @@ export function Composer(props: ComposerProps) {
   const dictation = useDictation((finalText, interim) => {
     setText((baseText.current ? baseText.current + ' ' : '') + finalText + interim);
   });
+
+  // Whisper voice input (server) when available; the browser's own dictation otherwise
+  const [whisper, setWhisper] = useState(false);
+  useEffect(() => {
+    if (!recordingSupported()) return;
+    let alive = true;
+    void speechConfig().then((c) => alive && setWhisper(c.configured));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const recorder = useRef<Recorder | null>(null);
+  const [rec, setRec] = useState<{ state: 'recording' | 'transcribing'; started: number; level: number } | null>(null);
+  const [lastAudio, setLastAudio] = useState<Blob | null>(null);
+  const audioInput = useRef<HTMLInputElement>(null);
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (rec?.state !== 'recording') return;
+    const t = window.setInterval(() => tick((n) => n + 1), 500);
+    return () => window.clearInterval(t);
+  }, [rec?.state]);
+  useEffect(() => () => recorder.current?.cancel(), []);
+
+  const insertTranscript = useCallback((t: string) => {
+    setText((prev) => (prev.trim() ? `${prev.trimEnd()} ${t}` : t));
+    window.setTimeout(() => ta.current?.focus(), 0);
+  }, []);
+
+  const runTranscription = useCallback(
+    async (audio: Blob) => {
+      setRec({ state: 'transcribing', started: Date.now(), level: 0 });
+      try {
+        const r = await transcribeAudio(audio);
+        setLastAudio(null);
+        if (!r.text.trim()) toast('No speech was recognised. Please try again.', 'info');
+        else insertTranscript(r.text.trim());
+      } catch (err) {
+        setLastAudio(audio);
+        toast(err instanceof Error ? err.message : 'Transcription failed.', 'error');
+      } finally {
+        setRec(null);
+      }
+    },
+    [insertTranscript, toast],
+  );
+
+  const startRecording = async () => {
+    const r = new Recorder({ onLevel: (level) => setRec((p) => (p && p.state === 'recording' ? { ...p, level } : p)) });
+    try {
+      await r.start();
+    } catch (err) {
+      toast(micErrorMessage(err), 'error');
+      return;
+    }
+    recorder.current = r;
+    setLastAudio(null);
+    setRec({ state: 'recording', started: Date.now(), level: 0 });
+    // resolves when the recording stops (the mic button or the 2-minute limit)
+    void r.finished.then((blob) => {
+      if (recorder.current !== r) return;
+      recorder.current = null;
+      if (blob) void runTranscription(blob);
+      else setRec(null);
+    });
+  };
+  const stopRecording = () => {
+    recorder.current?.stop();
+  };
+  const cancelRecording = () => {
+    const r = recorder.current;
+    recorder.current = null;
+    r?.cancel();
+    setRec(null);
+  };
 
   useEffect(() => {
     if (dictation.error) toast(dictation.error, 'error');
@@ -66,8 +143,13 @@ export function Composer(props: ComposerProps) {
 
   const addFiles = useCallback(
     async (files: File[]) => {
-      const imgs = files.filter((f) => IMAGE_TYPES.includes(f.type) || /\.(heic|heif)$/i.test(f.name));
-      const docs = files.filter((f) => !imgs.includes(f));
+      const audio = files.filter((f) => f.type.startsWith('audio/') || /\.(mp3|m4a|wav|ogg|oga|opus|flac|aac)$/i.test(f.name));
+      const imgs = files.filter((f) => !audio.includes(f) && (IMAGE_TYPES.includes(f.type) || /\.(heic|heif)$/i.test(f.name)));
+      const docs = files.filter((f) => !imgs.includes(f) && !audio.includes(f));
+      if (audio.length) {
+        if (!whisper) toast('Transcribing audio files is not available on this server.', 'info');
+        else void runTranscription(audio[0]);
+      }
       if (docs.length) props.onUploadDocuments(docs);
       if (!imgs.length) return;
       if (images.length + imgs.length > 6) {
@@ -86,10 +168,10 @@ export function Composer(props: ComposerProps) {
         }
       }
     },
-    [images.length, props, toast],
+    [images.length, props, toast, whisper, runTranscription],
   );
 
-  const canSend = (text.trim().length > 0 || images.length > 0) && processing === 0 && !props.generating;
+  const canSend = (text.trim().length > 0 || images.length > 0) && processing === 0 && !props.generating && !rec;
 
   const send = () => {
     if (!canSend) return;
@@ -203,6 +285,45 @@ export function Composer(props: ComposerProps) {
             ))}
           </div>
         )}
+        {(rec || lastAudio) && (
+          <div className="mx-3 mt-3 flex items-center gap-2 rounded-xl bg-surface-2 px-3 py-2 text-[13px]" role="status" aria-live="polite">
+            {rec?.state === 'recording' && (
+              <>
+                <span className="relative flex size-2.5">
+                  <span className="absolute inline-flex size-full animate-ping rounded-full bg-danger opacity-60" />
+                  <span className="relative inline-flex size-2.5 rounded-full bg-danger" />
+                </span>
+                <span className="tabular-nums text-fg">
+                  {Math.floor((Date.now() - rec.started) / 60000)}:{String(Math.floor(((Date.now() - rec.started) / 1000) % 60)).padStart(2, '0')}
+                </span>
+                <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-border" aria-hidden>
+                  <span className="block h-full rounded-full bg-accent transition-[width] duration-75" style={{ width: `${Math.round(rec.level * 100)}%` }} />
+                </span>
+                <span className="hidden text-muted sm:inline">Listening… tap the mic to finish</span>
+                <button onClick={cancelRecording} className="rounded px-1.5 py-0.5 text-muted hover:text-fg">
+                  Cancel
+                </button>
+              </>
+            )}
+            {rec?.state === 'transcribing' && (
+              <>
+                <Loader2 className="size-4 animate-spin text-accent" />
+                <span className="text-muted">Turning your speech into text…</span>
+              </>
+            )}
+            {!rec && lastAudio && (
+              <>
+                <span className="flex-1 text-muted">The recording could not be transcribed.</span>
+                <button onClick={() => void runTranscription(lastAudio)} className="rounded px-1.5 py-0.5 font-medium text-accent">
+                  Retry
+                </button>
+                <button onClick={() => setLastAudio(null)} className="rounded px-1.5 py-0.5 text-muted hover:text-fg">
+                  Discard
+                </button>
+              </>
+            )}
+          </div>
+        )}
         <textarea
           ref={ta}
           value={text}
@@ -231,6 +352,7 @@ export function Composer(props: ComposerProps) {
               { label: 'Photo or image', icon: <ImagePlus className="size-4" />, onSelect: () => imgInput.current?.click() },
               { label: 'Upload document', icon: <FileText className="size-4" />, onSelect: () => docInput.current?.click(), hint: 'PDF, DOCX…' },
               { label: 'From document library', icon: <Library className="size-4" />, onSelect: props.onPickFromLibrary },
+              ...(whisper ? [{ label: 'Audio to text', icon: <FileAudio className="size-4" />, onSelect: () => audioInput.current?.click(), hint: 'MP3, M4A, WAV…' }] : []),
             ]}
           />
           <button
@@ -272,20 +394,37 @@ export function Composer(props: ComposerProps) {
             <span className="hidden min-[400px]:inline">Research</span>
           </button>
           <div className="flex-1" />
-          {dictation.supported && (
+          {whisper ? (
             <IconButton
-              label={dictation.listening ? 'Stop dictation' : 'Voice input'}
-              active={dictation.listening}
+              label={rec?.state === 'recording' ? 'Stop recording' : 'Voice input'}
+              active={rec?.state === 'recording'}
+              disabled={rec?.state === 'transcribing'}
               className="rounded-full"
-              onClick={() => {
-                if (dictation.listening) dictation.stop();
-                else {
-                  baseText.current = text;
-                  dictation.start();
-                }
-              }}
+              onClick={() => (rec?.state === 'recording' ? stopRecording() : void startRecording())}
             >
-              <Mic className={cn('size-[18px]', dictation.listening && 'animate-pulse')} />
+              {rec?.state === 'transcribing' ? <Loader2 className="size-[18px] animate-spin" /> : <Mic className={cn('size-[18px]', rec?.state === 'recording' && 'animate-pulse')} />}
+            </IconButton>
+          ) : (
+            dictation.supported && (
+              <IconButton
+                label={dictation.listening ? 'Stop dictation' : 'Voice input'}
+                active={dictation.listening}
+                className="rounded-full"
+                onClick={() => {
+                  if (dictation.listening) dictation.stop();
+                  else {
+                    baseText.current = text;
+                    dictation.start();
+                  }
+                }}
+              >
+                <Mic className={cn('size-[18px]', dictation.listening && 'animate-pulse')} />
+              </IconButton>
+            )
+          )}
+          {props.onStartVoice && !rec && (
+            <IconButton label="Voice Mode: talk with Atlas AI" className="rounded-full" onClick={props.onStartVoice} disabled={props.generating}>
+              <AudioLines className="size-[18px]" />
             </IconButton>
           )}
           {props.generating ? (
@@ -319,6 +458,17 @@ export function Composer(props: ComposerProps) {
         onChange={(e) => {
           void addFiles(Array.from(e.target.files ?? []));
           e.target.value = '';
+        }}
+      />
+      <input
+        ref={audioInput}
+        type="file"
+        accept={AUDIO_ACCEPT}
+        hidden
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          e.target.value = '';
+          if (f) void runTranscription(f);
         }}
       />
       <input

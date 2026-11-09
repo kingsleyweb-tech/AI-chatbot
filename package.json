@@ -43,6 +43,7 @@
     "vitest": "^5.1.0"
   },
   "dependencies": {
+    "@elevenlabs/elevenlabs-js": "^2.77.0",
     "@vercel/functions": "^3.11.0",
     "firebase": "^13.2.0",
     "framer-motion": "^14.10.1",

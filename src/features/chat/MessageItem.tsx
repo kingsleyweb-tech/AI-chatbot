@@ -14,6 +14,9 @@ import {
   Maximize2,
   Minimize2,
   MoreHorizontal,
+  Pause,
+  Play,
+  Square,
   Pencil,
   RefreshCw,
   Shuffle,
@@ -22,20 +25,21 @@ import {
   Telescope,
   Trash2,
   Volume2,
-  VolumeX,
 } from 'lucide-react';
 import { lazy, memo, Suspense, useState } from 'react';
 import type { ApprovalRequest, QuickAction, ResearchStep, RouteInfo, SearchInfo, Source } from '@shared/types';
 import { LogoMark } from '@/components/Logo';
 import { Markdown } from '@/components/Markdown';
 import { Button, IconButton, Menu, Textarea } from '@/components/ui';
-import { speak, stopSpeaking, ttsSupported, useSpeaking } from '@/lib/speech';
+import { pauseSpeaking, resumeSpeaking, speak, stopSpeaking, ttsSupported, usePlayback } from '@/lib/speech';
 import type { Message } from '@/lib/types';
+import { naturalVoiceFrom } from '@/lib/voice';
 import { cn, copyText, domainOf, modelShortName, relativeTime } from '@/lib/utils';
 import { useSettings } from '@/state/settings';
 import { useToast } from '@/state/toast';
 import { GeneratedImage } from '../images/GeneratedImage';
 import type { LiveReply } from './engine';
+import { TranslateDialog, TranslationView, type TranslationResult } from './Translate';
 import { replyPhase } from './phase';
 
 const SaveToKnowledgeDialog = lazy(() => import('../knowledge/SaveToKnowledge').then((m) => ({ default: m.SaveToKnowledgeDialog })));
@@ -433,8 +437,11 @@ export const AssistantMessage = memo(function AssistantMessage({
 }) {
   const toast = useToast();
   const { settings } = useSettings();
-  const speakingId = useSpeaking();
+  const playback = usePlayback();
+  const reading = playback.id === m.id;
   const [copied, setCopied] = useState(false);
+  const [translateOpen, setTranslateOpen] = useState(false);
+  const [translation, setTranslation] = useState<TranslationResult | null>(null);
   const streaming = live ? live.status === 'streaming' || live.status === 'connecting' : false;
   const content = live?.content ?? m.content;
   const reasoning = live?.reasoning ?? m.reasoning ?? '';
@@ -491,6 +498,8 @@ export const AssistantMessage = memo(function AssistantMessage({
             )}
           </div>
         )}
+        {translation && <TranslationView result={translation} onClose={() => setTranslation(null)} />}
+        <TranslateDialog open={translateOpen} text={content.slice(0, 12_000)} onClose={() => setTranslateOpen(false)} onDone={setTranslation} />
         {sources.length > 0 && !streaming && <Sources sources={sources} />}
         {!streaming && content && (
           <div className={cn('mt-2 flex flex-wrap items-center gap-0.5', !isLast && 'opacity-100 transition-opacity lg:opacity-0 lg:group-hover:opacity-100')}>
@@ -511,15 +520,39 @@ export const AssistantMessage = memo(function AssistantMessage({
                 <RefreshCw className="size-3.5" />
               </IconButton>
             )}
-            {ttsSupported() && (
+            {ttsSupported() && !reading && (
               <IconButton
-                label={speakingId === m.id ? 'Stop reading' : 'Read aloud'}
+                label="Read aloud"
                 size="sm"
-                active={speakingId === m.id}
-                onClick={() => (speakingId === m.id ? stopSpeaking() : speak(m.id, content, settings.voiceName))}
+                onClick={() =>
+                  void speak(m.id, content, {
+                    voiceName: settings.voiceName,
+                    natural: settings.naturalVoice,
+                    voice: naturalVoiceFrom(settings),
+                    onFallback: (msg) => toast(msg, 'info'),
+                  })
+                }
               >
-                {speakingId === m.id ? <VolumeX className="size-3.5" /> : <Volume2 className="size-3.5" />}
+                <Volume2 className="size-3.5" />
               </IconButton>
+            )}
+            {reading && (
+              <>
+                {playback.status === 'loading' ? (
+                  <span className="inline-flex h-7 items-center px-1.5 text-[11px] text-muted">Preparing voice…</span>
+                ) : playback.status === 'paused' ? (
+                  <IconButton label="Resume reading" size="sm" active onClick={resumeSpeaking}>
+                    <Play className="size-3.5" />
+                  </IconButton>
+                ) : (
+                  <IconButton label="Pause reading" size="sm" active onClick={pauseSpeaking}>
+                    <Pause className="size-3.5" />
+                  </IconButton>
+                )}
+                <IconButton label="Stop reading" size="sm" active onClick={stopSpeaking}>
+                  <Square className="size-3 fill-current" />
+                </IconButton>
+              </>
             )}
             {!live && (
               <IconButton
@@ -560,7 +593,10 @@ export const AssistantMessage = memo(function AssistantMessage({
                     <MoreHorizontal className="size-3.5" />
                   </IconButton>
                 )}
-                items={[{ label: 'Delete message', icon: <Trash2 className="size-4" />, danger: true, onSelect: () => actions.onDelete?.(m) }]}
+                items={[
+                  { label: 'Translate with Cloudflare', icon: <Languages className="size-4" />, onSelect: () => setTranslateOpen(true) },
+                  { label: 'Delete message', icon: <Trash2 className="size-4" />, danger: true, onSelect: () => actions.onDelete?.(m) },
+                ]}
               />
             )}
             {model && <span className="ml-1.5 truncate text-[11px] text-subtle">{modelShortName(model)}</span>}

@@ -96,6 +96,8 @@ export const chatRequestSchema = z.object({
     autoSearch: z.boolean().optional(),
     searchMode: z.enum(['auto', 'manual', 'eager']).optional(),
     deepResearch: z.boolean().optional(),
+    /** the message was spoken in Voice Mode and the reply will be read aloud */
+    voice: z.boolean().optional(),
     memory: z.boolean(),
     approvedPaidModel: z.string().max(200).nullable().optional(),
     documentIds: z.array(z.string().max(128)).max(10),
@@ -605,6 +607,7 @@ export async function runChat(
               models.find((m) => m.id === chain[0]),
             ),
             deepResearch: Boolean(body.options.deepResearch && web?.text),
+            voice: Boolean(body.options.voice),
           });
 
           // ---- Generation with fallbacks ----

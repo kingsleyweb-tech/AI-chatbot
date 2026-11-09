@@ -24,6 +24,20 @@ export interface UserSettings {
   searchMode: 'auto' | 'manual' | 'eager';
   sendOnEnter: boolean;
   voiceName: string | null;
+  /** read aloud and Voice Mode use the natural (Cloudflare) voice while today's share lasts */
+  naturalVoice: boolean;
+  /** Voice Mode speaks with the natural voice while today's share lasts (then the device voice) */
+  voiceModeNatural: boolean;
+  /** Voice Mode keeps listening while Atlas AI talks, so the user can interrupt by speaking */
+  voiceBargeIn: boolean;
+  /** Voice Mode waits longer before deciding the user has finished speaking */
+  voicePatient: boolean;
+  /** which natural voice: Cloudflare (default) or ElevenLabs (when an administrator enabled it) */
+  voiceProvider: 'cloudflare' | 'elevenlabs';
+  /** ElevenLabs voice, model and speed (null = the app's default) */
+  elevenVoiceId: string | null;
+  elevenModel: string | null;
+  elevenSpeed: number;
 }
 
 export const DEFAULT_SETTINGS: UserSettings = {
@@ -42,6 +56,14 @@ export const DEFAULT_SETTINGS: UserSettings = {
   searchMode: 'auto',
   sendOnEnter: true,
   voiceName: null,
+  naturalVoice: false,
+  voiceModeNatural: true,
+  voiceBargeIn: true,
+  voicePatient: false,
+  voiceProvider: 'cloudflare',
+  elevenVoiceId: null,
+  elevenModel: null,
+  elevenSpeed: 1,
 };
 
 export interface UserProfile {

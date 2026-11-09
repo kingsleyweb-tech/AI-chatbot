@@ -49,6 +49,38 @@ const TEXT_EDIT = /\b(shorter|longer|summar|explain|translate|rephrase|rewrite|r
 
 const MAX_PROMPT = 2000;
 
+/**
+ * Common misspellings of the words that signal a picture request, so "genrate an imge of a cat"
+ * is understood like "generate an image of a cat". Only unambiguous misspellings are listed
+ * (never real words such as "crate" or "mage"), so ordinary text is not changed.
+ */
+const TYPOS: [RegExp, string][] = [
+  [/\b(genrate|generte|gnerate|genarate|genereate|generat|geenrate|genterate|generete|genrat|gernerate|generare)\b/gi, 'generate'],
+  [/\b(creat|craete|cretae|ceate|crete|creeate)\b/gi, 'create'],
+  [/\b(drwa|darw|draww)\b/gi, 'draw'],
+  [/\b(desing|desgin|degisn|dessign)\b/gi, 'design'],
+  [/\b(imge|imag|iamge|imgae|imagee|imgage|imaeg|immage|imaage)\b/gi, 'image'],
+  [/\b(imges|imags|iamges|imgaes|immages)\b/gi, 'images'],
+  [/\b(picure|pictur|pitcure|picutre|pciture|pictue|pikture|picturee)\b/gi, 'picture'],
+  [/\b(phot|foto|phtoo|pohto|photoo)\b/gi, 'photo'],
+  [/\b(potrait|portait|protrait|portrat)\b/gi, 'portrait'],
+  [/\b(ilustration|illustraton|illustation|ilustraton)\b/gi, 'illustration'],
+  [/\b(logoo|loggo|lgoo)\b/gi, 'logo'],
+  [/\b(wallaper|walpaper|wallpapper|wallpeper)\b/gi, 'wallpaper'],
+  [/\b(skecth|sketh|skech)\b/gi, 'sketch'],
+  [/\b(paintng|paintig|pianting)\b/gi, 'painting'],
+  [/\b(cartton|cartoom|catoon)\b/gi, 'cartoon'],
+  [/\b(avtar|avatr|avater)\b/gi, 'avatar'],
+  [/\b(pls|plz|plez)\b/gi, 'please'],
+];
+
+/** Fix the listed misspellings (free, deterministic). */
+export function normalizeTypos(text: string): string {
+  let out = text;
+  for (const [re, word] of TYPOS) out = out.replace(re, (m) => (m[0] === m[0].toUpperCase() && m[0] !== m[0].toLowerCase() ? word[0].toUpperCase() + word.slice(1) : word));
+  return out;
+}
+
 function clean(text: string): string {
   return text.replace(POLITE, '').replace(/\s+/g, ' ').trim().slice(0, MAX_PROMPT);
 }
@@ -73,7 +105,7 @@ export function detectImageIntent(
   text: string,
   opts: { hasImageAttachment: boolean; previousImage: boolean },
 ): ImageIntent | null {
-  const t = text.trim();
+  const t = normalizeTypos(text.trim());
   if (!t) return null;
   if (opts.hasImageAttachment) {
     // an attached picture plus an instruction to change it (or to make something from it)

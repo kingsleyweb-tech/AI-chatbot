@@ -1,3 +1,6 @@
+import { unlockAudio } from '@/lib/speech';
+import { primeVoiceAudio } from '@/lib/voiceEngine';
+import { VoiceMode } from './VoiceMode';
 import { limit, orderBy, query } from 'firebase/firestore';
 import { ArrowDown, Bookmark, Download, FileText, FolderInput, Menu as MenuIcon, MoreHorizontal, PanelLeftOpen, Pencil, SquarePen, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -27,7 +30,7 @@ import { uploadDocument } from '../documents/upload';
 import { useShell } from '../shell/AppShell';
 import { useDeleteConversation, useRenameDialog } from '../shell/Sidebar';
 import { Composer } from './Composer';
-import { clearLiveReply, generate, setSending, stopGeneration, toTurns, useLiveReplies, useSending, type LiveReply } from './engine';
+import { clearLiveReply, generate, isGenerating, setSending, stopGeneration, toTurns, useLiveReplies, useSending, type LiveReply } from './engine';
 import { AssistantMessage, UserMessage, type MessageActions } from './MessageItem';
 import { ModelPicker } from './ModelPicker';
 import { Welcome } from './Welcome';
@@ -152,6 +155,7 @@ export default function ChatPage() {
   // a user message is on its way to Firestore (shown from the local copy until confirmed)
   const sending = useSending(conversationId);
   const sendingRef = useRef(false);
+  const [voiceOpen, setVoiceOpen] = useState(false);
 
   // once a reply's final stored copy arrives, show that instead of the live copy
   useEffect(() => {
@@ -233,7 +237,7 @@ export default function ChatPage() {
 
   // ----- actions -----
   const runGeneration = useCallback(
-    (cid: string, history: Message[], extraDocs?: string[], approvedPaidModel?: string, replyId?: string) => {
+    (cid: string, history: Message[], extraDocs?: string[], approvedPaidModel?: string, replyId?: string, voice?: boolean) => {
       void generate({
         uid,
         conversationId: cid,
@@ -250,6 +254,8 @@ export default function ChatPage() {
           projectId,
           // explicit, one-request approval of a paid model (never remembered)
           approvedPaidModel: approvedPaidModel ?? null,
+          // spoken in Voice Mode: the reply is written to be heard
+          ...(voice ? { voice: true } : {}),
         },
       });
       // Deep Research spends search credits, so it applies to one message at a time.
@@ -258,7 +264,7 @@ export default function ChatPage() {
     [uid, modelId, webSearch, deepResearch, caps?.searchAvailable, settings.memoryEnabled, settings.autoSearch, settings.searchMode, docIds, projectId],
   );
 
-  const send = async (text: string, images: ImageAttachment[]) => {
+  const send = async (text: string, images: ImageAttachment[], opts: { voice?: boolean } = {}) => {
     if (!online) {
       toast('You are offline. Reconnect to send messages.', 'error');
       return;
@@ -296,13 +302,32 @@ export default function ChatPage() {
       stick.current = true;
       await Promise.all(writes);
       const userMsg: Message = { id: mid, role: 'user', content: text, attachments };
-      runGeneration(cid, [...currentThread(), userMsg], docIds);
+      runGeneration(cid, [...currentThread(), userMsg], docIds, undefined, undefined, opts.voice);
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Could not send the message.', 'error');
     } finally {
       sendingRef.current = false;
       setSending(cid, false);
     }
+  };
+
+  // Voice Mode: a spoken message may arrive just after the user interrupted a reply; wait (briefly)
+  // until that reply has stopped, then send with the newest state of the page.
+  const sendLatest = useRef(send);
+  sendLatest.current = send;
+  const stateRef = useRef({ conversationId, generating, sending, online });
+  stateRef.current = { conversationId, generating, sending, online };
+  const sendSpoken = async (text: string): Promise<boolean> => {
+    for (let i = 0; i < 60; i++) {
+      const st = stateRef.current;
+      const busy = sendingRef.current || st.sending || st.generating || (st.conversationId ? isGenerating(st.conversationId) : false);
+      if (!busy) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    const st = stateRef.current;
+    if (!st.online || sendingRef.current || st.sending || st.generating) return false;
+    await sendLatest.current(text, [], { voice: true });
+    return true;
   };
 
   /** Explicit "Regenerate" or "Retry" on a stored reply: the new reply replaces it under the same ID. */
@@ -564,8 +589,20 @@ export default function ChatPage() {
             sendOnEnter={settings.sendOnEnter}
             autoFocus={!conversationId}
             placeholder={project ? `Message Atlas AI in ${project.name}` : undefined}
+            onStartVoice={() => {
+              unlockAudio();
+              primeVoiceAudio();
+              setVoiceOpen(true);
+            }}
           />
         )}
+        <VoiceMode
+          open={voiceOpen}
+          onClose={() => setVoiceOpen(false)}
+          onSend={sendSpoken}
+          onStop={() => conversationId && stopGeneration(conversationId)}
+          live={live}
+        />
         <p className="mx-auto mt-1.5 hidden max-w-3xl px-4 text-center text-[11px] text-subtle sm:block">
           Atlas AI can make mistakes. Verify important information.
         </p>

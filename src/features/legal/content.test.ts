@@ -5,10 +5,10 @@ import { CONTACT_EMAIL, PRIVACY, TERMS } from './content';
 const CONTACT = 'kingsleyanaab99@gmail.com';
 const texts = (d: typeof PRIVACY) => [d.title, d.intro, ...d.sections.flatMap((s) => [s.heading, ...(s.paragraphs ?? []), ...(s.bullets ?? [])])];
 
-describe('legal documents (version 1.3)', () => {
-  it('both documents are version 1.3', () => {
-    expect(TERMS_VERSION).toBe('1.3');
-    expect(PRIVACY_VERSION).toBe('1.3');
+describe('legal documents (version 1.4)', () => {
+  it('both documents are version 1.4', () => {
+    expect(TERMS_VERSION).toBe('1.4');
+    expect(PRIVACY_VERSION).toBe('1.4');
   });
 
   for (const d of [PRIVACY, TERMS]) {
@@ -82,7 +82,9 @@ describe('legal documents (version 1.3)', () => {
     const t = JSON.stringify(TERMS);
     const both = JSON.stringify([PRIVACY, TERMS]);
     expect(both).not.toMatch(/does not generate or edit images/i);
-    expect(p).toContain('Google (Gemini), OpenRouter and Cloudflare (Workers AI) are third-party AI providers');
+    expect(p).toContain('Google (Gemini), OpenRouter, Cloudflare (Workers AI) and ElevenLabs are third-party AI providers');
+    expect(p).toContain('ElevenLabs voice: if an administrator has made it available');
+    expect(p).toContain('https://elevenlabs.io/privacy-policy');
     expect(p).toContain('never in place of Gemini or OpenRouter');
     expect(p).toContain('first to a safety model');
     expect(p).toContain('To edit an image, the image is sent as well');

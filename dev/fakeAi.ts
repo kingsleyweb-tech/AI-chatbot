@@ -138,3 +138,37 @@ export const fakeCloudflare = {
     return { text: /UNSAFEGUARD/.test(text) ? 'unsafe\nS1' : 'safe', neurons: 9.1 };
   },
 };
+
+/** A short silent MP3 frame (MPEG-1 Layer III header), enough for the browser to play "something". */
+function fakeMp3(): Uint8Array {
+  const frame = new Uint8Array(417);
+  frame.set([0xff, 0xfb, 0x90, 0x64]);
+  return frame;
+}
+
+/**
+ * Scripted speech models: every recording transcribes to a fixed sentence (recordings
+ * under 1 kB fail), the natural voice returns a silent MP3, and translation wraps
+ * the text in [target] markers so tests can see what was translated.
+ */
+export const fakeSpeech = {
+  async transcribe(audio: Uint8Array) {
+    await sleep(300);
+    if (audio.byteLength < 1000) {
+      const { ProviderError } = await import('../server/providers/types.js');
+      throw new ProviderError('provider_error', 'Cloudflare Workers AI had a temporary problem.', 502);
+    }
+    return { text: 'Hello Atlas, what is the capital of France?', language: 'en', duration: 3.2, neurons: 2.5 };
+  },
+  async speak(text: string) {
+    await sleep(200);
+    return { bytes: fakeMp3(), neurons: Math.round(text.length * 1.3637 * 100) / 100 };
+  },
+  async translate(text: string, _source: string, target: string) {
+    return { text: `[${target}] ${text}`, neurons: 1.2 };
+  },
+  async turn(pcm: Float32Array) {
+    await sleep(100);
+    return { complete: pcm.length >= 16_000, probability: pcm.length >= 16_000 ? 0.9 : 0.1, neurons: 0 };
+  },
+};

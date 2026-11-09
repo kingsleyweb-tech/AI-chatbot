@@ -1,5 +1,5 @@
 /**
- * Privacy Policy and Terms of Use, version 1.3, as shown on /privacy and /terms.
+ * Privacy Policy and Terms of Use, version 1.4, as shown on /privacy and /terms.
  *
  * Every statement must describe how Atlas AI works today (checked against the
  * code and the production configuration on 8 November 2026). No planned
@@ -43,6 +43,8 @@ export const CONTACT_EMAIL = 'kingsleyanaab99@gmail.com';
 const GEMINI_TERMS = 'https://aistudio.google.com/docs/terms';
 const CLOUDFLARE_DATA = 'https://developers.cloudflare.com/workers-ai/platform/data-usage/';
 const CLOUDFLARE_PRIVACY = 'https://www.cloudflare.com/privacypolicy/';
+const ELEVENLABS_PRIVACY = 'https://elevenlabs.io/privacy-policy';
+const ELEVENLABS_TERMS = 'https://elevenlabs.io/terms-of-use';
 
 export interface LegalSection {
   heading: string;
@@ -65,7 +67,7 @@ export const PRIVACY: LegalDoc = {
       heading: 'Who runs Atlas AI',
       paragraphs: [
         'Atlas AI is independently owned and operated by Anaab Kingsley, an individual based in Ghana ("we", "us", "our"). Anaab Kingsley decides how and why your information is processed in Atlas AI.',
-        'Google (Gemini), OpenRouter and Cloudflare (Workers AI) are third-party AI providers that Atlas AI connects to. They do not own or operate Atlas AI.',
+        'Google (Gemini), OpenRouter, Cloudflare (Workers AI) and ElevenLabs are third-party AI providers that Atlas AI connects to. They do not own or operate Atlas AI.',
         `Privacy questions and requests: ${CONTACT_EMAIL}, or Settings → Report an issue in the app.`,
       ],
     },
@@ -85,7 +87,7 @@ export const PRIVACY: LegalDoc = {
         'Content you create: your conversations (your messages and the AI responses), images you attach to messages, memories, the "about me" and custom instructions you write, projects and project instructions, saved responses, the text extracted from documents you upload, and knowledge-base items (including web pages you add, which our server fetches).',
         'Images Atlas AI creates for you: each image you ask for or ask to be edited, with the request text (prompt), the model used, the image format and size, the time it was created, the conversation it belongs to and, for an edited image, which image it was made from.',
         'Information generated from your content: conversation titles, summaries of long conversations, memory notes that Atlas AI saves automatically when memory is turned on, project summaries, and search indexes (numerical "embeddings") of your memories, conversations, documents and knowledge-base items, used to find relevant passages.',
-        'Settings and usage: your preferences (such as theme, language, response style, default model and web-search settings), and usage counts such as the number of requests and tokens per model and per day, web-search counts, the number of images created, edited or refused per day, and the Cloudflare Workers AI usage (measured in "Neurons") of your requests.',
+        'Settings and usage: your preferences (such as theme, language, response style, default model and web-search settings), and usage counts such as the number of requests and tokens per model and per day, web-search counts, the number of images created, edited or refused per day, the number of voice, read-aloud and translation requests per day, the Cloudflare Workers AI usage (measured in "Neurons") of your requests, and, if you use the ElevenLabs voice, the number of characters and ElevenLabs credits each voice request used (not the text itself).',
         'Web searches: the search queries Atlas AI sends for you and the results returned. These are saved with your account so that a repeated search can reuse them.',
         'Security records: sign-ins, failed sign-ins, sign-outs (including automatic sign-outs), password and phone changes, data exports and other account events, each with a general device description such as "Safari on iPhone".',
         'Text-message records: for each verification or recovery text, the phone number it was sent to, the time, its purpose and whether it was delivered and verified. Verification codes are not kept in these records.',
@@ -112,17 +114,22 @@ export const PRIVACY: LegalDoc = {
     {
       heading: 'AI providers and how they use your data',
       paragraphs: [
-        'Atlas AI does not train AI models on your information. To produce answers, it sends information to third-party AI providers. Google Gemini is the primary provider and OpenRouter is an additional provider. Requests normally go to Gemini; Atlas AI sends a request through OpenRouter when you choose a model offered there, or when a Gemini model is unavailable or cannot handle the request. Cloudflare Workers AI is used only in the two cases described below, and never in place of Gemini or OpenRouter when they are unavailable.',
+        'Atlas AI does not train AI models on your information. To produce answers, it sends information to third-party AI providers. Google Gemini is the primary provider and OpenRouter is an additional provider. Requests normally go to Gemini; Atlas AI sends a request through OpenRouter when you choose a model offered there, or when a Gemini model is unavailable or cannot handle the request. Cloudflare Workers AI is used only in the cases described below, and never in place of Gemini or OpenRouter when they are unavailable.',
         'What is sent with a chat message: your message; earlier messages in the conversation (the most recent in full and a summary of older ones); images you attached to recent messages; your name, "about me", custom instructions and response preferences; relevant memories and project information; relevant excerpts from documents you attached and from your knowledge base; and web search results when a search was used.',
         'Images: when your message asks Atlas AI to create a picture, or to change the picture it just created or an image you attached, our server sends the request text to Cloudflare Workers AI. It goes first to a safety model, which checks whether the request is allowed, and then, if it is, to an image model. To edit an image, the image is sent as well. Your name, memories, documents and other parts of the conversation are not sent with an image request. The created image is returned to our server, which stores it in your account.',
         'Cloudflare chat models: if you choose a Cloudflare model in the model picker, your chat messages are sent to Cloudflare Workers AI with the same information as any other chat message.',
+        'Voice input: when you record a message with the microphone (including in Voice Mode) or choose an audio file to turn into text, our server sends the recording to a speech-to-text model on Cloudflare Workers AI and returns the text to you. Atlas AI does not store the recording; the text becomes part of your message only when you send it (in Voice Mode it is sent automatically and saved in the conversation like a typed message). In Voice Mode, when you pause, the last few seconds of your speech are also sent to a turn-detection model on Cloudflare Workers AI to tell whether you have finished speaking; that audio is not stored either. Voice Mode listens through your microphone only while it is open, and you can mute it at any time.',
+        'Read aloud and Voice Mode replies: by default they use your device’s own voice, which works on your device. If you turn on "Natural voice" in Settings, the text being read is sent through our server to a voice model from Deepgram offered through Cloudflare Workers AI, and the audio is returned to your browser. Atlas AI does not store that audio on its servers; your browser keeps it only while the app is open.',
+        'ElevenLabs voice: if an administrator has made it available and you choose "ElevenLabs" as your natural voice in Settings, the text being read (and a few words of the text just before and after it, so the parts join smoothly) is sent through our server to ElevenLabs instead of Cloudflare, and the audio is returned to your browser. Your name, memories, documents and other messages are not sent. A voice sample you play in Settings uses a fixed sample sentence. If the ElevenLabs voice is unavailable or today’s allowance is used up, the Cloudflare voice is used. Atlas AI keeps a record of each ElevenLabs request (time, voice, number of characters, credits and result) but not the text or the audio.',
+        'Translation: when you use "Translate with Cloudflare" on a message, the text of that message is sent through our server to a translation model on Cloudflare Workers AI. The translation is shown to you and is not saved in the conversation.',
         'Background tasks also use these providers: creating conversation titles, summarising long conversations, saving memory notes and project summaries, and creating search embeddings of your memories, conversations, documents and knowledge-base items.',
-        'Gemini, OpenRouter and Cloudflare have different data practices, and those practices are set by them, not by us:',
+        'Gemini, OpenRouter, Cloudflare and ElevenLabs have different data practices, and those practices are set by them, not by us:',
       ],
       bullets: [
         `Google Gemini. Atlas AI currently uses the Gemini API without a paid plan, so Google’s terms for unpaid services apply. Under those terms, Google uses the prompts and responses it receives to provide, improve and develop its products and machine-learning technologies, and human reviewers may read, annotate and process them. Google’s terms for paid services are different (Google says it does not use prompts or responses from paid services to improve its products), but they do not currently apply to Atlas AI. Google’s terms: ${GEMINI_TERMS}.`,
         'OpenRouter. OpenRouter forwards each request to a company that runs the chosen model (the model provider). OpenRouter’s privacy policy says it does not use inputs or outputs for model training, but model providers have their own policies, which differ from model to model. Several of the free models Atlas AI uses through OpenRouter, including the NVIDIA Nemotron chat models and the free embedding model, are available only from model providers that may store prompts and responses and use them to train or improve their models. OpenRouter: https://openrouter.ai/privacy and https://openrouter.ai/terms.',
         `Cloudflare Workers AI. Cloudflare runs the models on its own network. Cloudflare says that it does not use content processed by Workers AI to train AI models, that for requests like the ones Atlas AI makes it does not keep inputs or outputs once they are no longer needed to provide the service, and that it may keep operational information such as times, token counts and error codes. Cloudflare: ${CLOUDFLARE_DATA} and ${CLOUDFLARE_PRIVACY}.`,
+        `ElevenLabs. Used only for the optional ElevenLabs voice described above. How ElevenLabs handles the text it receives is set by ElevenLabs: ${ELEVENLABS_PRIVACY} and ${ELEVENLABS_TERMS}.`,
         'Providers may keep copies of the information they receive under their own policies. Deleting something in Atlas AI does not delete copies held by a provider.',
         'Do not submit passwords, financial credentials such as card or bank details, highly sensitive personal information (for example about health), confidential business information or other people’s personal information.',
       ],
@@ -291,12 +298,12 @@ export const TERMS: LegalDoc = {
     {
       heading: 'Third-party AI services',
       bullets: [
-        'Atlas AI uses third-party AI services to provide its AI features: Google Gemini, the primary provider, and OpenRouter, an additional provider, together with the model providers that OpenRouter forwards requests to. Cloudflare Workers AI creates and edits images, and answers chat messages only when you choose one of its models.',
+        'Atlas AI uses third-party AI services to provide its AI features: Google Gemini, the primary provider, and OpenRouter, an additional provider, together with the model providers that OpenRouter forwards requests to. Cloudflare Workers AI creates and edits images, turns speech into text, provides the optional natural voice and translates messages when you ask, and answers chat messages only when you choose one of its models. ElevenLabs provides an optional additional voice for reading replies aloud, used only when an administrator makes it available and you choose it.',
         'When you use AI features, the information you submit, including prompts, messages, attached images, uploaded documents and relevant conversation context, may be sent to these providers to generate a response.',
         'These providers process that information under their own terms and privacy policies, which differ from provider to provider. Some may keep it or use it to improve or train their models. The Privacy Policy explains what is known about each.',
         'We do not own or operate the underlying AI models. Their availability, behaviour and data practices are set by their providers and may change.',
         'Do not submit passwords, financial credentials, highly sensitive personal information or confidential information to Atlas AI.',
-        `Provider terms: Google Gemini API (${GEMINI_TERMS}), OpenRouter (https://openrouter.ai/terms and https://openrouter.ai/privacy) and Cloudflare (${CLOUDFLARE_DATA} and ${CLOUDFLARE_PRIVACY}).`,
+        `Provider terms: Google Gemini API (${GEMINI_TERMS}), OpenRouter (https://openrouter.ai/terms and https://openrouter.ai/privacy) Cloudflare (${CLOUDFLARE_DATA} and ${CLOUDFLARE_PRIVACY}) and ElevenLabs (${ELEVENLABS_TERMS} and ${ELEVENLABS_PRIVACY}).`,
       ],
     },
     {
@@ -325,7 +332,7 @@ export const TERMS: LegalDoc = {
     {
       heading: 'Usage limits and abuse prevention',
       paragraphs: [
-        'To control cost and prevent abuse, we limit web searches, research, image creation, file uploads, text messages, password-recovery requests and support reports, and AI providers apply their own limits to AI requests. Image creation uses a free daily allowance from Cloudflare; when it is used up, Atlas AI stops creating images until it resets at 00:00 UTC and does not switch to paid usage. We may change these limits, and we may block or slow requests that look automated or abusive.',
+        'To control cost and prevent abuse, we limit web searches, research, image creation, file uploads, text messages, password-recovery requests and support reports, and AI providers apply their own limits to AI requests. Image creation, voice input, the natural voice and translation use a free daily allowance from Cloudflare; when it is used up, Atlas AI pauses those features until it resets at 00:00 UTC and does not switch to paid usage. The natural voice has a smaller daily share, after which your device’s voice is used. The optional ElevenLabs voice has its own daily and monthly allowance set by the administrator; when it is used up, the Cloudflare voice is used. We may change these limits, and we may block or slow requests that look automated or abusive.',
       ],
     },
     {
@@ -344,7 +351,7 @@ export const TERMS: LegalDoc = {
     {
       heading: 'Third-party services',
       paragraphs: [
-        'Atlas AI relies on third-party services: Google (Firebase Authentication, Cloud Firestore, Google Analytics if you allow it, and Gemini), OpenRouter and the model providers it forwards requests to, Cloudflare (Workers AI), SerpAPI and Tavily (web search), Vynfy (text messages) and Vercel (hosting). Their availability and terms are outside our control, and we are not responsible for their acts or omissions, except where the law makes us responsible.',
+        'Atlas AI relies on third-party services: Google (Firebase Authentication, Cloud Firestore, Google Analytics if you allow it, and Gemini), OpenRouter and the model providers it forwards requests to, Cloudflare (Workers AI), ElevenLabs (optional voice), SerpAPI and Tavily (web search), Vynfy (text messages) and Vercel (hosting). Their availability and terms are outside our control, and we are not responsible for their acts or omissions, except where the law makes us responsible.',
       ],
     },
     {
