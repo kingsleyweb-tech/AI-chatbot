@@ -24,7 +24,7 @@ Firestore SDK (offline) ──┼─ realtime reads/writes ───────
 ## Chat request lifecycle (`server/chat/engine.ts`)
 
 1. Validate the body (zod) and check the allowlist (`server/access.ts`, cached for 5 minutes).
-2. Load the user's settings, conversation, project and model catalog. Build the **fallback chain**: requested model first, then configured fallbacks. Paid models are skipped when the key has no credits, and non-vision models are skipped when images are attached.
+2. Load the user's settings, conversation, project and model catalog. Build the **fallback chain**: requested model first, then configured fallbacks. Only free models are kept (Free Models Only policy), and non-vision models are skipped when images are attached.
 3. Gather context in parallel: relevant memories, related past conversations, attached-document excerpts and web results.
 4. Build the system prompt (`server/chat/prompt.ts`) and trim history to the model's context budget.
 5. Stream from the provider and re-emit normalized SSE events: `start`, `notice`, `sources`, `context`, `reasoning`, `delta`, `usage`, `error`, `done`. If a model fails **before** producing text (rate limit, unavailable, empty answer), the next model in the chain is tried and the UI shows a notice.
@@ -53,23 +53,30 @@ Signed-in persistence is tested end to end against the Firebase emulators with a
 ## Providers and model routing (`server/providers`, `server/router`)
 
 - **Providers.** Google Gemini (`gemini:<model>`, AI Studio key) is the **primary** provider. OpenRouter (default prefix) is the **secondary**. Both implement one `ChatProvider` interface and are registered in `server/providers/registry.ts`. One catalog, one router and one conversation engine serve both, so history, memory, documents and settings are shared.
-- **Default model.** `gemini:gemini-3.5-flash` when `GEMINI_API_KEY` is set. An admin can set another app default in `config/ai`, and a user's own default or per-chat choice always wins. Atlas AI never changes a user's chosen model.
+- **Default model.** `gemini:gemini-3.8-flash` when `GEMINI_API_KEY` is set. An admin can set another app default in `config/ai`, and a user's own default or per-chat choice always wins. Atlas AI never changes a user's chosen model.
 - **Routing** (`server/router/route.ts`):
   - `detectTask` reads the request without a model call: images, document types, intent and a token estimate.
   - `routeModel` keeps the selected model when it fits. Otherwise it uses the best free model for the task, for that reply only. Ranking: preferred provider first (`config/ai.preferredProvider`, default Gemini), then the task preference list, then featured models, then context size.
-  - If only a paid model fits, the server returns `approval_required` and spends nothing until the user approves that model for one request.
+  - If no free model fits, the reply explains that no free model can handle it. Paid models are never used or offered, and a paid model id sent by the client (even as `approvedPaidModel`) is ignored.
 - **Fallbacks** (`nextInChain`):
   - Each model is tried once, only before any text has streamed, and only for recoverable errors: busy, rate limited, timeout, outage, model unavailable.
   - Errors that affect a whole provider (a rejected key, OpenRouter's free daily cap) skip straight to the other provider.
   - Bad requests, content blocks and context-too-long errors never fall back.
   - Each switch is shown as a notice ("Switching to Google Gemini ... for this reply only").
   - Admins can limit fallback to the same provider, or turn it off (`config/ai.fallback`).
-- **Admin AI settings** (`config/ai`, Settings > Models, admins only): preferred provider, app default model, fallback policy. These are validated by `normalizeAiConfig` and the Firestore rules, and cached for 5 minutes on the server. Paid models always need the user's approval; that is not configurable.
+- **Admin AI settings** (`config/ai`, Settings > Models, admins only): preferred provider, app default model, fallback policy. These are validated by `normalizeAiConfig` and the Firestore rules, and cached for 5 minutes on the server.
+- **Free Models Only policy** (`server/billing/policy.ts`). Atlas AI never spends money on AI:
+  - The provider registry wraps every provider, so every stream, completion and embedding (chat, fallbacks, titles, memory, summaries, knowledge) is checked before a request leaves the server. A refused model raises `paid_blocked`.
+  - Free means: Gemini models listed as "Free of charge" on Google's Free Tier (`GEMINI_FREE_TIER`, checked against the official pricing page in November 2026; `gemini-3.5-flash` and `gemini-3.1-pro-preview` are not on it); OpenRouter `vendor/model:free` variants only (no routers, no paid embeddings); the curated Cloudflare models, inside the free daily Neuron allowance only; ElevenLabs within the subscription's included credits only.
+  - The catalog lists only allowed models (`paidAvailable` is always false). Background jobs never run on Cloudflare, since they make no Neuron reservation.
+  - When every free model fails with a limit error (rate limit, daily cap, no credits, refused), the user sees "Atlas AI's free AI usage limit has been reached for now. Please try again later." (`free_limit`).
+  - Administrators can narrow the allowed list in Settings > Models ("Admin: Free models only", `api/admin` `billingGet`/`billingSet`, stored server-only in `config/billing`, logged as `billing_policy_changed`). The server refuses any id that is not free, so the list can never include a paid model.
+  - Not visible to the app, so keep them yourself: billing disabled on the Google project, and the Cloudflare account on the Workers Free plan.
 - **Analytics** in `usage/{day}`:
   - `providers.<id>.requests/tokens/failed/rateLimited`
   - `routing.fallbacks`, `routing.providerSwitches`, `routing.switched`
 - **OpenRouter free daily cap.** Accounts without purchased credits get 50 free-model requests per day. The cap is read from OpenRouter's key info, or learned from the first `free-models-per-day` 429. Free OpenRouter models are then marked unavailable until midnight UTC, and requests go to Gemini.
-- **Gemini.** It uses the free tier (no billing on the Google project; `GEMINI_BILLING=paid` flips every Gemini model to paid). Short background calls disable thinking, so it cannot use up their small output budget. Embeddings use `gemini-embedding-001` (768 dimensions). Usage is counted per provider in `usage/{day}.providers.<id>`.
+- **Gemini.** It uses Free Tier models only (no billing on the Google project; with `GEMINI_BILLING=paid` no Gemini model is used at all). Short background calls disable thinking, so it cannot use up their small output budget. Embeddings use `gemini-embedding-001` (768 dimensions). Usage is counted per provider in `usage/{day}.providers.<id>`.
 - **Cloudflare Workers AI** (`server/providers/cloudflare.ts`, `server/cloudflare/client.ts`) is an additional provider:
   - It offers five curated chat models (`CLOUDFLARE_CHAT_MODELS`: Gemma 4 26B, gpt-oss-120b, Llama 4 Scout, Mistral Small 3.1, Qwen2.5 Coder), used **only when the user selects one**.
   - `routeModel` never picks a `cloudflare` model automatically and never uses one as a fallback; Gemini and OpenRouter remain the chain.
@@ -320,6 +327,6 @@ CSP (scripts: self, the inline theme script by SHA-256 hash, Google sign-in and 
 - **Voice input** uses the Web Speech API. It works in Safari on iOS 14.5+ and Chrome, but not in Firefox. When unavailable, the microphone button is hidden. Read-aloud uses the system voices.
 - **60-second function limit** on Vercel Hobby (see `vercel.json`). Very long generations may be cut off. Partial text is saved and can be continued.
 - **Vector search is in-process,** fine for one person's data (hundreds of memories, thousands of chunks). Larger scale would need Firestore vector indexes or a vector database.
-- **Free models are rate-limited** by OpenRouter. With no credits on the key, paid models fall back to free ones.
+- **Free models are rate-limited** by every provider. When all of them are at their limit, the user is told to try again later; Atlas AI never switches to paid usage.
 - **Multi-factor authentication is not offered.** Firebase MFA (SMS or TOTP second factor) needs the Identity Platform upgrade of the Firebase project. Phone verification here is a one-time check of the number, not a second factor at each sign-in.
 - **App Check is not enabled.** It needs a reCAPTCHA Enterprise site key; add `VITE_APPCHECK_SITE_KEY` and enforcement in the console if wanted.

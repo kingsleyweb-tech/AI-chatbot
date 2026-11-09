@@ -90,33 +90,11 @@ describe('routeModel', () => {
     expect(r.kind === 'ok' && r.switched).toBeNull();
   });
 
-  it('asks for approval when only a paid model fits, and never includes it in a chain', () => {
+  it('never uses or offers a paid model, even one the client says was approved', () => {
     const models = catalog().filter((m) => !(m.free && m.capabilities.vision));
-    const r = routeModel(ULTRA, detectTask([user('What is this?', true)]), models, opts);
-    expect(r.kind).toBe('approval');
-    if (r.kind === 'approval') {
-      expect(r.model.id).toBe(PAID_VISION);
-      expect(r.creditsNeeded).toBe(true);
-      expect(r.estCost).toBeGreaterThan(0);
-      expect(r.reason).toMatch(/paid model/);
-    }
-  });
-
-  it('uses an approved paid model when credits exist', () => {
-    const models = catalog().filter((m) => !(m.free && m.capabilities.vision));
-    const r = routeModel(ULTRA, detectTask([user('What is this?', true)]), models, {
-      paidAvailable: true,
-      approvedPaid: PAID_VISION,
-    });
-    expect(r.kind === 'ok' && r.chain[0]).toBe(PAID_VISION);
-  });
-
-  it('still asks when an approved paid model cannot run because there are no credits', () => {
-    const r = routeModel(ULTRA, detectTask([user('What is this?', true)]), catalog(), {
-      paidAvailable: false,
-      approvedPaid: PAID_VISION,
-    });
-    expect(r.kind === 'approval' && r.creditsNeeded).toBe(true);
+    const task = detectTask([user('What is this?', true)]);
+    expect(routeModel(ULTRA, task, models, opts).kind).toBe('none');
+    expect(routeModel(ULTRA, task, models, { paidAvailable: true, approvedPaid: PAID_VISION }).kind).toBe('none');
   });
 
   it('falls back to a free model when the selected one is unavailable', () => {
@@ -129,12 +107,12 @@ describe('routeModel', () => {
     }
   });
 
-  it('falls back to a free model when a paid selection has no credits', () => {
+  it('falls back to a free model when a paid model is selected', () => {
     const r = routeModel(PAID_TEXT, detectTask([user('Hi')]), catalog(), opts);
     expect(r.kind).toBe('ok');
     if (r.kind === 'ok') {
       expect(r.chain[0]).toBe(ULTRA);
-      expect(r.switched?.reason).toBe('needs OpenRouter credits');
+      expect(r.switched?.reason).toBe('is not a free model');
     }
   });
 

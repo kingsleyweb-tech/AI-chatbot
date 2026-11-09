@@ -39,7 +39,11 @@ export type ProviderErrorCode =
   | 'moderation'
   | 'bad_request'
   | 'provider_error'
-  | 'not_configured';
+  | 'not_configured'
+  /** the model is not an approved free model (Free Models Only policy) */
+  | 'paid_blocked'
+  /** every approved free model is at its limit right now */
+  | 'free_limit';
 
 export class ProviderError extends Error {
   constructor(
@@ -58,6 +62,7 @@ export class ProviderError extends Error {
       'timeout',
       'unsupported_input',
       'provider_error',
+      'paid_blocked',
     ].includes(this.code);
   }
   /** worth retrying later as-is */

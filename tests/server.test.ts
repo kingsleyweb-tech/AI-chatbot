@@ -120,12 +120,12 @@ describe('fallbackChain', () => {
     expect(fallbackChain('a/one:free', catalog, { needsVision: false, paidAvailable: true }).chain).toEqual(['a/one:free', 'b/two:free']);
   });
 
-  it('skips paid models when the account has no credits', () => {
+  it('skips paid models, whatever the account holds', () => {
     process.env.FALLBACK_MODELS = 'b/two:free';
     const catalog = [model('p/paid'), model('b/two:free')];
-    const r = fallbackChain('p/paid', catalog, { needsVision: false, paidAvailable: false });
+    const r = fallbackChain('p/paid', catalog, { needsVision: false, paidAvailable: true });
     expect(r.chain).toEqual(['b/two:free']);
-    expect(r.skipped[0]).toMatchObject({ id: 'p/paid', reason: expect.stringContaining('credits') });
+    expect(r.skipped[0]).toMatchObject({ id: 'p/paid', reason: 'not a free model' });
   });
 
   it('keeps only vision models when images are attached and drops unknown ids', () => {

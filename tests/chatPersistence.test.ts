@@ -6,7 +6,7 @@ import { fakeModel } from './helpers.js';
 
 // The AI provider is replaced by a scripted stream; everything else (routing,
 // prompt building, persistence) is the real chat engine.
-const MODEL = 'gemini:test-flash';
+const MODEL = 'gemini:gemini-3.8-flash';
 let script: (signal: AbortSignal) => AsyncGenerator<ProviderChunk>;
 vi.mock('../server/providers/registry.js', () => ({
   getCatalog: async () => ({ models: [fakeModel(MODEL, { contextLength: 100_000, free: true, pricing: { prompt: 0, completion: 0 } })], defaultModel: MODEL, fallbackModels: [], paidAvailable: false }),
@@ -134,6 +134,17 @@ describe('chat replies are stored permanently', () => {
     expect(all.filter((m) => m.role === 'user')).toHaveLength(1);
     expect(all.filter((m) => m.role === 'assistant')).toEqual([expect.objectContaining({ id: 'r1', status: 'complete', content: 'Recovered answer ' })]);
     expect(db.docs.get(conv)).toMatchObject({ messageCount: 1 });
+  });
+
+  it('when every free model is at its limit, says so and never switches to paid usage', async () => {
+    script = async function* () {
+      yield* [];
+      throw new ProviderError('rate_limited', 'The Gemini free-tier quota for this model is used up for now.', 429);
+    };
+    addUser('m1', 'hi');
+    const events = await chat('r1', [{ role: 'user', content: 'hi' }]);
+    const err = events.find((e) => e.type === 'error');
+    expect(err).toMatchObject({ code: 'free_limit', message: expect.stringMatching(/free AI usage limit has been reached/) });
   });
 
   it('the browser leaving (phone switched apps) does not stop the reply: it is finished and stored', async () => {

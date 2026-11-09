@@ -51,6 +51,7 @@ export const ADMIN_ACTIONS = [
   'request_deleted',
   'user_auto_approved',
   'auto_approve_changed',
+  'billing_policy_changed',
   'pending_bulk_approved',
   'support_replied',
   'support_status_changed',

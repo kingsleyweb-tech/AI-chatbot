@@ -120,7 +120,7 @@ export async function elevenSpeak(ctx: Ctx, b: SpeakBody, signal: AbortSignal, l
 
   const estimate = Math.ceil(text.length * model.creditsPerChar);
   const r = await reserveCredits(db, user.uid, estimate);
-  if (!r.ok) throw new HttpError(r.reason === 'unavailable' ? 503 : r.reason === 'disabled' ? 403 : 429, `eleven_${r.reason}`, r.message);
+  if (!r.ok) throw new HttpError(r.reason === 'unavailable' ? 503 : r.reason === 'disabled' ? 403 : r.reason === 'plan_credits' ? 402 : 429, `eleven_${r.reason}`, r.message);
 
   running.set(user.uid, (running.get(user.uid) ?? 0) + 1);
   let released = false;
@@ -221,7 +221,7 @@ export async function elevenAdmin(ctx: Ctx, b: AdminBody, signal: AbortSignal): 
       throw new HttpError(402, 'eleven_needs_plan', 'Voice Design needs a paid ElevenLabs plan. After upgrading, press Check again.');
     }
     const r = await reserveCredits(db, user.uid, Math.max(b.text.length, ELEVEN_DESIGN_ESTIMATE), { personalCap: false });
-    if (!r.ok) throw new HttpError(r.reason === 'unavailable' ? 503 : r.reason === 'disabled' ? 403 : 429, `eleven_${r.reason}`, r.message);
+    if (!r.ok) throw new HttpError(r.reason === 'unavailable' ? 503 : r.reason === 'disabled' ? 403 : r.reason === 'plan_credits' ? 402 : 429, `eleven_${r.reason}`, r.message);
     const t0 = Date.now();
     const entry = { uid: user.uid, type: 'design' as const, model: ELEVEN_DESIGN_MODEL, characters: b.text.length };
     try {

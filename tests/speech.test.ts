@@ -202,6 +202,17 @@ describe('/api/speech', () => {
     expect(db.current.docs.get(`users/u1/usage/${utcDay()}`)!['voice.turn.requests']).toBe(1);
   });
 
+  it('end-of-turn check stays inside the free daily Neuron allowance (no request once it is used up)', async () => {
+    let called = 0;
+    setSpeechFake({ ...fake, turn: async () => (called++, { complete: true, probability: 0.9, neurons: 0.01 }) });
+    db.current.docs.set(usagePath(utcDay()), { neurons: 9_000 });
+    const pcm = new Int16Array(16_000).fill(16384);
+    const res = await post(new Uint8Array(pcm.buffer), '?action=turn', { 'content-type': 'application/octet-stream' });
+    expect(res.status).toBe(429);
+    expect(JSON.stringify(await res.json())).toMatch(/never switches to paid/);
+    expect(called).toBe(0);
+  });
+
   it('end-of-turn check refuses too little or too much audio', async () => {
     expect((await post(new Uint8Array(100), '?action=turn', { 'content-type': 'application/octet-stream' })).status).toBe(400);
     expect((await post(new Uint8Array(16_000 * 2 * 9), '?action=turn', { 'content-type': 'application/octet-stream' })).status).toBe(400);

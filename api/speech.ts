@@ -23,7 +23,7 @@ import { waitUntil } from '@vercel/functions';
 import { z } from 'zod';
 import { requireAllowedUser } from '../server/access.js';
 import { cloudflareConfigured } from '../server/cloudflare/client.js';
-import { modelNeuronsToday, recordUsage, reserveNeurons, userTurnChecksToday, userVoiceNeuronsToday, utcDay } from '../server/cloudflare/budget.js';
+import { modelNeuronsToday, reserveNeurons, userTurnChecksToday, userVoiceNeuronsToday, utcDay } from '../server/cloudflare/budget.js';
 import { detectTurnEnd, transcribe, translateText } from '../server/cloudflare/speech.js';
 import {
   MAX_AUDIO_BYTES,
@@ -71,6 +71,9 @@ function fail(err: unknown, what: string): never {
   }
   throw err;
 }
+
+/** End-of-turn checks cost a fraction of a Neuron; reserve a little so the free cap is never passed. */
+const TURN_NEURON_ESTIMATE = 1;
 
 async function reserve(db: Firestore, estimate: number, what: string) {
   const r = await reserveNeurons(db, estimate);
@@ -120,12 +123,14 @@ export const POST = handle(async (request) => {
     const view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
     const pcm = new Float32Array(raw.byteLength / 2);
     for (let i = 0; i < pcm.length; i++) pcm[i] = view.getInt16(i * 2, true) / 32768;
+    // inside the free daily Neuron allowance only, like every other Cloudflare call
+    const r = await reserve(db, TURN_NEURON_ESTIMATE, 'end-of-turn detection');
     try {
       const v = await detectTurnEnd(pcm, request.signal);
-      await recordUsage(db, v.neurons, { uid: user.uid, model: TURN_MODEL, type: 'turn', ok: true }).catch(() => undefined);
+      await r.settle(v.neurons, { uid: user.uid, model: TURN_MODEL, type: 'turn', ok: true }).catch(() => undefined);
       return json({ complete: v.complete, probability: v.probability }, { headers: { 'cache-control': 'no-store' } });
     } catch (err) {
-      await recordUsage(db, (err as { neurons?: number }).neurons ?? 0, { uid: user.uid, model: TURN_MODEL, type: 'turn', ok: false, error: err instanceof ProviderError ? err.code : 'aborted' }).catch(() => undefined);
+      await r.settle((err as { neurons?: number }).neurons ?? 0, { uid: user.uid, model: TURN_MODEL, type: 'turn', ok: false, error: err instanceof ProviderError ? err.code : 'aborted' }).catch(() => undefined);
       fail(err, 'end-of-turn detection');
     }
   }

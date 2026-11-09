@@ -458,10 +458,7 @@ function ModelsSection() {
                 )
                 .join(', ')
             : 'Not configured'}
-          {catalog &&
-            (catalog.paidAvailable
-              ? ' · OpenRouter paid models enabled'
-              : ' · OpenRouter free models only (no credits)')}
+          {catalog && ' · Free models only'}
         </span>
       </Row>
       <Row
@@ -593,7 +590,7 @@ function AdminAiRows() {
       </Row>
       <Row
         title="Automatic fallback"
-        description="When a model fails with a recoverable error (busy, quota, outage). Paid models are never used without the user's approval."
+        description="When a model fails with a recoverable error (busy, quota, outage). Only free models are ever used; paid models are never a fallback."
       >
         <Select
           className="sm:w-56"
@@ -606,6 +603,110 @@ function AdminAiRows() {
           ]}
         />
       </Row>
+      <FreeModelsPolicy />
+    </>
+  );
+}
+
+const AI_PROVIDER_LABEL: Record<string, string> = {
+  gemini: 'Google Gemini',
+  openrouter: 'OpenRouter',
+  cloudflare: 'Cloudflare Workers AI',
+};
+
+interface FreeCandidate {
+  id: string;
+  name: string;
+  provider: string;
+}
+interface BillingView {
+  billing: { approvedModels: string[] | null; updatedAt?: number | null; updatedBy?: string | null };
+  candidates: FreeCandidate[];
+}
+
+/**
+ * Free Models Only (server-enforced, api/admin billingGet/billingSet). Only models the server
+ * confirms are free are listed, so a paid model can never be approved here.
+ */
+function FreeModelsPolicy() {
+  const toast = useToast();
+  const [view, setView] = useState<BillingView | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let live = true;
+    api<BillingView>('admin', { json: { action: 'billingGet' } })
+      .then((r) => live && setView(r))
+      .catch(() => live && setFailed(true));
+    return () => {
+      live = false;
+    };
+  }, []);
+  const save = async (approvedModels: string[] | null) => {
+    setBusy(true);
+    try {
+      setView(await api<BillingView>('admin', { json: { action: 'billingSet', approvedModels } }));
+      toast('Saved. Applies to every request within a minute.');
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not save.', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const all = view?.billing.approvedModels === null;
+  const approved = new Set(view?.billing.approvedModels ?? view?.candidates.map((c) => c.id) ?? []);
+  const toggle = (id: string, on: boolean) => {
+    if (!view) return;
+    const next = view.candidates.map((c) => c.id).filter((m) => (m === id ? on : approved.has(m)));
+    if (!next.length) {
+      toast('Keep at least one free model approved.', 'error');
+      return;
+    }
+    void save(next);
+  };
+  return (
+    <>
+      <h3 className="bg-surface-2/50 py-2 text-xs font-medium uppercase tracking-wide text-muted">
+        Admin: Free models only
+      </h3>
+      <p className="py-3 text-xs text-muted">
+        Atlas AI uses free models only and never switches to paid usage, buys credits or upgrades a
+        plan. Gemini: Free Tier models only. OpenRouter: :free models only. Cloudflare: the free
+        daily allowance only. ElevenLabs: the credits already included in the subscription only.
+        When every free model is at its limit, people are told to try again later.
+      </p>
+      {failed ? (
+        <p className="pb-3 text-xs text-danger">Could not load the approved model list.</p>
+      ) : !view ? (
+        <div className="py-3">
+          <Spinner />
+        </div>
+      ) : (
+        <>
+          <Row
+            title="Use every free model"
+            description="On: any model the server confirms is free. Off: only the models ticked below. Paid models can never be added."
+          >
+            <Switch
+              label="Use every free model"
+              checked={all}
+              disabled={busy}
+              onChange={(v) => void save(v ? null : view.candidates.map((c) => c.id))}
+            />
+          </Row>
+          {!all &&
+            view.candidates.map((c) => (
+              <Row key={c.id} title={c.name} description={`${AI_PROVIDER_LABEL[c.provider] ?? c.provider} · ${c.id}`}>
+                <Switch
+                  label={`Approve ${c.name}`}
+                  checked={approved.has(c.id)}
+                  disabled={busy}
+                  onChange={(v) => toggle(c.id, v)}
+                />
+              </Row>
+            ))}
+        </>
+      )}
     </>
   );
 }

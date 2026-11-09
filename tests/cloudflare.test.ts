@@ -138,7 +138,7 @@ describe('Cloudflare chat provider', () => {
 
 describe('routing: Cloudflare is manual only', () => {
   const cf = { ...fakeModel('@cf/google/gemma-4-26b-a4b-it', { vision: true }), provider: 'cloudflare', free: true };
-  const gemini = { ...fakeModel('gemini:gemini-3.5-flash', { vision: true }), provider: 'gemini', free: true };
+  const gemini = { ...fakeModel('gemini:gemini-3.8-flash', { vision: true }), provider: 'gemini', free: true };
   const or = fakeModel('nvidia/nemotron-3-ultra-550b-a55b:free');
   const catalog = [cf, gemini, or];
   const task = detectTask([{ role: 'user', content: 'Hello' }]);

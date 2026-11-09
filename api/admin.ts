@@ -1,4 +1,7 @@
 import { cleanupPurgedRecords } from '../server/account/retention.js';
+import { BILLING_PATH, loadBilling, saveBilling } from '../server/billing/policy.js';
+import { freeModelCandidates } from '../server/providers/registry.js';
+import { ProviderError } from '../server/providers/types.js';
 import { centralMaintenance } from '../server/central/manage.js';
 import { z } from 'zod';
 import {
@@ -126,6 +129,12 @@ const schema = z.discriminatedUnion('action', [
     }),
   }),
   z.object({ action: z.literal('newsFeedRemove'), id: feedId }),
+  z.object({ action: z.literal('billingGet') }),
+  z.object({
+    action: z.literal('billingSet'),
+    // null: every free model; a list can only narrow (paid ids are refused by saveBilling)
+    approvedModels: z.array(z.string().min(3).max(200)).max(200).nullable(),
+  }),
 ]);
 
 interface Profile extends ProfileStatus {
@@ -569,6 +578,30 @@ export const POST = handle(async (request) => {
       detail,
     });
     return json({ ok: true });
+  }
+
+  if (b.action === 'billingGet' || b.action === 'billingSet') {
+    if (b.action === 'billingSet') {
+      const before = await loadBilling(true);
+      let saved;
+      try {
+        saved = await saveBilling(b.approvedModels, ctx.user.email ?? ctx.user.uid);
+      } catch (err) {
+        if (err instanceof ProviderError) throw new HttpError(400, 'not_free', err.message);
+        throw err;
+      }
+      const describe = (l: string[] | null) => (l === null ? 'all free models' : `${l.length} approved free models`);
+      await recordAdminAction(db, {
+        action: 'billing_policy_changed',
+        adminUid: ctx.user.uid,
+        adminEmail: ctx.user.email,
+        targetUid: BILLING_PATH,
+        targetEmail: null,
+        detail: `Free Models Only list: ${describe(before.approvedModels)} → ${describe(saved.approvedModels)}`,
+      });
+    }
+    const [settings, candidates] = await Promise.all([loadBilling(true), freeModelCandidates()]);
+    return json({ billing: settings, candidates });
   }
 
   if (b.action === 'logs') {

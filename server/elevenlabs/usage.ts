@@ -11,11 +11,17 @@
  * caps; a request that would pass one is refused, so spending can never run past what an
  * administrator allowed. The exact figure from ElevenLabs' `character-cost` header is recorded after.
  * Fails closed: if the counters cannot be read, nothing runs.
+ *
+ * Free Models Only policy: requests also stay inside the credits included in the existing
+ * ElevenLabs subscription. The live balance (GET /v1/user/subscription, free to call) is checked
+ * before each request; when the included credits are used up, or the balance cannot be read, the
+ * request is refused and the person is told. Atlas AI never buys credits or extends the limit.
  */
 import { adminConfigured, trustedDb } from '../admin.js';
 import { normalizeElevenSettings, type ElevenSettings } from '../config/elevenlabs.js';
 import { fieldPath, SERVER_TIME, type Firestore } from '../firestore.js';
 import { utcDay } from '../cloudflare/budget.js';
+import { elevenGetJson } from './client.js';
 
 export const monthOf = (now = Date.now()) => `m-${new Date(now).toISOString().slice(0, 7)}`;
 export const SETTINGS_PATH = 'config/voice';
@@ -36,7 +42,11 @@ export interface ElevenUsageEntry {
   requestId?: string | null;
 }
 
-export type CreditRefusal = { ok: false; reason: 'disabled' | 'app_daily' | 'app_monthly' | 'user_daily' | 'unavailable'; message: string };
+export type CreditRefusal = {
+  ok: false;
+  reason: 'disabled' | 'app_daily' | 'app_monthly' | 'user_daily' | 'plan_credits' | 'unavailable';
+  message: string;
+};
 export interface CreditReservation {
   ok: true;
   settle(credits: number, entry: ElevenUsageEntry): Promise<void>;
@@ -99,6 +109,59 @@ export async function elevenUsage(userDb: Firestore, uid: string, now = Date.now
   };
 }
 
+/* ------------------------- subscription balance ------------------------- */
+
+export interface ElevenBalance {
+  /** credits left in the current billing period (character_limit - character_count) */
+  remaining: number;
+  /** the subscription is in good standing */
+  active: boolean;
+}
+
+const BALANCE_TTL_MS = 60_000;
+const ACTIVE_STATUSES = new Set(['active', 'trialing', 'free']);
+let balanceCache: { at: number; value: ElevenBalance } | null = null;
+/** credits settled on this instance since the balance was last read */
+let spentSinceRead = 0;
+let balanceOverride: ElevenBalance | null | undefined;
+
+/** Tests: a fixed balance (null = unreadable); undefined restores the live read. */
+export function setElevenBalanceForTests(value: ElevenBalance | null | undefined) {
+  balanceOverride = value;
+  balanceCache = null;
+  spentSinceRead = 0;
+}
+
+/** The subscription's remaining included credits, or null when it cannot be read (then nothing runs). */
+export async function subscriptionBalance(now = Date.now()): Promise<ElevenBalance | null> {
+  if (balanceOverride !== undefined) {
+    return balanceOverride && { ...balanceOverride, remaining: balanceOverride.remaining - spentSinceRead };
+  }
+  if (balanceCache && now - balanceCache.at < BALANCE_TTL_MS) {
+    return { ...balanceCache.value, remaining: balanceCache.value.remaining - spentSinceRead };
+  }
+  try {
+    const { status, body } = await elevenGetJson('/v1/user/subscription');
+    const b = (body ?? {}) as Record<string, unknown>;
+    const used = Number(b.character_count);
+    const limit = Number(b.character_limit);
+    if (status !== 200 || !Number.isFinite(used) || !Number.isFinite(limit)) return null;
+    const value: ElevenBalance = {
+      remaining: Math.max(0, limit - used),
+      active: typeof b.status === 'string' ? ACTIVE_STATUSES.has(b.status.toLowerCase()) : false,
+    };
+    balanceCache = { at: now, value };
+    spentSinceRead = 0;
+    return value;
+  } catch {
+    return null;
+  }
+}
+
+function noteSpent(credits: number) {
+  spentSinceRead += Math.max(0, credits);
+}
+
 /** Credits reserved by requests still running on this server instance. */
 const inflight = new Map<number, { uid: string; credits: number }>();
 let seq = 0;
@@ -142,12 +205,25 @@ export async function reserveCredits(
   if (opts.personalCap !== false && u.mine.credits + pending(uid) + estimate > s.userDailyCredits) {
     return { ok: false, reason: 'user_daily', message: 'Your ElevenLabs voice allowance for today is used up; the Cloudflare voice is used until 00:00 UTC.' };
   }
+  // Only the credits already included in the subscription: never overage, never buying more.
+  const balance = await subscriptionBalance(now);
+  if (!balance) {
+    return { ok: false, reason: 'unavailable', message: 'The ElevenLabs voice is temporarily unavailable because its remaining credits could not be checked.' };
+  }
+  if (!balance.active || balance.remaining - pending() < estimate) {
+    return {
+      ok: false,
+      reason: 'plan_credits',
+      message: 'The ElevenLabs credits included in Atlas AI’s plan are used up for this billing period, so the ElevenLabs voice has stopped. Atlas AI never buys extra credits.',
+    };
+  }
   const id = ++seq;
   inflight.set(id, { uid, credits: estimate });
   return {
     ok: true,
     async settle(credits, entry) {
       inflight.delete(id);
+      noteSpent(credits);
       await recordElevenUsage(userDb, credits, entry, now).catch((err) =>
         console.warn('[elevenlabs] usage write failed', err instanceof Error ? err.message : 'unknown'),
       );
@@ -227,6 +303,8 @@ export async function recentElevenRequests(userDb: Firestore, limit = 30) {
 
 export function resetElevenState() {
   inflight.clear();
+  balanceCache = null;
+  spentSinceRead = 0;
   settingsCache = null;
   seq = 0;
 }

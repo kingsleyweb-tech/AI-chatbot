@@ -4,7 +4,7 @@ import { resetBudgetState } from '../server/cloudflare/budget.js';
 import { ELEVEN_MAXIMA, normalizeElevenSettings } from '../server/config/elevenlabs.js';
 import { setElevenLabsFetch } from '../server/elevenlabs/client.js';
 import { resetElevenRoutes } from '../server/elevenlabs/routes.js';
-import { resetElevenState } from '../server/elevenlabs/usage.js';
+import { resetElevenState, setElevenBalanceForTests } from '../server/elevenlabs/usage.js';
 import type { Firestore } from '../server/firestore.js';
 import { FakeDb } from './fakeDb.js';
 
@@ -55,8 +55,10 @@ beforeEach(() => {
   calls = [];
   reply = audioReply();
   setElevenLabsFetch(fakeFetch as typeof fetch);
+  setElevenBalanceForTests({ remaining: 30_000, active: true });
 });
 afterEach(() => {
+  setElevenBalanceForTests(undefined);
   setElevenLabsFetch(null);
   setAdminDb(null);
   delete process.env.ELEVENLABS_API_KEY;
@@ -166,6 +168,37 @@ describe('/api/speech with ElevenLabs', () => {
     const res = await post({ action: 'speak', provider: 'elevenlabs', text: 'x'.repeat(100) }); // ~50 credits on Flash
     expect(res.status).toBe(429);
     expect((await res.json()).error.code).toBe('eleven_user_daily');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('stops when the subscription’s included credits are used up, and never buys more (no request)', async () => {
+    await enable();
+    setElevenBalanceForTests({ remaining: 10, active: true });
+    const res = await post({ action: 'speak', provider: 'elevenlabs', text: 'x'.repeat(100) });
+    expect(res.status).toBe(402);
+    const body = await res.json();
+    expect(body.error.code).toBe('eleven_plan_credits');
+    expect(body.error.message).toMatch(/used up/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('counts credits spent since the last balance read, so it stops at the subscription limit', async () => {
+    await enable();
+    setElevenBalanceForTests({ remaining: 60, active: true });
+    reply = audioReply(40);
+    expect((await post({ action: 'speak', provider: 'elevenlabs', text: 'x'.repeat(60) })).status).toBe(200);
+    await flush();
+    const res = await post({ action: 'speak', provider: 'elevenlabs', text: 'x'.repeat(60) });
+    expect((await res.json()).error.code).toBe('eleven_plan_credits');
+    expect(calls).toHaveLength(1);
+  });
+
+  it('fails closed when the balance cannot be read or the subscription is not active', async () => {
+    await enable();
+    setElevenBalanceForTests(null);
+    expect((await post({ action: 'speak', provider: 'elevenlabs', text: 'Hello there' })).status).toBe(503);
+    setElevenBalanceForTests({ remaining: 30_000, active: false });
+    expect((await post({ action: 'speak', provider: 'elevenlabs', text: 'Hello there' })).status).toBe(402);
     expect(calls).toHaveLength(0);
   });
 

@@ -29,6 +29,7 @@ import { markFailed, markHealthy, preferHealthy } from '../providers/health.js';
 import { getCatalog, providerFor } from '../providers/registry.js';
 import { loadAiConfig } from '../config/ai.js';
 import { routeModel, nextInChain } from '../router/route.js';
+import { FREE_LIMIT_MESSAGE } from '../billing/policy.js';
 import { detectTask } from '../router/task.js';
 import { ProviderError } from '../providers/types.js';
 import { gatherWebContext } from '../search/web.js';
@@ -124,6 +125,8 @@ interface ConversationDoc {
 }
 
 const APPROVAL_STOP = Symbol('approval_required');
+/** Failures that mean "this free model is used up for now" (Free Models Only policy). */
+const LIMIT_CODES = new Set(['rate_limited', 'daily_limit', 'insufficient_credits', 'paid_blocked']);
 /** the reply was an image (or an image refusal); no text model runs */
 const IMAGE_DONE = Symbol('image_done');
 
@@ -169,10 +172,12 @@ export function friendlyError(err: unknown): Extract<StreamEvent, { type: 'error
   }
   if (err instanceof ProviderError) {
     const suggestion =
-      err.code === 'insufficient_credits'
-        ? 'Choose a free model, or add credits to your OpenRouter account.'
-        : err.code === 'daily_limit'
-          ? 'Try again after the reset, or add OpenRouter credits (purchasing at least $10 raises the free-model limit). Atlas AI never buys credits for you.'
+      err.code === 'free_limit'
+        ? 'Atlas AI uses free models only and never switches to paid usage.'
+        : err.code === 'insufficient_credits' || err.code === 'paid_blocked'
+          ? 'Choose another free model. Atlas AI uses free models only.'
+          : err.code === 'daily_limit'
+            ? 'Try again after the reset, or choose another free model. Atlas AI never switches to paid usage.'
           : err.code === 'rate_limited'
             ? 'Wait a moment and retry, or switch to another model.'
             : err.code === 'unsupported_input'
@@ -427,6 +432,8 @@ export async function runChat(
             fallback: aiConfig.fallback,
           });
           if (route.kind === 'none') {
+            // Every free model is at its limit (or none is offered): say so plainly.
+            if (!models.some((m) => m.free && m.available)) throw new ProviderError('free_limit', FREE_LIMIT_MESSAGE, 429);
             throw new ProviderError(
               needsVision ? 'unsupported_input' : 'model_unavailable',
               route.reason,
@@ -680,6 +687,8 @@ export async function runChat(
 
           // ---- Generation with fallbacks ----
           let lastErr: unknown = null;
+          // stays true while every failure is a quota/limit one (then the free usage limit is reached)
+          let onlyLimits = true;
           for (let i = 0; i < chain.length; i++) {
             const modelId = chain[i];
             const info = models.find((m) => m.id === modelId);
@@ -740,6 +749,7 @@ export async function runChat(
               }
               if (signal.aborted) throw err;
               lastErr = err;
+              if (!(err instanceof ProviderError && LIMIT_CODES.has(err.code))) onlyLimits = false;
               if (err instanceof ProviderError && !content) markFailed(modelId, err.code);
               if (err instanceof ProviderError) {
                 count(['providers', providerFor(modelId).id, 'failed']);
@@ -756,6 +766,7 @@ export async function runChat(
               i = next - 1;
             }
           }
+          if (lastErr && !content && onlyLimits) throw new ProviderError('free_limit', FREE_LIMIT_MESSAGE, 429);
           if (lastErr) throw lastErr;
           if (!content.trim() && !signal.aborted) {
             throw new ProviderError('provider_error', 'The model returned an empty response.', 502);

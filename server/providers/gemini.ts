@@ -5,10 +5,12 @@
  * OpenRouter ids in one catalog and one router. The key is server-only
  * (GEMINI_API_KEY); it is sent in a header, never in a URL or to the client.
  *
- * Cost: the owner confirmed the Google project has no billing, so the free tier
- * applies and these models are marked free. If GEMINI_BILLING=paid is set, every
- * Gemini model is treated as paid and the router requires approval.
+ * Cost (Free Models Only policy, server/billing/policy.ts): only models that
+ * Google lists as "Free of charge" on the Free Tier are marked free and used.
+ * The Google project must keep billing disabled. If GEMINI_BILLING=paid is set,
+ * no Gemini model is used at all.
  */
+import { geminiBillingPaid, GEMINI_FREE_TIER } from '../billing/policy.js';
 import { env } from '../env.js';
 import { parseSSE } from '../shared/sse.js';
 import type { ModelInfo } from '../shared/types.js';
@@ -33,10 +35,12 @@ const IDLE_TIMEOUT_MS = 90_000;
  */
 export const GEMINI_CHAT_MODELS: { id: string; blurb: string; featured?: boolean; audio?: boolean }[] = [
   { id: 'gemini-3.8-flash', blurb: 'Google’s newest Flash model: text, images, audio, 1M context. Often busy on the free tier.', audio: true },
-  { id: 'gemini-3.5-flash', blurb: 'Fast multimodal Gemini model: text, images, audio, 1M-token context.', featured: true, audio: true },
+  { id: 'gemini-3.6-flash', blurb: 'Fast multimodal Gemini model: text, images, audio, 1M-token context.', featured: true, audio: true },
+  // Not on the Free Tier: listed so it can be recognised, but never offered or used.
+  { id: 'gemini-3.5-flash', blurb: 'Fast multimodal Gemini model. Not in the free tier.', audio: true },
   { id: 'gemini-3.5-flash-lite', blurb: 'Lightweight, quick Gemini model for everyday tasks.', audio: true },
   { id: 'gemini-3.1-flash-lite', blurb: 'Lightweight Gemini model.', audio: true },
-  { id: 'gemini-3.1-pro-preview', blurb: 'Most capable Gemini reasoning model (preview). May not be in the free tier.', audio: true },
+  { id: 'gemini-3.1-pro-preview', blurb: 'Most capable Gemini reasoning model (preview). Not in the free tier.', audio: true },
 ];
 
 interface GModel {
@@ -52,25 +56,27 @@ const MODEL_TTL = 30 * 60_000;
 
 export const toGeminiId = (model: string) => model.replace(GEMINI_PREFIX, '');
 
-function geminiPaid(): boolean {
-  return (process.env.GEMINI_BILLING ?? '').toLowerCase() === 'paid';
+/** Free of charge on Google's Free Tier (and Atlas AI is not set to a billed project). */
+function geminiFree(raw: string): boolean {
+  return !geminiBillingPaid() && GEMINI_FREE_TIER.has(raw);
 }
 
 export function mapGeminiModel(m: GModel): ModelInfo | null {
   const raw = m.name.replace(/^models\//, '');
   const cfg = GEMINI_CHAT_MODELS.find((c) => c.id === raw);
   if (!cfg || !m.supportedGenerationMethods?.includes('generateContent')) return null;
+  const free = geminiFree(raw);
   const inputs: ModelInfo['inputModalities'] = cfg.audio ? ['text', 'image', 'audio', 'file'] : ['text', 'image'];
   return {
     id: GEMINI_PREFIX + raw,
-    name: `Google: ${m.displayName ?? raw}${geminiPaid() ? '' : ' (free tier)'}`,
+    name: `Google: ${m.displayName ?? raw}${free ? ' (free tier)' : ''}`,
     provider: 'gemini',
     vendor: 'google',
     description: cfg.blurb,
     contextLength: m.inputTokenLimit ?? 0,
     inputModalities: inputs,
     outputModalities: ['text'],
-    free: !geminiPaid(),
+    free,
     capabilities: {
       vision: true,
       audioInput: Boolean(cfg.audio),
@@ -270,7 +276,7 @@ export class GeminiProvider implements ChatProvider {
           completionTokens: completion,
           totalTokens: usage.totalTokenCount ?? (usage.promptTokenCount ?? 0) + completion,
           // free tier: nothing is billed
-          ...(geminiPaid() ? {} : { cost: 0 }),
+          ...(geminiFree(toGeminiId(p.model)) ? { cost: 0 } : {}),
         },
       };
     }

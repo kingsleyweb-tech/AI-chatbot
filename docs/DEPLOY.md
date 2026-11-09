@@ -23,7 +23,7 @@ The current rules also enforce account status: a suspended or deleted profile (`
 1. In Vercel, **Add New > Project** and import the GitHub repository. The framework preset (Vite), build command and output directory come from `vercel.json`.
 2. **Settings > Environment Variables** (Production and Preview):
    - `OPENROUTER_API_KEY`: mark it **Sensitive**
-   - `GEMINI_API_KEY`: recommended (primary provider), Sensitive. Set `GEMINI_BILLING=paid` only if the Google project has billing enabled.
+   - `GEMINI_API_KEY`: recommended (primary provider), Sensitive. Keep billing disabled on the Google project; if it is ever enabled, set `GEMINI_BILLING=paid` and Atlas AI stops using Gemini (free models only).
    - `SERPAPI_API_KEY` and `TAVILY_API_KEY`: optional, also Sensitive
    - `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`: optional (image creation and Cloudflare chat models), Sensitive
    - `APP_URL`: for example `https://your-app.vercel.app`

@@ -3,18 +3,20 @@
  *
  * 1. Keep the selected model when it can handle the request.
  * 2. Otherwise use the best FREE model that can (task preferences first).
- * 3. If only a paid model can, ask the user first: nothing is spent until
- *    the client resends with that model explicitly approved.
+ * 3. If no free model can, say so. Paid models are never used or offered
+ *    (Free Models Only policy, server/billing/policy.ts); a paid model id the
+ *    client sends, even as "approved", is ignored.
  *
  * The selected/default model is never changed; a switch applies to one reply.
  */
+import { isFreeModelId } from '../billing/policy.js';
 import { modelConfig, TASK_PREFERENCES } from '../config/models.js';
 import type { ModelInfo } from '../shared/types.js';
 import type { Task } from './task.js';
 
 export interface RouteOptions {
   paidAvailable: boolean | null;
-  /** a paid model the user approved for this one request */
+  /** ignored: paid models are never used (kept so older clients still validate) */
   approvedPaid?: string | null;
   maxChain?: number;
   /** provider ranked first among capable free models (admin setting, default gemini) */
@@ -116,27 +118,20 @@ function routeInner(selectedId: string, task: Task, catalog: ModelInfo[], opts: 
   const maxChain = opts.maxChain ?? 4;
   if (!catalog.length) {
     // Catalog unavailable: fall back to the configured order and let the provider decide.
-    const ids = [selectedId, ...modelConfig().fallbackModels.filter((m) => m !== selectedId)];
-    return { kind: 'ok', chain: ids.slice(0, maxChain), switched: null };
+    const ids = [selectedId, ...modelConfig().fallbackModels.filter((m) => m !== selectedId)].filter(isFreeModelId);
+    if (!ids.length) return { kind: 'none', reason: 'No free model is available right now.' };
+    return { kind: 'ok', chain: ids.slice(0, maxChain), switched: ids[0] === selectedId ? null : { from: selectedId, to: ids[0], reason: 'is not a free model' } };
   }
   const selected = catalog.find((m) => m.id === selectedId);
   const fits = (m: ModelInfo) => unfitReason(m, task) === null;
-  const usable = (m: ModelInfo) =>
-    m.free || m.id === opts.approvedPaid || (m.id === selectedId && opts.paidAvailable !== false);
+  // Free Models Only: a model is usable only when it is free under the policy.
+  const usable = (m: ModelInfo) => m.free && isFreeModelId(m.id);
 
   // Cloudflare models run when the user selects one, or when an admin makes Cloudflare the
   // preferred provider (then they are tried first, with Gemini/OpenRouter as fallbacks).
   // Otherwise they are never auto-picked and never a fallback.
   const auto = (m: ModelInfo) => m.provider !== 'cloudflare' || opts.preferredProvider === 'cloudflare';
-  const freeFit = rankCandidates(catalog.filter((m) => m.free && auto(m) && fits(m)), preferenceList(task, selected), opts.preferredProvider);
-
-  const approved = opts.approvedPaid ? catalog.find((m) => m.id === opts.approvedPaid) : undefined;
-  if (approved && fits(approved)) {
-    if (opts.paidAvailable === false && !approved.free) {
-      return { kind: 'approval', model: approved, reason: 'This request needs a paid model.', estCost: estimateCost(approved, task.estTokens), creditsNeeded: true };
-    }
-    return { kind: 'ok', chain: [approved.id, ...freeFit.map((m) => m.id)].slice(0, maxChain), switched: approved.id === selectedId ? null : { from: selectedId, to: approved.id, reason: 'you approved a paid model for this request' } };
-  }
+  const freeFit = rankCandidates(catalog.filter((m) => usable(m) && auto(m) && fits(m)), preferenceList(task, selected), opts.preferredProvider);
 
   if (selected && fits(selected) && usable(selected)) {
     const rest = freeFit.filter((m) => m.id !== selected.id).map((m) => m.id);
@@ -144,29 +139,21 @@ function routeInner(selectedId: string, task: Task, catalog: ModelInfo[], opts: 
   }
 
   const reason =
-    selected && fits(selected) && !usable(selected) ? 'needs OpenRouter credits' : (unfitReason(selected, task) ?? 'cannot handle this request');
+    !isFreeModelId(selectedId) || (selected && fits(selected) && !usable(selected))
+      ? 'is not a free model'
+      : (unfitReason(selected, task) ?? 'cannot handle this request');
 
   if (freeFit.length) {
     const chain = freeFit.map((m) => m.id).slice(0, maxChain);
     return { kind: 'ok', chain, switched: { from: selectedId, to: chain[0], reason } };
   }
 
-  const paidFit = catalog
-    .filter((m) => !m.free && auto(m) && fits(m))
-    .sort((a, b) => Number(b.featured) - Number(a.featured) || (estimateCost(a, task.estTokens) ?? 1e9) - (estimateCost(b, task.estTokens) ?? 1e9));
-  if (paidFit.length) {
-    const model = paidFit[0];
-    const what = task.needsVision ? 'read images' : task.needsAudio ? 'process audio' : 'handle a message this long';
-    return {
-      kind: 'approval',
-      model,
-      reason: `No free model available right now can ${what}. ${model.name} can, but it is a paid model.`,
-      estCost: estimateCost(model, task.estTokens),
-      creditsNeeded: opts.paidAvailable === false,
-    };
-  }
   return {
     kind: 'none',
-    reason: task.needsVision ? 'None of the available models can read images.' : 'No available model can handle this request.',
+    reason: task.needsVision
+      ? 'None of the free models available right now can read images.'
+      : task.needsAudio
+        ? 'None of the free models available right now can process audio.'
+        : 'No free model available right now can handle this request.',
   };
 }

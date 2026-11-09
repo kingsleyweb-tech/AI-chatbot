@@ -8,8 +8,8 @@ import { detectTask } from '../server/router/task.js';
 import type { ChatTurn, ModelInfo } from '../server/shared/types.js';
 import { fakeModel } from './helpers.js';
 
-const G_FLASH = 'gemini:gemini-3.5-flash';
-const G_NEW = 'gemini:gemini-3.8-flash';
+const G_FLASH = 'gemini:gemini-3.8-flash';
+const G_NEW = 'gemini:gemini-3.6-flash';
 const G_LITE = 'gemini:gemini-3.5-flash-lite';
 const ULTRA = 'nvidia/nemotron-3-ultra-550b-a55b:free';
 const VL = 'nvidia/nemotron-3.5-super-vl:free';
@@ -72,13 +72,9 @@ describe('Gemini as primary provider', () => {
     expect(r.kind === 'ok' && r.chain[0]).toBe(G_FLASH);
   });
 
-  it('7. both providers down and only a paid model fits: asks before spending', () => {
+  it('7. both providers down and only a paid model fits: no paid model is used or offered', () => {
     const r = routeModel(ULTRA, detectTask([user('Describe this', true)]), catalog({ orDown: true, gemDown: true }), opts);
-    expect(r.kind).toBe('approval');
-    if (r.kind === 'approval') {
-      expect(r.model.id).toBe(PAID);
-      expect(r.creditsNeeded).toBe(true);
-    }
+    expect(r.kind).toBe('none');
   });
 
   it('8. paid models are never in an automatic chain', () => {
