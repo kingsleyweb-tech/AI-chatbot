@@ -32,6 +32,7 @@ import {
 import { sendEmail, type EmailDeps } from '../server/email/service.js';
 import { EMAIL_TYPES, esc, render } from '../server/email/templates.js';
 import { HttpError } from '../server/http.js';
+import { phoneKey } from '../server/auth/otp.js';
 import { FakeAccounts } from './fakeAccounts.js';
 import { FakeDb } from './fakeDb.js';
 
@@ -615,6 +616,38 @@ describe('password recovery by email', () => {
     expect(Object.keys(a).sort()).toEqual(Object.keys(b).sort());
     expect(mail.sent).toHaveLength(0);
     expect(await code(verifyRecovery(rd, a.recoveryId, '123456'))).toBe('invalid_code');
+  });
+
+  it('texts the same email code to a verified phone, and either copy works', async () => {
+    const texts: { to: string; message: string }[] = [];
+    rd.sms = {
+      name: 'fake',
+      send: async (to: string, message: string) => (texts.push({ to, message }), { id: 't1' }),
+    };
+    const PHONE = '+233241234567';
+    accounts.add({
+      uid: 'u1',
+      email: 'ama@example.com',
+      providers: ['password'],
+      claims: { phoneVerified: true },
+    });
+    db.docs.set('users/u1', { phoneNumber: PHONE, phoneVerified: true, accountStatus: 'active' });
+    db.docs.set(`phoneNumbers/${phoneKey(SECRET, PHONE)}`, { uid: 'u1' });
+    const r = await startRecovery(rd, 'ama@example.com', '1.1.1.1', 'email');
+    expect(texts).toHaveLength(1);
+    expect(texts[0]!.to).toBe(PHONE);
+    expect(texts[0]!.message).toContain(mail.code());
+    expect(texts[0]!.message).toContain('10 minutes');
+    expect(await code(verifyRecovery(rd, r.recoveryId, mail.code()))).toBe('ok');
+  });
+
+  it('sends no text when the account has no verified phone', async () => {
+    const texts: string[] = [];
+    rd.sms = { name: 'fake', send: async (to: string) => (texts.push(to), { id: 't1' }) };
+    accounts.add({ uid: 'u1', email: 'ama@example.com', providers: ['password'] });
+    await startRecovery(rd, 'ama@example.com', '1.1.1.1', 'email');
+    expect(mail.sent).toHaveLength(1);
+    expect(texts).toHaveLength(0);
   });
 
   it('SMS recovery is unavailable without an SMS provider, but email still works', async () => {

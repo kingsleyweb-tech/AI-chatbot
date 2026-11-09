@@ -49,10 +49,7 @@ Email/password sign-in works without this.
 
 Sign in with Apple has been removed from the sign-in screens. It never worked in this project (Firebase answered "Code flow is not enabled for Apple"), so no Apple accounts are expected. Nothing was deleted: the Apple provider setting in Firebase, the server's handling of `apple.com` sign-ins and any existing profile data are unchanged, and the admin **Users** page lists any Apple account under an "Apple (legacy)" filter.
 
-If an Apple account does exist, its owner can get in by:
-
-1. **Password reset by email.** On **Forgot password**, enter the account email and choose **Email me a reset link instead**. Firebase adds a password to the same account (same user ID and data). They then sign in with email and password, which also requires verifying a Ghana mobile number once. Accounts using Apple's private relay address receive the email through Apple's relay.
-2. **Asking the administrator,** who can find the account on the **Users** page.
+If an Apple account does exist, its owner can get in by asking the administrator, who can find the account on the **Users** page. (Firebase's password-reset link has been removed; password recovery now uses codes sent through Brevo or SMS.)
 
 To bring Apple back later, complete the Apple Developer setup (Services ID, key, Team ID) in Firebase and restore the button from git history (`src/features/auth/AuthPages.tsx`, `src/lib/authProviders.ts`).
 

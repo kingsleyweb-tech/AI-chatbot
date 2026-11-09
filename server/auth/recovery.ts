@@ -1,6 +1,8 @@
 /**
  * Password recovery by a one-time code, sent either by SMS (email/password
- * accounts with a verified phone) or by email (any email/password account).
+ * accounts with a verified phone) or by email (email/password accounts with a
+ * verified address). An email code is also texted to the account's verified
+ * phone, if it has one, so either message can be used.
  *
  * 1. start(email, channel):  uniform response for every email address (no
  *    account enumeration). Only an eligible account actually gets a code, and
@@ -119,8 +121,66 @@ function later(deps: RecoveryDeps, p: Promise<unknown>) {
   return deps.background ? Promise.resolve() : safe;
 }
 
-export function recoverySms(code: string) {
-  return `Your Atlas AI password reset code is ${code}. It expires in 5 minutes. If you did not ask to reset your password, ignore this message.`;
+export function recoverySms(code: string, minutes = 5) {
+  return `Your Atlas AI password reset code is ${code}. It expires in ${minutes} minutes. If you did not ask to reset your password, ignore this message.`;
+}
+
+/**
+ * Text the email reset code to the account's verified phone as well, so the
+ * person can use whichever arrives first. Same number checks, per-number
+ * limit and app-wide daily SMS cap as SMS recovery; logged like any reset
+ * text. Never throws.
+ */
+async function textEmailCode(
+  deps: RecoveryDeps,
+  target: { uid: string; phone: string },
+  code: string,
+  now: number,
+) {
+  const sms = deps.sms;
+  if (!sms) return;
+  const day = new Date(now).toISOString().slice(0, 10);
+  if (((await deps.db.get<{ sent?: number }>(`otpStats/${day}`))?.data.sent ?? 0) >= deps.dailyCap)
+    return;
+  const pHash = phoneKey(deps.secret, target.phone);
+  const perPhone = await deps.db.get<{ sends?: number[] }>(`otpPhones/${pHash}`);
+  const phoneSends = (perPhone?.data.sends ?? []).filter((t) => now - t < DAY);
+  if (phoneSends.filter((t) => now - t < HOUR).length >= PER_PHONE_HOUR) return;
+  await deps.db.commit([
+    { op: 'set', path: `otpPhones/${pHash}`, data: { sends: [...phoneSends, now] } },
+    { op: 'increment', path: `otpStats/${day}`, increments: { sent: 1 } },
+  ]);
+  const entry = {
+    at: now,
+    uid: target.uid,
+    purpose: 'recovery' as const,
+    route: 'sms' as const,
+    phone: target.phone,
+  };
+  try {
+    const r = await sms.send(target.phone, recoverySms(code, EMAIL_CODE_MS / 60_000));
+    await logSms(deps.db, {
+      ...entry,
+      ref: r.id ?? null,
+      accepted: true,
+      delivery: deliveryOf(r.status),
+      providerStatus: r.status ?? 'queued',
+    });
+  } catch (err) {
+    const p =
+      err instanceof SmsError
+        ? err.provider
+        : { message: err instanceof Error ? err.message : String(err) };
+    await logSms(deps.db, {
+      ...entry,
+      ref: null,
+      accepted: false,
+      delivery: 'failed',
+      error: p.message ?? null,
+      httpStatus: p.httpStatus ?? null,
+      providerStatus: p.code ?? 'rejected',
+    }).catch(() => undefined);
+  }
 }
 
 /** Password rules (same as registration). */
@@ -368,7 +428,7 @@ async function startEmailRecovery(
     throw new HttpError(
       503,
       'recovery_unavailable',
-      'Password reset by email code is not available right now. Use the reset link instead.',
+      'Password reset by email code is not available right now. Use the text message option instead.',
     );
   const rid = randomBytes(24).toString('hex');
   const target = await eligibleEmail(deps, email);
@@ -412,6 +472,10 @@ async function startEmailRecovery(
   }
   await deps.db.commit(writes);
   if (target) {
+    // The same code also goes by SMS when the account has a verified phone.
+    const phone = deps.sms ? await eligiblePhone(deps, email) : null;
+    const texted = phone?.uid === target.uid ? phone : null;
+    if (texted) await later(deps, textEmailCode(deps, texted, code, now));
     const r = await sendEmail(deps.mail, {
       type: 'password_reset_code',
       category: 'critical',
@@ -424,7 +488,8 @@ async function startEmailRecovery(
         timeZone: deps.client?.timeZone,
       },
     });
-    if (!r.sent)
+    // An undelivered code is voided, unless it was texted too.
+    if (!r.sent && !texted)
       await deps.db.set(`recovery/${rid}`, { codeHash: null }, true).catch(() => undefined);
   } else if (deps.decoyDelayMs !== 0) {
     await new Promise((r) => setTimeout(r, (deps.decoyDelayMs ?? 600) + randomInt(0, 500)));

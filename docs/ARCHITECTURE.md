@@ -223,7 +223,7 @@ All user data is under `users/{uid}`:
   - 60 s between sends, at most 5 per hour and 10 per day
   - `verify_email` marks the Firebase account verified through the admin API. Firebase's own verification email is not used.
   - `sensitive` gives a 10-minute step-up (`hasRecentStepUp`). No operation requires it yet.
-- **Password recovery** (`server/auth/recovery.ts`): the same flow sends the code by email (an email/password account with a **verified** address) or by SMS (verified phone). Responses and limits are uniform for both. An SMS reset also emails the owner, and every reset sends a password-changed email.
+- **Password recovery** (`server/auth/recovery.ts`): the same flow sends the code by email (an email/password account with a **verified** address) or by SMS (verified phone). Responses and limits are uniform for both. An email code is also texted to the account's verified phone, if any (same per-number limit and daily SMS cap), so either message works. Email verification codes are never texted: they must prove the address itself. An SMS reset also emails the owner, and every reset sends a password-changed email.
 - **New-device alerts** (`users/{uid}/devices`, server-only):
   - Checked once per sign-in session (new `auth_time`), never on token refresh.
   - The browser sends a random `x-atlas-device` id and its time zone.

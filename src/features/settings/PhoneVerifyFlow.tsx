@@ -111,14 +111,14 @@ export function PhoneVerifyFlow({
     void request({ action: 'send', phone: e164 });
   };
 
-  const verify = async (e?: FormEvent) => {
+  const verify = async (e?: FormEvent, typed: string = code) => {
     e?.preventDefault();
     if (busy) return;
-    if (code.length !== codeLength) return setError(`Enter the ${codeLength}-digit code.`);
+    if (typed.length !== codeLength) return setError(`Enter the ${codeLength}-digit code.`);
     setError('');
     setBusy(true);
     try {
-      await api('phone', { json: { action: 'verify', code } });
+      await api('phone', { json: { action: 'verify', code: typed } });
       await refreshAccess();
       onVerified();
     } catch (err) {
@@ -161,7 +161,16 @@ export function PhoneVerifyFlow({
       </p>
       <DeliveryLine state={delivery?.state} error={delivery?.error} />
       <div className="max-w-xs">
-        <CodeBoxes value={code} onChange={setCode} length={codeLength} disabled={busy} invalid={Boolean(error)} />
+        <CodeBoxes
+          value={code}
+          onChange={(v) => {
+            setCode(v);
+            if (v.length === codeLength) void verify(undefined, v);
+          }}
+          length={codeLength}
+          disabled={busy}
+          invalid={Boolean(error)}
+        />
       </div>
       {error && <p className="text-sm text-danger" role="alert">{error}</p>}
       {hint && <p className="text-xs text-muted">{hint}</p>}

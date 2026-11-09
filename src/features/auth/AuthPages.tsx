@@ -1,6 +1,5 @@
 import {
   createUserWithEmailAndPassword,
-  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   updateProfile,
 } from 'firebase/auth';
@@ -521,12 +520,12 @@ function Register() {
   );
 }
 
-type ResetStep = 'email' | 'code' | 'password' | 'done' | 'link-sent';
+type ResetStep = 'email' | 'code' | 'password' | 'done';
 
 /**
- * Password reset with a 6-digit code, by email (any email/password account)
- * or by text message (accounts with a verified phone). Firebase's email link
- * stays available as well. The page never says whether an address has an account.
+ * Password reset with a 6-digit code, by email through Brevo (any
+ * email/password account with a verified address) or by text message
+ * (accounts with a verified phone). The page never says whether an address has an account.
  */
 function Reset() {
   const navigate = useNavigate();
@@ -570,18 +569,22 @@ function Reset() {
       setStep('code');
     });
 
-  const sendLink = () =>
-    run(async () => {
-      try {
-        await sendPasswordResetEmail(auth, email.trim(), {
-          url: window.location.origin + '/login',
-        });
-      } catch (err) {
-        if ((err as { code?: string }).code !== 'auth/user-not-found')
-          throw new ApiError(400, 'email', authErrorMessage(err));
-      }
-      setStep('link-sent');
+  const checkCode = (typed: string) => {
+    if (busy) return;
+    if (typed.length !== 6) return setError('Enter the 6-digit code.');
+    void run(async () => {
+      const r = await publicApi<{ resetToken: string }>('recovery', {
+        action: 'verify',
+        recoveryId: rid,
+        code: typed,
+      }).catch((err: unknown) => {
+        setCode(''); // retype from the start; the full code is checked again automatically
+        throw err;
+      });
+      setResetToken(r.resetToken);
+      setStep('password');
     });
+  };
 
   const back = (
     <Link
@@ -611,22 +614,6 @@ function Reset() {
     );
   }
 
-  if (step === 'link-sent') {
-    return (
-      <Shell>
-        {back}
-        <h1 className="mb-1 text-xl font-semibold tracking-tight">Check your email</h1>
-        <div className="mt-4 flex gap-3 rounded-xl border border-border bg-surface p-4 text-sm">
-          <Mail className="mt-0.5 size-4 shrink-0 text-accent" />
-          <p>
-            If an account exists for <b>{email}</b>, a reset link is on its way. Check your inbox
-            and spam folder.
-          </p>
-        </div>
-      </Shell>
-    );
-  }
-
   if (step === 'code') {
     return (
       <Shell>
@@ -642,7 +629,8 @@ function Reset() {
           {channel === 'email' ? (
             <>
               If <b className="font-medium text-fg">{email}</b> has an Atlas AI account that signs
-              in with a password, we emailed it a 6-digit code. Check your spam folder too.
+              in with a password, we emailed it a 6-digit code, and texted the same code to the
+              account’s verified phone number if it has one. Check your spam folder too.
             </>
           ) : (
             <>
@@ -658,19 +646,18 @@ function Reset() {
           className="space-y-4"
           onSubmit={(e) => {
             e.preventDefault();
-            if (code.length !== 6) return setError('Enter the 6-digit code.');
-            void run(async () => {
-              const r = await publicApi<{ resetToken: string }>('recovery', {
-                action: 'verify',
-                recoveryId: rid,
-                code,
-              });
-              setResetToken(r.resetToken);
-              setStep('password');
-            });
+            checkCode(code);
           }}
         >
-          <CodeBoxes value={code} onChange={setCode} disabled={busy} invalid={Boolean(error)} />
+          <CodeBoxes
+            value={code}
+            onChange={(v) => {
+              setCode(v);
+              if (v.length === 6) checkCode(v);
+            }}
+            disabled={busy}
+            invalid={Boolean(error)}
+          />
           <ErrorText>{error}</ErrorText>
           <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy}>
             Verify code
@@ -699,9 +686,9 @@ function Reset() {
               type="button"
               className="text-muted hover:text-fg"
               disabled={busy}
-              onClick={() => void sendLink()}
+              onClick={() => void start('sms')}
             >
-              No email? Send me a reset link instead
+              No email? Text me a code instead
             </button>
           )}
         </div>
@@ -826,15 +813,6 @@ function Reset() {
           onClick={() => void start('sms')}
         >
           Text me a code instead
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          className="w-full"
-          disabled={busy || !email.trim()}
-          onClick={() => void sendLink()}
-        >
-          Email me a reset link instead
         </Button>
       </form>
     </Shell>

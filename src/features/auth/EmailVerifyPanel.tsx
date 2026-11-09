@@ -103,23 +103,23 @@ export function EmailVerifyPanel({
     void sendCode(true);
   }, [autoSend, recent, sendCode]);
 
-  const verify = async (e: FormEvent) => {
-    e.preventDefault();
-    if (code.length !== 6) return setError('Enter the 6-digit code.');
+  const verify = async (e?: FormEvent, typed: string = code) => {
+    e?.preventDefault();
+    if (busy) return;
+    if (typed.length !== 6) return setError('Enter the 6-digit code.');
     setBusy(true);
     setError('');
     try {
-      await api('account', { json: { action: 'emailCodeVerify', purpose: 'verify_email', code } });
+      await api('account', {
+        json: { action: 'emailCodeVerify', purpose: 'verify_email', code: typed },
+      });
       remember(null);
       await refreshAccess();
       await onVerified();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'The code could not be checked. Try again.');
-      if (
-        err instanceof ApiError &&
-        (err.code === 'too_many_attempts' || err.code === 'expired' || err.code === 'no_code')
-      )
-        setCode('');
+      // Clear the boxes so the next attempt is typed (and checked) fresh.
+      setCode('');
     } finally {
       setBusy(false);
     }
@@ -147,7 +147,15 @@ export function EmailVerifyPanel({
       {msg && <p className="mb-3 text-sm text-accent">{msg}</p>}
       {mode === 'code' && (
         <form className="mb-3 space-y-4" onSubmit={(e) => void verify(e)}>
-          <CodeBoxes value={code} onChange={setCode} disabled={busy} invalid={Boolean(error)} />
+          <CodeBoxes
+            value={code}
+            onChange={(v) => {
+              setCode(v);
+              if (v.length === 6) void verify(undefined, v);
+            }}
+            disabled={busy}
+            invalid={Boolean(error)}
+          />
           {error && (
             <p role="alert" className="text-sm text-danger">
               {error}
