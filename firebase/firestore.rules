@@ -76,7 +76,8 @@ service cloud.firestore {
     function serverOnlyProfileKeys() {
       return ['phoneNumber', 'phoneVerified', 'phoneVerifiedAt', 'accountStatus', 'sessionsValidAfter',
         'suspendedAt', 'suspendedReason', 'deletionScheduledAt', 'purgeAfter', 'lastAuthTime',
-        'accessStatus', 'approvedAt', 'approvedBy', 'rejectedAt', 'rejectedBy', 'accessRequestedAt', 'consent'];
+        'accessStatus', 'approvedAt', 'approvedBy', 'rejectedAt', 'rejectedBy', 'accessRequestedAt', 'consent',
+        'removedDevices'];
     }
     function email() {
       return request.auth.token.email.lower();

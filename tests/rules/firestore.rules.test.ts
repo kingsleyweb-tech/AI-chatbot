@@ -601,6 +601,11 @@ describe('account status, sessions and audit records', () => {
       }),
     );
     denied(
+      await call(ALLOWED, 'PATCH', 'users/alice?updateMask.fieldPaths=removedDevices', {
+        removedDevices: {},
+      }),
+    );
+    denied(
       await call(ALLOWED, 'PATCH', 'users/alice?updateMask.fieldPaths=purgeAfter', {
         purgeAfter: 0,
       }),

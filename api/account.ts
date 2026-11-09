@@ -5,6 +5,7 @@ import {
   accountBlock,
   approvalConfig,
   decideAccess,
+  requestDeviceKey,
   requireVerifiedEmail,
 } from '../server/access.js';
 import {
@@ -170,12 +171,13 @@ export const POST = handle(async (request) => {
 
   if (b.action === 'status') {
     const p = (await db.get<Profile>(profilePath))?.data;
-    const block = accountBlock(p, user.authTime);
+    const block = accountBlock(p, user.authTime, requestDeviceKey(user.uid, request));
     return json({
       ok: true,
       configured: true,
       accountStatus: p?.accountStatus ?? 'active',
       sessionRevoked: block?.code === 'session_revoked',
+      deviceRemoved: block?.code === 'device_removed',
       purgeAfter: p?.accountStatus === 'deleted' ? (p.purgeAfter ?? null) : null,
     });
   }
@@ -334,6 +336,20 @@ export const POST = handle(async (request) => {
     const found = await db.get<{ browser?: string; os?: string }>(path);
     if (!found) throw new HttpError(404, 'not_found', 'That device is not in your list.');
     await db.delete(path);
+    // End the sessions on that device: it notices the change to the profile and signs out,
+    // and every server request from a session that started before now is refused.
+    const nowSec = Math.floor(Date.now() / 1000);
+    const prev =
+      (
+        (await db.get<Profile>(profilePath))?.data as
+          { removedDevices?: Record<string, number> } | undefined
+      )?.removedDevices ?? {};
+    const removedDevices = Object.fromEntries(
+      Object.entries({ ...prev, [b.id]: nowSec }).filter(
+        ([, t]) => typeof t === 'number' && nowSec - t < 90 * 86_400,
+      ),
+    );
+    await db.set(profilePath, { removedDevices }, true);
     await recordSecurityEvent(db, user.uid, 'device_removed', {
       provider: user.provider,
       device,

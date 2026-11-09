@@ -13,7 +13,7 @@ const PREFS: { key: PrefKey; title: string; description: string }[] = [
     key: 'newLogin',
     title: 'Sign-in alerts',
     description:
-      'An email each time your account is signed in to, with the device and approximate location.',
+      'An email when your account is signed in to from a new device, with the device and approximate location (at most 3 a day).',
   },
   {
     key: 'suspicious',
@@ -150,7 +150,10 @@ export function RecognisedDevices() {
     try {
       await api('account', { json: { action: 'forgetDevice', id: d.id } });
       setDevices((list) => list?.filter((x) => x.id !== d.id) ?? null);
-      toast('Device removed. Its next sign-in will send you a new-device alert.', 'success');
+      toast(
+        'Device removed and signed out. Its next sign-in will send you a new-device alert.',
+        'success',
+      );
     } catch (err) {
       toast(err instanceof ApiError ? err.message : 'The device could not be removed.', 'error');
     } finally {
@@ -206,8 +209,8 @@ export function RecognisedDevices() {
             </div>
           ))}
           <div className="py-2.5 text-xs text-muted">
-            Removing a device does not sign it out. To end every session, use Sign out everywhere
-            below.
+            Removing a device signs it out straight away. To end every session, use Sign out
+            everywhere below.
           </div>
         </>
       )}

@@ -20,11 +20,17 @@ const mailable = (u: AlertUser) => Boolean(u.email) && u.emailVerified !== false
 
 const skip = (why: string): SendOutcome => ({ sent: false, status: 'invalid', error: why });
 
+/** sign-in alerts per account per day; later sign-ins still appear in Recent activity */
+export const SIGN_IN_ALERTS_PER_DAY = 3;
+const DAY_MS = 86_400_000;
+
 /**
  * Once per sign-in session (auth_time, never on token refresh): record the
- * device and send a sign-in alert, saying whether the device is recognised,
- * or an unusual-sign-in alert for a new device in a new country. The sign-in
- * that follows creating an account is not reported (the account is brand new).
+ * device and alert only when it is new to the account: a sign-in alert, or an
+ * unusual-sign-in alert for a new device in a new country. Recognised devices,
+ * the first device recorded for an account (nothing to compare with) and the
+ * sign-in right after registering send nothing. At most
+ * SIGN_IN_ALERTS_PER_DAY alerts per account per day.
  */
 export async function signInAlert(
   mail: EmailDeps,
@@ -38,6 +44,14 @@ export async function signInAlert(
     const check = await checkSignIn(mail.db, secret, user.uid, client, authTime * 1000);
     if (!mailable(user) || !user.email) return { ...skip('no_email'), known: check.known };
     if (check.first && opts.newAccount) return { ...skip('new_account'), known: false };
+    if (check.first) return { ...skip('first_device'), known: false };
+    if (check.known && !check.suspicious) return { ...skip('known_device'), known: true };
+    const now = (mail.now ?? Date.now)();
+    const capPath = `rateLimits/sa_${user.uid}`;
+    const cap = await mail.db.get<{ sends?: number[] }>(capPath);
+    const recent = (cap?.data.sends ?? []).filter((t) => now - t < DAY_MS);
+    if (recent.length >= SIGN_IN_ALERTS_PER_DAY)
+      return { ...skip('alert_limit'), known: check.known };
     const type: EmailType = check.suspicious ? 'suspicious_login' : 'new_login';
     const r = await sendEmail(mail, {
       type,
@@ -55,6 +69,7 @@ export async function signInAlert(
       dedupeKey: `login|${user.uid}|${authTime}`,
       dedupeMs: 7 * 86_400_000,
     });
+    if (r.sent) await mail.db.set(capPath, { sends: [...recent, now] }).catch(() => undefined);
     return { ...r, known: check.known };
   } catch (err) {
     console.warn('[alerts] sign-in check skipped', err instanceof Error ? err.message : err);

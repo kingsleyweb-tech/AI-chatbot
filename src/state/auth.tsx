@@ -116,6 +116,16 @@ interface Decision {
  * Ask the server why the rules refused this account: the profile of a
  * suspended or deleted account, or of a revoked session, is unreadable.
  */
+/** This device was removed from the account in Settings: sign it out and clear its data. */
+async function checkDeviceRemoved(): Promise<void> {
+  try {
+    const s = await api<{ deviceRemoved?: boolean }>('account', { json: { action: 'status' } });
+    if (s.deviceRemoved) await endSession('device');
+  } catch {
+    /* a device_removed error ends the session through the account-block event */
+  }
+}
+
 async function blockedState(provider: string | null): Promise<Decision | null> {
   try {
     const s = await api<{ accountStatus?: string; sessionRevoked?: boolean }>('account', { json: { action: 'status' } });
@@ -359,7 +369,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // An API call reported a suspended/deleted account or a revoked session: re-check now.
   useEffect(() => {
-    const onBlocked = () => {
+    const onBlocked = (e: Event) => {
+      if ((e as CustomEvent<string>).detail === 'device_removed') {
+        void endSession('device');
+        return;
+      }
       if (auth.currentUser) void evaluate(auth.currentUser, true);
     };
     window.addEventListener(ACCOUNT_BLOCK_EVENT, onBlocked);
@@ -382,12 +396,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       rechecking = true;
       void evaluate(auth.currentUser, true, true).finally(() => (rechecking = false));
     };
+    // A device was removed in Settings after this session started: ask the
+    // server whether it is this one (only the server knows the device keys).
+    let deviceChecked = 0;
+    const checkDevice = (latest: number) => {
+      if (latest <= deviceChecked) return;
+      deviceChecked = latest;
+      void checkDeviceRemoved();
+    };
     return onSnapshot(
       paths.user(user.uid),
       (snap) => {
-        const p = snap.exists() ? (snap.data() as UserProfile & { sessionsValidAfter?: number; accountStatus?: string }) : null;
+        const p = snap.exists()
+          ? (snap.data() as UserProfile & { sessionsValidAfter?: number; accountStatus?: string; removedDevices?: Record<string, number> })
+          : null;
         setProfile(p);
         if (!p) return;
+        const latestRemoval = Math.max(0, ...Object.values(p.removedDevices ?? {}).filter((t) => typeof t === 'number'));
+        if (latestRemoval && latestRemoval >= authTime) checkDevice(latestRemoval);
         if ((p.accountStatus && p.accountStatus !== 'active') || (authTime && (p.sessionsValidAfter ?? 0) > authTime)) recheck();
       },
       // The rules refuse the profile once the session is revoked or the account is blocked.

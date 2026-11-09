@@ -58,6 +58,15 @@ describe('account lifecycle', () => {
     expect(accountBlock(db.docs.get('users/u1') as never, Math.floor(now / 1000) + 5)).toBeNull();
   });
 
+  it('a removed device is signed out; other devices and later sign-ins are not', () => {
+    const p = { accountStatus: 'active', removedDevices: { aaa: 1000 } };
+    expect(accountBlock(p as never, 990, 'aaa')?.code).toBe('device_removed');
+    expect(accountBlock(p as never, 1000, 'aaa')?.code).toBe('device_removed');
+    expect(accountBlock(p as never, 1001, 'aaa')).toBeNull(); // signed in again afterwards
+    expect(accountBlock(p as never, 990, 'bbb')).toBeNull(); // another device
+    expect(accountBlock(p as never, 990, null)).toBeNull();
+  });
+
   it('soft delete keeps data for 30 days and can be restored', async () => {
     const target = (await accounts.get('u1'))!;
     const { purgeAfter } = await scheduleDeletion(db.asFirestore(), admin, target, now);

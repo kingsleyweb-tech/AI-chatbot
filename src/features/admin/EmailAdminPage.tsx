@@ -31,6 +31,7 @@ interface Overview {
     sender: string | null;
     senderName: string;
     dailyCap: number;
+    optionalLimit: number;
     sentToday: number;
     publicUrl: string;
     senderDomainWarning: boolean;
@@ -108,6 +109,49 @@ function Setting({ label, children }: { label: string; children: React.ReactNode
     <div className="flex items-center justify-between gap-3 py-2 text-sm">
       <span className="shrink-0 text-muted">{label}</span>
       <span className="min-w-0 truncate text-right font-medium">{children}</span>
+    </div>
+  );
+}
+
+/** Today's sends against the app limit; optional emails stop at the reserve line. */
+function UsageMeter({ sent, cap, optional }: { sent: number; cap: number; optional: number }) {
+  const pct = cap > 0 ? Math.min(100, (sent / cap) * 100) : 0;
+  const reservePct = cap > 0 ? Math.min(100, (optional / cap) * 100) : 0;
+  const state =
+    sent >= cap ? 'full' : sent >= optional ? 'reserve' : sent >= optional * 0.75 ? 'near' : 'ok';
+  const bar =
+    state === 'full'
+      ? 'bg-danger'
+      : state === 'reserve' || state === 'near'
+        ? 'bg-warn'
+        : 'bg-accent';
+  return (
+    <div className="py-2 text-sm">
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="text-muted">Sent today</span>
+        <span className="font-medium tabular-nums">
+          {sent} of {cap}
+        </span>
+      </div>
+      <div className="relative mt-2 h-2 overflow-hidden rounded-full bg-border">
+        <div className={`h-full rounded-full ${bar}`} style={{ width: `${pct}%` }} />
+        <div
+          className="absolute inset-y-0 w-0.5 bg-fg/40"
+          style={{ left: `${reservePct}%` }}
+          title="Optional emails stop here"
+        />
+      </div>
+      <div
+        className={`mt-1.5 text-xs ${state === 'ok' ? 'text-muted' : state === 'full' ? 'text-danger' : 'text-warn'}`}
+      >
+        {state === 'full'
+          ? 'Today’s limit is used up. Emails resume tomorrow (UTC).'
+          : state === 'reserve'
+            ? `Optional emails (sign-in alerts, support updates) are paused for today. The last ${cap - optional} are kept for codes and password emails.`
+            : state === 'near'
+              ? `Getting close: optional emails pause at ${optional}, keeping ${cap - optional} for codes.`
+              : `Optional emails pause at ${optional}; the last ${cap - optional} are kept for codes and password emails.`}
+      </div>
     </div>
   );
 }
@@ -251,7 +295,11 @@ export default function EmailAdminPage() {
                     ? `${data.config.senderName} <${data.config.sender}>`
                     : 'Missing'}
                 </Setting>
-                <Setting label="Sent today / app limit">{`${data.config.sentToday} / ${data.config.dailyCap}`}</Setting>
+                <UsageMeter
+                  sent={data.config.sentToday}
+                  cap={data.config.dailyCap}
+                  optional={data.config.optionalLimit}
+                />
                 <Setting label="Links and logo from">
                   {data.config.publicUrl.replace(/^https?:\/\//, '')}
                 </Setting>

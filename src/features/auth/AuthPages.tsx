@@ -254,7 +254,9 @@ function Login() {
       ? 'You were signed out after 60 minutes of inactivity. Please sign in again.'
       : ended === 'revoked'
         ? 'Your session ended. Please sign in again.'
-        : '';
+        : ended === 'device'
+          ? 'This device was removed from your account, so you were signed out. Sign in again to continue.'
+          : '';
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();

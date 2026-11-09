@@ -1,3 +1,4 @@
+import { clientInfo, deviceKey } from './account/devices.js';
 import { adminConfigured, adminDb } from './admin.js';
 import { needsPhone, requireUser, type AuthUser } from './auth.js';
 import { env } from './env.js';
@@ -179,7 +180,7 @@ export async function requireAllowedUser(request: Request): Promise<Ctx> {
         sdb.get<GateProfile>(`users/${user.uid}`),
         accessConfig(sdb),
       ]);
-      const block = accountBlock(profile?.data, user.authTime);
+      const block = accountBlock(profile?.data, user.authTime, requestDeviceKey(user.uid, request));
       if (block) throw block;
       const r = decideAccess(user, profile?.data, config, env().adminEmails);
       if (r.state !== 'approved') throw denied(r.state);
@@ -230,10 +231,22 @@ async function legacyAccess(user: AuthUser, db: Firestore): Promise<Ctx> {
 interface ProfileGate {
   accountStatus?: string;
   sessionsValidAfter?: number;
+  /** device key -> when it was removed (seconds); sessions on it that started earlier are ended */
+  removedDevices?: Record<string, number>;
+}
+
+/** This request's recognised-device key (null without the server secret). */
+export function requestDeviceKey(uid: string, request: Request): string | null {
+  const secret = env().otpSecret;
+  return secret.length >= 32 ? deviceKey(secret, uid, clientInfo(request.headers)) : null;
 }
 
 /** Why an approved account's profile is unreadable: suspended, deleted, or a revoked session. */
-export function accountBlock(profile: ProfileGate | undefined, authTime: number): HttpError | null {
+export function accountBlock(
+  profile: ProfileGate | undefined,
+  authTime: number,
+  device: string | null = null,
+): HttpError | null {
   if (!profile) return null;
   if (profile.accountStatus === 'suspended')
     return new HttpError(
@@ -245,6 +258,14 @@ export function accountBlock(profile: ProfileGate | undefined, authTime: number)
     return new HttpError(403, 'account_deleted', 'This account has been deleted.');
   if (profile.sessionsValidAfter && authTime < profile.sessionsValidAfter) {
     return new HttpError(401, 'session_revoked', 'You were signed out. Please sign in again.');
+  }
+  const removed = device ? profile.removedDevices?.[device] : undefined;
+  if (typeof removed === 'number' && authTime <= removed) {
+    return new HttpError(
+      401,
+      'device_removed',
+      'This device was removed from your account. Please sign in again.',
+    );
   }
   return null;
 }

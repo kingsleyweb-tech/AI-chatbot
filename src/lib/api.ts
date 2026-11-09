@@ -56,7 +56,7 @@ export function clientHeaders(): Record<string, string> {
 }
 
 /** Server codes meaning the account can no longer be used in this session. */
-export const ACCOUNT_BLOCK_CODES = new Set(['account_suspended', 'account_deleted', 'session_revoked', 'consent_required']);
+export const ACCOUNT_BLOCK_CODES = new Set(['account_suspended', 'account_deleted', 'session_revoked', 'consent_required', 'device_removed']);
 export const ACCOUNT_BLOCK_EVENT = 'atlas:account-blocked';
 
 async function toError(res: Response): Promise<ApiError> {

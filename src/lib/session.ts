@@ -33,7 +33,7 @@ const APP_ALIVE = 'atlas.appAlive';
 const LOGOUT_SIGNAL = 'atlas.logout';
 const CHANNEL = 'atlas-session';
 
-export type SignOutReason = 'user' | 'inactivity' | 'revoked';
+export type SignOutReason = 'user' | 'inactivity' | 'revoked' | 'device';
 
 function num(key: string): number {
   try {
@@ -130,7 +130,7 @@ export async function endSession(reason: SignOutReason, fromOtherTab = false): P
   if (signingOut) return;
   signingOut = true;
   for (const cb of endingListeners) cb();
-  if (!fromOtherTab && reason !== 'revoked') {
+  if (!fromOtherTab && reason !== 'revoked' && reason !== 'device') {
     if (auth.currentUser) {
       // Best effort and short: never keep someone signed in because the network is slow.
       await Promise.race([
@@ -149,6 +149,6 @@ export async function endSession(reason: SignOutReason, fromOtherTab = false): P
   } catch {
     /* another tab still holds the cache; it clears it when it signs out */
   }
-  const to = reason === 'inactivity' ? '/login?reason=inactivity' : reason === 'revoked' ? '/login?reason=revoked' : '/login';
+  const to = reason === 'inactivity' ? '/login?reason=inactivity' : reason === 'revoked' ? '/login?reason=revoked' : reason === 'device' ? '/login?reason=device' : '/login';
   window.location.replace(to);
 }

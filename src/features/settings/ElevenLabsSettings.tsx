@@ -278,8 +278,13 @@ function Capabilities({ items, checkedAt, checking, onCheck }: { items: ElevenSt
   );
 }
 
-function RecentRequests({ rows }: { rows: ElevenStatus['recent'] }) {
-  if (!rows.length) return <p className="py-3 text-xs text-muted">No ElevenLabs requests yet.</p>;
+const REQUESTS_SHOWN = 5;
+
+function RecentRequests({ rows: allRows }: { rows: ElevenStatus['recent'] }) {
+  const [all, setAll] = useState(false);
+  if (!allRows.length) return <p className="py-3 text-xs text-muted">No ElevenLabs requests yet.</p>;
+  const rows = all ? allRows : allRows.slice(0, REQUESTS_SHOWN);
+  const more = allRows.length > REQUESTS_SHOWN;
   return (
     <div className="overflow-x-auto py-3">
       <div className="mb-2 text-xs text-muted">Recent requests (no text is stored)</div>
@@ -305,6 +310,13 @@ function RecentRequests({ rows }: { rows: ElevenStatus['recent'] }) {
           ))}
         </tbody>
       </table>
+      {more && (
+        <div className="flex justify-center pt-2">
+          <Button size="sm" variant="ghost" onClick={() => setAll((v) => !v)}>
+            {all ? 'Show less' : `View all ${allRows.length} requests`}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

@@ -82,6 +82,7 @@ export type SendOutcome =
         | 'duplicate'
         | 'rate_limited'
         | 'daily_cap'
+        | 'reserved'
         | 'invalid'
         | 'failed';
       error?: string;
@@ -92,6 +93,12 @@ const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 /** notifications to one address per hour (codes are limited by their own flows) */
 const NOTIFY_PER_HOUR = 6;
+/**
+ * Optional emails (alerts, support updates…) stop once this share of the daily
+ * limit is used; the rest is kept for codes and other critical emails.
+ */
+export const OPTIONAL_SHARE = 0.8;
+export const optionalLimit = (dailyCap: number) => Math.floor(dailyCap * OPTIONAL_SHARE);
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 const keyHash = (v: string) => createHash('sha256').update(v).digest('hex').slice(0, 40);
@@ -152,7 +159,19 @@ export async function sendEmail(deps: EmailDeps, req: SendRequest): Promise<Send
 
     const day = new Date(now).toISOString().slice(0, 10);
     const stats = await deps.db.get<{ sent?: number }>(`emailStats/${day}`);
-    if ((stats?.data.sent ?? 0) >= deps.dailyCap) {
+    const sentToday = stats?.data.sent ?? 0;
+    if (req.category !== 'critical' && sentToday >= optionalLimit(deps.dailyCap)) {
+      console.warn('[email] optional email held back near the daily limit', req.type);
+      const logId = await logEmail(deps.db, {
+        ...base,
+        accepted: false,
+        status: 'failed',
+        error: 'Held back: the daily limit is nearly used and the rest is kept for codes',
+        errorCode: 'reserved',
+      });
+      return { sent: false, status: 'reserved', logId };
+    }
+    if (sentToday >= deps.dailyCap) {
       console.warn('[email] daily cap reached; skipped', req.type);
       const logId = await logEmail(deps.db, {
         ...base,

@@ -317,6 +317,18 @@ describe('send service', () => {
     ).toBe('daily_cap');
   });
 
+  it('keeps the last 20% of the daily limit for codes and critical emails', async () => {
+    deps.dailyCap = 10;
+    db.docs.set(`emailStats/${new Date(now).toISOString().slice(0, 10)}`, { sent: 8 });
+    expect(
+      (await sendEmail(deps, { type: 'security_change', category: 'security', to: 'x@y.co' }))
+        .status,
+    ).toBe('reserved');
+    expect(
+      (await sendEmail(deps, { type: 'verify_email', category: 'critical', to: 'x@y.co' })).status,
+    ).toBe('accepted');
+  });
+
   it('without a provider nothing is sent and nothing breaks', async () => {
     expect(
       (
@@ -453,7 +465,7 @@ describe('devices and sign-in alerts', () => {
     });
   });
 
-  it('every new sign-in session alerts once; the sign-in right after registering does not', async () => {
+  it('alerts only for a new device: not after registering, not on a recognised device', async () => {
     const user = { uid: 'u1', email: 'ama@example.com', name: 'Ama' };
     expect(
       (
@@ -476,19 +488,40 @@ describe('devices and sign-in alerts', () => {
     // the same sign-in session reported twice (token refresh, second tab): no second email
     await signInAlert(deps, SECRET, user, 2000, phone);
     expect(mail.sent).toHaveLength(1);
-    // a later sign-in on the same device: alerted, as a recognised device
+    // a later sign-in on the same (now recognised) device: recorded, no email
     const again = await signInAlert(deps, SECRET, user, 3000, phone);
     expect(again.known).toBe(true);
-    expect(again.status).toBe('accepted');
-    expect(mail.sent).toHaveLength(2);
-    expect(mail.sent[1]!.html).toContain('used before');
+    expect((again as { error?: string }).error).toBe('known_device');
+    expect(mail.sent).toHaveLength(1);
   });
 
-  it('the first sign-in of an existing account (not just registered) alerts', async () => {
-    expect(
-      (await signInAlert(deps, SECRET, { uid: 'u9', email: 'kofi@example.com' }, 1000, client()))
-        .status,
-    ).toBe('accepted');
+  it('the first device recorded for an existing account sends nothing (nothing to compare with)', async () => {
+    const r = await signInAlert(
+      deps,
+      SECRET,
+      { uid: 'u9', email: 'kofi@example.com' },
+      1000,
+      client(),
+    );
+    expect((r as { error?: string }).error).toBe('first_device');
+    expect(mail.sent).toHaveLength(0);
+  });
+
+  it('at most 3 sign-in alerts per account per day', async () => {
+    const user = { uid: 'u1', email: 'ama@example.com' };
+    await signInAlert(deps, SECRET, user, 1000, client());
+    for (let i = 0; i < 5; i++)
+      await signInAlert(
+        deps,
+        SECRET,
+        user,
+        2000 + i,
+        client({ deviceId: `dev-${String(i).padStart(16, 'd')}` }),
+      );
+    expect(mail.sent).toHaveLength(3);
+    now += 86_400_000 + 1;
+    await signInAlert(deps, SECRET, user, 9000, client({ deviceId: 'dev-eeeeeeeeeeeeeeee' }));
+    expect(mail.sent).toHaveLength(4);
   });
 
   it('sends no sign-in alert to an unverified address', async () => {

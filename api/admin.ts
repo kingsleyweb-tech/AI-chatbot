@@ -47,6 +47,7 @@ import { DEFAULT_FEEDS } from '../server/news/sources.js';
 import { loadFeeds, newsAdminView, saveFeedConfig } from '../server/news/stats.js';
 import { emailOverview } from '../server/email/log.js';
 import { EmailError, getEmailProvider } from '../server/email/provider.js';
+import { optionalLimit } from '../server/email/service.js';
 import { smsOverview } from '../server/sms/log.js';
 import { getOtpGateway, getSmsProvider, vynfyBalances } from '../server/sms/provider.js';
 
@@ -685,6 +686,7 @@ export const POST = handle(async (request) => {
         sender: e.emailFrom || null,
         senderName: e.emailFromName,
         dailyCap: e.emailDailyCap,
+        optionalLimit: optionalLimit(e.emailDailyCap),
         sentToday: today,
         publicUrl: e.publicUrl,
         // a free-mail sender is not authenticated for Brevo (SPF/DKIM/DMARC)

@@ -90,7 +90,6 @@ const C = {
   cyanSoft: '#ecfeff',
   cyanLine: '#a5f3fc',
   line: '#e5e7eb',
-  page: '#f4f7f8',
   warnBg: '#fffbeb',
   warnLine: '#fcd34d',
   warnInk: '#92400e',
@@ -167,12 +166,12 @@ function details(rows: [string, string | null | undefined][]): Block {
   const shown = rows.filter((r): r is [string, string] => Boolean(r[1]));
   return {
     html:
-      `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;border:1px solid ${C.line};border-radius:12px;">` +
+      `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 22px;border-top:1px solid ${C.line};">` +
       shown
         .map(
-          ([k, v], i) =>
-            `<tr><td style="padding:10px 14px;${i ? `border-top:1px solid ${C.line};` : ''}font-size:13px;color:${C.muted};width:38%;vertical-align:top;">${esc(k)}</td>` +
-            `<td style="padding:10px 14px;${i ? `border-top:1px solid ${C.line};` : ''}font-size:14px;color:${C.ink};font-weight:500;vertical-align:top;">${esc(v)}</td></tr>`,
+          ([k, v]) =>
+            `<tr><td style="padding:13px 0;border-bottom:1px solid ${C.line};font-size:14px;color:${C.muted};vertical-align:top;">${esc(k)}</td>` +
+            `<td align="right" style="padding:13px 0 13px 16px;border-bottom:1px solid ${C.line};font-size:15px;color:${C.ink};font-weight:500;text-align:right;vertical-align:top;">${esc(v)}</td></tr>`,
         )
         .join('') +
       `</table>`,
@@ -183,7 +182,7 @@ function details(rows: [string, string | null | undefined][]): Block {
 /** a quoted message, e.g. the support team's reply */
 function quote(t: string): Block {
   return {
-    html: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;"><tr><td style="border-left:3px solid ${C.cyan};background:${C.cyanSoft};border-radius:0 10px 10px 0;padding:12px 14px;font-size:14px;line-height:21px;color:${C.ink};white-space:pre-line;">${esc(t)}</td></tr></table>`,
+    html: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;"><tr><td style="border-left:3px solid ${C.cyan};padding:4px 0 4px 14px;font-size:14px;line-height:21px;color:${C.ink};white-space:pre-line;">${esc(t)}</td></tr></table>`,
     text: t
       .split(String.fromCharCode(10))
       .map((l) => '> ' + l)
@@ -193,7 +192,7 @@ function quote(t: string): Block {
 
 function notice(t: string): Block {
   return {
-    html: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;"><tr><td style="background:${C.warnBg};border:1px solid ${C.warnLine};border-radius:12px;padding:12px 14px;font-size:14px;line-height:21px;color:${C.warnInk};">${esc(t)}</td></tr></table>`,
+    html: `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;"><tr><td style="border-left:3px solid ${C.warnLine};background:${C.warnBg};padding:10px 14px;font-size:14px;line-height:21px;color:${C.warnInk};">${esc(t)}</td></tr></table>`,
     text: `! ${t}`,
   };
 }
@@ -219,22 +218,21 @@ function layout(o: {
   const logo = `${o.base}/pwa-192.png`;
   const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light only"><meta name="supported-color-schemes" content="light"><title>${esc(o.title)}</title></head>
-<body style="margin:0;padding:0;background:${C.page};-webkit-text-size-adjust:100%;">
+<body style="margin:0;padding:0;background:#ffffff;-webkit-text-size-adjust:100%;">
 <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">${esc(o.preheader)}</div>
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${C.page};font-family:${FONT};"><tr><td align="center" style="padding:28px 12px;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;background:#ffffff;border:1px solid ${C.line};border-radius:16px;overflow:hidden;">
-<tr><td style="height:4px;line-height:4px;font-size:0;background:${C.cyan};">&nbsp;</td></tr>
-<tr><td style="padding:24px 28px 8px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;font-family:${FONT};"><tr><td style="padding:0;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#ffffff;">
+<tr><td style="padding:20px 20px 14px;border-bottom:1px solid ${C.line};">
 <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
 <td style="vertical-align:middle;"><img src="${esc(logo)}" width="40" height="40" alt="Atlas AI" style="display:block;border:0;border-radius:10px;"></td>
 <td style="vertical-align:middle;padding-left:12px;font-size:19px;font-weight:700;letter-spacing:-0.2px;color:${C.teal};">Atlas AI</td>
 </tr></table>
 </td></tr>
-<tr><td style="padding:12px 28px 8px;">
-<h1 style="margin:0 0 18px;font-size:22px;line-height:30px;font-weight:700;color:${C.teal};">${esc(o.title)}</h1>
+<tr><td style="padding:22px 20px 6px;">
+<h1 style="margin:0 0 16px;font-size:22px;line-height:30px;font-weight:700;color:${C.teal};">${esc(o.title)}</h1>
 ${o.blocks.map((b) => b.html).join('\n')}
 </td></tr>
-<tr><td style="padding:18px 28px 24px;border-top:1px solid ${C.line};">
+<tr><td style="padding:16px 20px 26px;border-top:1px solid ${C.line};">
 <p style="margin:0 0 6px;font-size:12px;line-height:18px;color:${C.muted};">${esc(o.footer)}</p>
 <p style="margin:0;font-size:12px;line-height:18px;color:${C.muted};">Atlas AI · <a href="${esc(o.base)}" style="color:${C.cyan};text-decoration:none;">${esc(o.base.replace(/^https?:\/\//, ''))}</a></p>
 </td></tr>

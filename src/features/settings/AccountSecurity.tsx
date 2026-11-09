@@ -373,15 +373,31 @@ const EVENT_LABELS: Record<string, string> = {
   unauthorized_access: 'Blocked attempt to open an administrator page',
 };
 
+/** collapsed: the newest few; "View all" loads the full history (capped) */
+const ACTIVITY_SHOWN = 5;
+const ACTIVITY_ALL = 100;
+
 function RecentActivity() {
   const uid = useUid();
-  const { data, loading, error } = useQuery<SecurityEvent>(
-    query(paths.securityEvents(uid), orderBy('at', 'desc'), limit(15)),
-    [uid],
+  const [all, setAll] = useState(false);
+  const {
+    data: rows,
+    loading,
+    error,
+  } = useQuery<SecurityEvent>(
+    // one extra row tells us whether there is more to show
+    query(
+      paths.securityEvents(uid),
+      orderBy('at', 'desc'),
+      limit(all ? ACTIVITY_ALL : ACTIVITY_SHOWN + 1),
+    ),
+    [uid, all],
   );
+  const more = rows.length > ACTIVITY_SHOWN;
+  const data = all ? rows : rows.slice(0, ACTIVITY_SHOWN);
   return (
     <Section title="Recent activity">
-      {loading ? (
+      {loading && rows.length === 0 ? (
         <div className="flex items-center gap-2 py-3 text-sm text-muted">
           <Spinner className="size-4" /> Loading
         </div>
@@ -419,6 +435,18 @@ function RecentActivity() {
             </time>
           </div>
         ))
+      )}
+      {(more || all) && !error && (
+        <div className="flex justify-center pt-2">
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setAll((v) => !v)}
+            disabled={loading && all && rows.length <= ACTIVITY_SHOWN + 1}
+          >
+            {all ? 'Show less' : 'View all activity'}
+          </Button>
+        </div>
       )}
     </Section>
   );
