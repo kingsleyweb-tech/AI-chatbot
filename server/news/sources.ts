@@ -43,6 +43,16 @@ const DOMAIN_TIERS: Record<string, Tier> = {
   'npr.org': 'wire', 'dw.com': 'wire', 'france24.com': 'wire', 'afp.com': 'wire', 'cnn.com': 'wire', 'cnbc.com': 'wire', 'abc.net.au': 'wire',
   'scmp.com': 'wire', 'nhk.or.jp': 'wire', 'aa.com.tr': 'wire', 'euronews.com': 'wire', 'politico.com': 'wire', 'axios.com': 'wire',
   'skynews.com': 'wire', 'news.sky.com': 'wire', 'nbcnews.com': 'wire', 'cbsnews.com': 'wire', 'abcnews.go.com': 'wire', 'usnews.com': 'wire',
+  'independent.co.uk': 'wire', 'telegraph.co.uk': 'wire', 'thetimes.co.uk': 'wire', 'latimes.com': 'wire', 'usatoday.com': 'wire', 'time.com': 'wire',
+  'yahoo.com': 'wire', 'news.yahoo.com': 'wire', 'msn.com': 'wire',
+  // official sports bodies
+  'premierleague.com': 'official', 'uefa.com': 'official', 'fifa.com': 'official', 'cafonline.com': 'official', 'ghanafa.org': 'official',
+  'nba.com': 'official', 'nfl.com': 'official', 'formula1.com': 'official', 'olympics.com': 'official', 'worldathletics.org': 'official',
+  // sports publications
+  'sports.yahoo.com': 'specialist', 'espn.com': 'specialist', 'espn.co.uk': 'specialist', 'skysports.com': 'specialist', 'theathletic.com': 'specialist',
+  'goal.com': 'specialist', 'talksport.com': 'specialist', 'football.london': 'specialist', 'liverpoolecho.co.uk': 'specialist', 'manchestereveningnews.co.uk': 'specialist',
+  'cbssports.com': 'specialist', 'nbcsports.com': 'specialist', 'foxsports.com': 'specialist', 'si.com': 'specialist', 'eurosport.com': 'specialist',
+  'transfermarkt.com': 'specialist', 'whoscored.com': 'specialist', 'livescore.com': 'specialist', 'flashscore.com': 'specialist', 'sportinglife.com': 'specialist',
   // specialist publications
   'techcrunch.com': 'specialist', 'theverge.com': 'specialist', 'arstechnica.com': 'specialist', 'wired.com': 'specialist',
   'technologyreview.com': 'specialist', 'engadget.com': 'specialist', 'zdnet.com': 'specialist', 'theregister.com': 'specialist',
@@ -107,6 +117,8 @@ const f = (id: string, name: string, url: string, domain: string, tier: Tier, to
 
 export const DEFAULT_FEEDS: FeedDef[] = [
   // international
+  f('bbc_sport_football', 'BBC Sport: Football', 'https://feeds.bbci.co.uk/sport/football/rss.xml', 'bbc.co.uk', 'wire', ['sports'], ['world', 'uk', 'europe']),
+  f('bbc_sport', 'BBC Sport', 'https://feeds.bbci.co.uk/sport/rss.xml', 'bbc.co.uk', 'wire', ['sports'], ['world', 'uk']),
   f('bbc_world', 'BBC News: World', 'https://feeds.bbci.co.uk/news/world/rss.xml', 'bbc.co.uk', 'wire', ['general', 'politics'], ['world', 'europe', 'uk']),
   f('bbc_tech', 'BBC News: Technology', 'https://feeds.bbci.co.uk/news/technology/rss.xml', 'bbc.co.uk', 'wire', ['tech', 'ai', 'security'], ['world']),
   f('bbc_africa', 'BBC News: Africa', 'https://feeds.bbci.co.uk/news/world/africa/rss.xml', 'bbc.co.uk', 'wire', ['general', 'politics'], ['africa', 'west_africa', 'ghana', 'nigeria']),

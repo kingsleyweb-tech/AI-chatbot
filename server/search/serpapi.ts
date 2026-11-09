@@ -30,6 +30,48 @@ interface SerpResponse {
   organic_results?: SerpOrganic[];
   news_results?: SerpNews[];
   answer_box?: { answer?: string; snippet?: string; title?: string; link?: string };
+  sports_results?: SerpSports;
+}
+interface SerpTeam {
+  name?: string;
+  score?: string | number;
+}
+interface SerpGame {
+  tournament?: string;
+  league?: string;
+  stage?: string;
+  date?: string;
+  time?: string;
+  status?: string;
+  teams?: SerpTeam[];
+}
+interface SerpSports {
+  title?: string;
+  rankings?: string;
+  ranking?: string;
+  game_spotlight?: SerpGame;
+  games?: SerpGame[];
+}
+
+const gameLine = (g: SerpGame): string => {
+  const teams = (g.teams ?? []).filter((x) => x.name).map((x) => (x.score != null && x.score !== '' ? `${x.name} ${x.score}` : String(x.name)));
+  if (!teams.length) return '';
+  const when = [g.date, g.time].filter(Boolean).join(' ');
+  return [teams.join(' - '), g.tournament || g.league, g.stage, g.status, when].filter(Boolean).join(', ');
+};
+
+/** Google's sports panel (team position, recent and next games) as plain text. Exported for tests. */
+export function sportsSummary(s: SerpSports | undefined): string {
+  if (!s) return '';
+  const lines: string[] = [];
+  if (s.title) lines.push(s.title);
+  const rank = s.rankings || s.ranking;
+  if (rank) lines.push(`Position: ${rank}`);
+  const spot = s.game_spotlight ? gameLine(s.game_spotlight) : '';
+  if (spot) lines.push(`Featured game: ${spot}`);
+  const games = (s.games ?? []).map(gameLine).filter(Boolean).slice(0, 6);
+  if (games.length) lines.push(`Games: ${games.join('; ')}`);
+  return lines.length > 1 ? lines.join('. ') : '';
 }
 
 /** Map a SerpAPI JSON body to normalized results. Exported for tests. */
@@ -54,7 +96,8 @@ export function mapSerpResponse(data: SerpResponse, max: number, now = Date.now(
     if (results.length >= max) break;
   }
   const ab = data.answer_box;
-  const answer = ab?.answer || ab?.snippet || undefined;
+  const sports = sportsSummary(data.sports_results);
+  const answer = [sports ? `Google sports panel: ${sports}` : '', ab?.answer || ab?.snippet || ''].filter(Boolean).join(' | ') || undefined;
   return { results, ...(answer ? { answer: answer.slice(0, 800) } : {}) };
 }
 

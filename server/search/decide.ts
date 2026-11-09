@@ -35,6 +35,7 @@ export type DecisionReason =
   | 'current_info'
   | 'eager'
   | 'entity_lookup'
+  | 'follow_up'
   // deep research
   | 'research_toggle'
   | 'research_request';
@@ -58,6 +59,8 @@ export interface DecisionInput {
   hasDocuments?: boolean;
   /** the knowledge base already has a strong match for this message */
   knowledgeHit?: boolean;
+  /** the previous user message in this conversation needed the web (follow-ups keep searching) */
+  previousSearched?: boolean;
 }
 
 const words = (t: string) => t.trim().split(/\s+/).filter(Boolean).length;
@@ -80,10 +83,19 @@ const DOC_REF =
 const EXPLICIT =
   /\b(search(?: the)?(?: web| internet| online)?(?: for)?|google(?: it| for)?|look\s*(?:it\s*)?up|lookup|browse|find (?:me )?(?:online|on the web|sources|articles|links|references)|check (?:online|the web|the internet)|web results?|with (?:sources|citations|links)|cite (?:your )?sources)\b/i;
 const LIVE =
-  /\b(weather|forecast|temperature (?:in|at|today)|exchange rate|stock price|share price|market cap|price of|prices? (?:today|now|of)|how much (?:does|do|is|are) .{1,40} (?:cost|costs)|scores?|standings|fixtures|live (?:updates?|score|results?)|traffic)\b/i;
+  /\b(weather|forecast|temperature (?:in|at|today)|exchange rate|stock price|share price|market cap|price of|prices? (?:today|now|of)|how much (?:does|do|is|are) .{1,40} (?:cost|costs)|scores?|standings|fixtures|live (?:updates?|score|results?)|(?:match|game|league|cup|football|soccer|race|fight|election|exam) results?|results? (?:of|from) (?:the |last |yesterday|today|this|tonight)|traffic)\b/i;
 const NEWS = /\b(news|headlines?|breaking|announced|announcement|press release|election results?|box office|trending)\b/i;
 const RECENCY =
   /\b(latest|current(?:ly)?|today|tonight|this (?:week|month|year)|right now|at the moment|recent(?:ly)?|up[- ]to[- ]date|as of (?:now|today)|upcoming|just (?:announced|released|launched)|new(?:est)? (?:version|release|update)|still (?:open|available|alive|in office|ceo|president))\b/i;
+// headline-style requests without a question word: "Latest Premier League results", "Give me today's top stories"
+const HEADLINE_REQUEST = /^(?:please\s+)?(?:(?:tell|give|show|get|send|update) me\b|list\b|(?:the\s+)?(?:latest|current|recent|newest|today'?s|tonight'?s|this (?:week|month)'?s?)\b)/i;
+// league tables, positions, fixtures and results change every week
+const SPORTS_LIVE =
+  /\b(?:(?:league|premier league|epl|la liga|serie a|bundesliga|ligue 1|champions league|europa league|afcon|world cup|ghana premier league|nba|nfl|f1|formula 1)\s+(?:table|standings|log|top scorers?|fixtures?|schedule)|(?:which|what) (?:position|place)|(?:on|in|top of|bottom of) the (?:table|log|standings)|next (?:match|game|fixture|fight|race)|last (?:match|game)|last night'?s (?:match|game)|top scorers?|transfer (?:news|rumou?rs|window)|who (?:won|scored|is winning)|kick[- ]?off)\b/i;
+const NOT_SPORT = /\b(sleep|sleeping|yoga|exercise|baby|pregnan\w*|job|interview|career|resume|cv|essay|poem|story|code)\b/i;
+// follow-ups about the previous answer itself, not new facts
+const ABOUT_ANSWER =
+  /^(?:please\s+)?(?:explain|simplify|summari[sz]e|rewrite|rephrase|translate|shorten|expand|elaborate|make it|in simple|thanks?|thank you|ok(?:ay)?|cool|nice|great)\b|\b(your (?:answer|reply|response)|the above|that answer)\b/i;
 const OFFICE = /\b(who (?:is|are) (?:the )?(?:current |new )?(?:president|prime minister|ceo|chair(?:man|person)?|governor|mayor|minister|king|queen|head|leader|owner|coach))\b/i;
 const VERSION = /\b(latest|current|newest|stable) (?:version|release)\b|\bversion of\b.*\b(latest|current)\b/i;
 const RESEARCH_VERB = /^(?:please\s+)?(?:research|investigate|find out|look into|dig into)\b/i;
@@ -163,10 +175,13 @@ export function decideSearch(text: string, input: DecisionInput = {}): SearchDec
   if (VERSION.test(t) && !/```/.test(t)) return search('current_info', false);
   if (!codey) {
     if (LIVE.test(t) || NEWS.test(t)) return search('current_info', false);
+    if (SPORTS_LIVE.test(t) && !NOT_SPORT.test(t)) return search('current_info', false);
     if (OFFICE.test(t)) return search('current_info', false);
-    if (RECENCY.test(t) && !PROG.test(t) && (QUESTION.test(t) || RESEARCH_VERB.test(t))) return search('current_info', false);
+    if (RECENCY.test(t) && !PROG.test(t) && (QUESTION.test(t) || RESEARCH_VERB.test(t) || HEADLINE_REQUEST.test(t))) return search('current_info', false);
     if (futureYear && QUESTION.test(t)) return search('current_info', false);
   }
+  // a short follow-up in a conversation about current events ("which position is Liverpool?") keeps using the web
+  if (input.previousSearched && !codey && words(t) <= 15 && !ABOUT_ANSWER.test(t)) return search('follow_up', false);
   // eager: questions about named things may search; plain definitions ("What is Java?") still do not
   const definition = /^(?:what (?:is|are)|explain|define|describe)\s+(?:an?\s+|the\s+)?[\w+#.-]+\s*[?.!]*$/i.test(t);
   // "Do you know Soko Aerial?": look it up, unless the knowledge base already covers it

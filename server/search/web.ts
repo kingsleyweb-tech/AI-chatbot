@@ -39,9 +39,26 @@ export interface WebOptions {
 }
 
 /** Map the options + message to the decision engine's input. autoSearch=false means manual mode. */
-export function decideFor(text: string, opts: WebOptions, hasDocuments = false, knowledgeHit = false): SearchDecision {
+export function decideFor(text: string, opts: WebOptions, hasDocuments = false, knowledgeHit = false, turns: ChatTurn[] = []): SearchDecision {
   const mode: SearchMode = opts.searchMode ?? (opts.autoSearch === false ? 'manual' : 'auto');
-  return decideSearch(text, { webSearch: opts.webSearch, deepResearch: opts.deepResearch, mode, hasDocuments, knowledgeHit });
+  return decideSearch(text, {
+    webSearch: opts.webSearch,
+    deepResearch: opts.deepResearch,
+    mode,
+    hasDocuments,
+    knowledgeHit,
+    previousSearched: previousSearched(turns, text, mode),
+  });
+}
+
+/** Whether the user's previous message (before this one) needed the web on its own. */
+export function previousSearched(turns: ChatTurn[], text: string, mode: SearchMode = 'auto'): boolean {
+  if (mode === 'manual' || turns.length < 2) return false;
+  const users = turns.filter((t) => t.role === 'user');
+  // the current message is normally the last user turn; look at the one before it
+  const prev = users.length && users[users.length - 1].content.trim() === text.trim() ? users[users.length - 2] : users[users.length - 1];
+  if (!prev) return false;
+  return decideSearch(prev.content.slice(0, 2000), { mode }).action !== 'none';
 }
 
 type Trigger = SearchInfo['trigger'];
@@ -58,9 +75,9 @@ function toTrigger(d: SearchDecision): Trigger | null {
 }
 
 /** Rewrite a short follow-up into a standalone query using recent turns (free model). */
-async function standaloneQuery(turns: ChatTurn[], text: string): Promise<string> {
+async function standaloneQuery(turns: ChatTurn[], text: string, followUp = false): Promise<string> {
   const base = toSearchQuery(text);
-  if (turns.length < 2 || !looksLikeFollowUp(text)) return base;
+  if (turns.length < 2 || (!followUp && !looksLikeFollowUp(text))) return base;
   const history = turns
     .slice(-5, -1)
     .map((t) => `${t.role}: ${t.content.slice(0, 600)}`)
@@ -107,13 +124,13 @@ export async function gatherWebContext(args: {
   /** called with every decision, including "no search" (for analytics) */
   onDecision?: (d: SearchDecision) => void;
 }): Promise<WebContext | null> {
-  const decision = decideFor(args.text, args.options, args.hasDocuments, args.knowledgeHit);
+  const decision = decideFor(args.text, args.options, args.hasDocuments, args.knowledgeHit, args.turns);
   args.onDecision?.(decision);
   const trigger = toTrigger(decision);
   if (!trigger) return null;
   const service = searchService();
   const urls = extractUrls(args.text);
-  const query = trigger === 'url' ? urls.join(' ') : await standaloneQuery(args.turns, args.text);
+  const query = trigger === 'url' ? urls.join(' ') : await standaloneQuery(args.turns, args.text, decision.reason === 'follow_up');
   const mode: SearchInfo['mode'] = trigger === 'research' ? 'research' : urls.length && trigger !== 'auto' ? 'extract' : 'search';
   const base: SearchInfo = { status: 'unavailable', mode, provider: null, query, cached: false, trigger, reason: decision.reason };
 

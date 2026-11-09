@@ -217,3 +217,24 @@ describe('search credit protection', () => {
     expect(calls.serpapi).toBe(1);
   });
 });
+
+describe('search decision engine: headline-style requests', () => {
+  it('searches for "latest ..." requests written without a question word', () => {
+    for (const q of [
+      'Latest Premier League results',
+      'latest premier league results',
+      "Today's top stories",
+      'Current Bank of Ghana policy rate',
+      'Give me the latest AFCON updates',
+      'Tell me the latest on the Ghana election',
+      'Match results from last night',
+      'Premier League results',
+    ])
+      expect(decideSearch(q).action, q).toBe('search');
+  });
+
+  it('still answers timeless or creative requests from the model', () => {
+    for (const q of ['Give me a recipe for jollof rice', 'List the planets in the solar system', 'Tell me a joke', 'Show me how to reverse a string in Python'])
+      expect(decideSearch(q).action, q).toBe('none');
+  });
+});

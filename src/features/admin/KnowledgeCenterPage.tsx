@@ -1100,7 +1100,10 @@ function SettingsTab({ onChanged }: { onChanged: () => void }) {
       {msg && <p className="text-muted" role="status">{msg}</p>}
       <section className="space-y-3">
         <h2 className="font-semibold">Use in answers</h2>
-        <Switch checked={s.retrievalEnabled} label="Answers may use verified knowledge" onChange={(v) => void save({ retrievalEnabled: v })} />
+        <label className="flex items-center justify-between gap-4">
+          <span className="font-medium">Answers may use verified knowledge</span>
+          <Switch checked={s.retrievalEnabled} label="Answers may use verified knowledge" onChange={(v) => void save({ retrievalEnabled: v })} />
+        </label>
         <p className="text-xs text-muted">Only verified records are ever used. Turning this off stops their use immediately on this server and within minutes everywhere.</p>
       </section>
       <section className="space-y-3">
@@ -1121,9 +1124,15 @@ function SettingsTab({ onChanged }: { onChanged: () => void }) {
       </section>
       <section className="space-y-3">
         <h2 className="font-semibold">Discovery and insights (off by default)</h2>
-        <Switch checked={s.discoveryFromWebSearch} label="Propose knowledge from credible sources found by web searches" onChange={(v) => void save({ discoveryFromWebSearch: v })} />
+        <label className="flex items-center justify-between gap-4">
+          <span className="font-medium">Propose knowledge from credible sources found by web searches</span>
+          <Switch checked={s.discoveryFromWebSearch} label="Propose knowledge from credible sources found by web searches" onChange={(v) => void save({ discoveryFromWebSearch: v })} />
+        </label>
         <p className="text-xs text-muted">Only the public address of official, wire and specialist sources is queued, never the question or conversation. The daily job reads up to {s.discoveryDailyCap} pages and places proposals in the review queue.</p>
-        <Switch checked={s.topicInsights} label="Count anonymous question topics for gap analysis" onChange={(v) => void save({ topicInsights: v })} />
+        <label className="flex items-center justify-between gap-4">
+          <span className="font-medium">Count anonymous question topics for gap analysis</span>
+          <Switch checked={s.topicInsights} label="Count anonymous question topics for gap analysis" onChange={(v) => void save({ topicInsights: v })} />
+        </label>
         <p className="text-xs text-muted">
           Keeps three keywords and a count per topic: no question text, no user, nothing from questions that contain personal details. Before enabling, make sure your Privacy Policy describes this aggregated use.
         </p>

@@ -184,9 +184,12 @@ Today is ${today} (UTC). The stories below were retrieved just now from several 
         `- Never invent headlines, sources, links, quotes or dates.
 
 ` +
-        `Format (unless the user asked for something else): a heading with the subject and today's date, then numbered stories, each with the headline in bold and these labelled lines: ` +
-        `**What happened:**, **Why it matters:**, **Published:**, **Source:** (with other outlets that reported it), **Status:** (only when not independently confirmed), **Read more:** (the link). ` +
-        `End with one line on what was checked (from the brief's first lines).
+        `How to write it (unless the user asked for a format): like a professional news editor, shaped to the question. ` +
+        `For a specific question (a score, result, table position, date or single event), answer it directly in the first sentence with the date and citation, then add only the context that helps; no list and no heading. ` +
+        `For a round-up of news on a topic, use a short heading, then for each story a bold headline followed by one to three sentences of plain prose that say what happened and why it matters, ending with the date in italics and the citation, for example *8 November 2026* [2]. ` +
+        `With many stories, group them under short subheadings by theme. Never use labelled fields such as "What happened:", "Why it matters:", "Source:" or "Read more:"; the sources and links are already shown below the answer. ` +
+        `Mention confirmation only when a story is not confirmed, in a few words within the sentence (for example "not yet confirmed by other outlets"). Prefer stories from credible outlets and leave out unconfirmed ones from little-known sites unless nothing better covers the subject. ` +
+        `Do not end with a list of what was checked.
 
 ${ctx.webResults}`,
     );
