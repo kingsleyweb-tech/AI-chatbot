@@ -26,7 +26,7 @@ import {
   Trash2,
   Volume2,
 } from 'lucide-react';
-import { lazy, memo, Suspense, useState } from 'react';
+import { memo, useState } from 'react';
 import type { ApprovalRequest, QuickAction, ResearchStep, RouteInfo, SearchInfo, Source } from '@shared/types';
 import { LogoMark } from '@/components/Logo';
 import { Markdown } from '@/components/Markdown';
@@ -41,62 +41,15 @@ import { GeneratedImage } from '../images/GeneratedImage';
 import type { LiveReply } from './engine';
 import { TranslateDialog, TranslationView, type TranslationResult } from './Translate';
 import { replyPhase } from './phase';
+import { SourcesButton, SourcesSheet } from './SourcesSheet';
 
-const SaveToKnowledgeDialog = lazy(() => import('../knowledge/SaveToKnowledge').then((m) => ({ default: m.SaveToKnowledgeDialog })));
-
+/** Excerpts from the person's documents and knowledge base (web sources are under the Sources button). */
 function Sources({ sources }: { sources: Source[] }) {
-  const [open, setOpen] = useState(false);
-  const web = sources.filter((s) => s.kind === 'web');
   const docs = sources.filter((s) => s.kind === 'document');
   const kb = sources.filter((s) => s.kind === 'knowledge');
-  const [saving, setSaving] = useState(false);
-  const shown = open ? web : web.slice(0, 4);
+  if (!docs.length && !kb.length) return null;
   return (
     <div className="mt-3 space-y-2">
-      {web.length > 0 && (
-        <div>
-          <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-subtle">Sources</div>
-          <div className="flex flex-wrap gap-1.5">
-            {shown.map((s) => (
-              <a
-                key={s.index}
-                href={s.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                title={[s.title, s.site && s.site !== domainOf(s.url) ? s.site : '', s.publishedDate ? `Published: ${s.publishedDate}` : '', s.snippet ?? '']
-                  .filter(Boolean)
-                  .join('\n')}
-                className="flex max-w-[260px] items-center gap-1.5 rounded-lg border border-border bg-surface px-2 py-1 text-xs transition-colors hover:border-border-strong hover:bg-surface-2"
-              >
-                <span className="flex size-4 shrink-0 items-center justify-center rounded bg-surface-2 text-[10px] font-semibold text-muted">
-                  {s.index}
-                </span>
-                <span className="truncate">{s.title || domainOf(s.url)}</span>
-                <span className="shrink-0 text-subtle">{s.site || domainOf(s.url)}</span>
-                {s.publishedDate && <span className="shrink-0 text-subtle">· {s.publishedDate}</span>}
-              </a>
-            ))}
-            {web.length > 4 && (
-              <button onClick={() => setOpen((o) => !o)} className="rounded-lg px-2 py-1 text-xs text-muted hover:bg-surface-2">
-                {open ? 'Show less' : `+${web.length - 4} more`}
-              </button>
-            )}
-            <button
-              onClick={() => setSaving(true)}
-              className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-muted hover:bg-surface-2 hover:text-fg"
-              title="Save these pages to your knowledge base"
-            >
-              <Library className="size-3.5" />
-              Save to knowledge base
-            </button>
-          </div>
-          {saving && (
-            <Suspense fallback={null}>
-              <SaveToKnowledgeDialog open={saving} onClose={() => setSaving(false)} sources={web} />
-            </Suspense>
-          )}
-        </div>
-      )}
       {kb.length > 0 && (
         <details className="group text-xs">
           <summary className="flex cursor-pointer list-none items-center gap-1 text-muted hover:text-fg">
@@ -446,6 +399,8 @@ export const AssistantMessage = memo(function AssistantMessage({
   const content = live?.content ?? m.content;
   const reasoning = live?.reasoning ?? m.reasoning ?? '';
   const sources = live?.sources ?? m.sources ?? [];
+  const webSources = sources.filter((x) => x.kind === 'web' && x.url);
+  const [sourcesOpen, setSourcesOpen] = useState(false);
   const search = live ? live.search : m.search;
   const researchSteps = live?.researchSteps ?? m.researchSteps ?? [];
   const model = live?.model ?? m.model;
@@ -501,6 +456,7 @@ export const AssistantMessage = memo(function AssistantMessage({
         {translation && <TranslationView result={translation} onClose={() => setTranslation(null)} />}
         <TranslateDialog open={translateOpen} text={content.slice(0, 12_000)} onClose={() => setTranslateOpen(false)} onDone={setTranslation} />
         {sources.length > 0 && !streaming && <Sources sources={sources} />}
+        {webSources.length > 0 && <SourcesSheet open={sourcesOpen} onClose={() => setSourcesOpen(false)} sources={webSources} />}
         {!streaming && content && (
           <div className={cn('mt-2 flex flex-wrap items-center gap-0.5', !isLast && 'opacity-100 transition-opacity lg:opacity-0 lg:group-hover:opacity-100')}>
             <IconButton
@@ -599,6 +555,7 @@ export const AssistantMessage = memo(function AssistantMessage({
                 ]}
               />
             )}
+            {webSources.length > 0 && <SourcesButton sources={webSources} onOpen={() => setSourcesOpen(true)} />}
             {model && <span className="ml-1.5 truncate text-[11px] text-subtle">{modelShortName(model)}</span>}
             <ContextLine used={m.contextUsed ?? (live?.context ? { ...live.context, web: live.sources.filter((x) => x.kind === 'web').length } : null)} />
           </div>
