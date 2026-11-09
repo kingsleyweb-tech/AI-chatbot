@@ -494,7 +494,7 @@ export default function ChatPage() {
             </Button>
           </div>
         ) : showWelcome ? (
-          <Welcome projectName={project?.name} onPrompt={(t) => void send(t, [])} />
+          <Welcome projectName={project?.name} />
         ) : (
           <div className="mx-auto w-full max-w-3xl px-4 pb-6 pt-2 sm:px-6">
             {messages.length >= count && (

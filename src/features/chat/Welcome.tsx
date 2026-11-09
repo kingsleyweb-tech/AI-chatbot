@@ -1,18 +1,10 @@
 import { motion } from 'framer-motion';
-import { Code2, FileSearch, Lightbulb, PenLine } from 'lucide-react';
 import { LogoMark } from '@/components/Logo';
 import { useAuth } from '@/state/auth';
 import { firstName } from './greetings';
 import { WelcomeGreeting } from './WelcomeGreeting';
 
-const SUGGESTIONS = [
-  { icon: Lightbulb, label: 'Think through a decision', prompt: 'Help me think through a decision. Ask me a few questions first, then lay out the trade-offs.' },
-  { icon: PenLine, label: 'Draft a message', prompt: 'Draft a clear, concise message for me. Ask what it is about and who it is for.' },
-  { icon: Code2, label: 'Review some code', prompt: 'I want you to review some code for bugs, clarity and performance. I will paste it next.' },
-  { icon: FileSearch, label: 'Summarize a document', prompt: 'I will attach a document. Summarize its key points and list any action items.' },
-];
-
-export function Welcome({ projectName, onPrompt }: { projectName?: string; onPrompt: (text: string) => void }) {
+export function Welcome({ projectName }: { projectName?: string }) {
   const { user, profile } = useAuth();
   const name = firstName(profile?.displayName || user?.displayName, user?.email);
   return (
@@ -32,18 +24,6 @@ export function Welcome({ projectName, onPrompt }: { projectName?: string; onPro
         ) : (
           <WelcomeGreeting name={name} ready={!user || !!profile} />
         )}
-        <div className="mt-8 grid w-full grid-cols-1 gap-2 sm:grid-cols-2">
-          {SUGGESTIONS.map((s) => (
-            <button
-              key={s.label}
-              onClick={() => onPrompt(s.prompt)}
-              className="flex items-center gap-3 rounded-xl border border-border px-3.5 py-3 text-left text-sm text-fg transition-colors hover:border-border-strong hover:bg-surface"
-            >
-              <s.icon className="size-4 shrink-0 text-accent" />
-              <span>{s.label}</span>
-            </button>
-          ))}
-        </div>
       </motion.div>
     </div>
   );
