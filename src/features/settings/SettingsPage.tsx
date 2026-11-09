@@ -34,6 +34,7 @@ import {
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Button, ConfirmDialog, Input, Label, Select, Spinner, Switch, Textarea } from '@/components/ui';
+import { api } from '@/lib/api';
 import { paths } from '@/lib/db';
 import { db } from '@/lib/firebase';
 import { useDocument, useQuery } from '@/lib/hooks';
@@ -960,6 +961,7 @@ function SettingsHome() {
         {admin && <NavRow to="/admin/support" icon={LifeBuoy} label="Support & issue reports" value="Admin" />}
         {admin && <NavRow to="/admin/sms" icon={MessageSquareText} label="SMS & verification" value="Admin" />}
         {admin && <NavRow to="/admin/news" icon={Newspaper} label="News sources" value="Admin" />}
+        <KnowledgeCenterLink admin={admin} />
       </Group>
 
       <Group>
@@ -1033,4 +1035,21 @@ export default function SettingsPage() {
       </div>
     </Page>
   );
+}
+
+/** Shown to platform admins and to knowledge administrators (the role lives in config/knowledge, checked by the server). */
+function KnowledgeCenterLink({ admin }: { admin: boolean }) {
+  const [allowed, setAllowed] = useState(admin);
+  useEffect(() => {
+    if (admin) return setAllowed(true);
+    let live = true;
+    api<{ role: string }>('knowledge', { json: { action: 'kcRole' } })
+      .then((r) => live && setAllowed(r.role !== 'none'))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [admin]);
+  if (!allowed) return null;
+  return <NavRow to="/admin/knowledge-center" icon={ShieldCheck} label="Knowledge management" value={admin ? 'Admin' : 'Reviewer'} />;
 }

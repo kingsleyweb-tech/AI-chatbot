@@ -1,4 +1,5 @@
 import { cleanupPurgedRecords } from '../server/account/retention.js';
+import { centralMaintenance } from '../server/central/manage.js';
 import { z } from 'zod';
 import { CONSENT_METHOD_LABEL, consentCurrent, type ConsentMethod, type ConsentRecord } from '../server/shared/legal.js';
 import { approvalConfig, clearAccessCache, requireAllowedUser, type AccessConfig, type ApprovalConfig } from '../server/access.js';
@@ -253,7 +254,13 @@ export const GET = handle(async (request) => {
     console.error('[retention] cleanup failed', err instanceof Error ? err.message : err);
     return { accounts: 0, removed: 0 };
   });
-  return json({ ok: true, purged: result.purged.length, failed: result.failed.length, retentionRemoved: retention.removed });
+  // Central knowledge upkeep: flags records due for review, re-checks their sources, processes the
+  // opt-in discovery queue. It never deletes a record.
+  const knowledge = await centralMaintenance(db).catch((err) => {
+    console.error('[central] maintenance failed', err instanceof Error ? err.message : err);
+    return null;
+  });
+  return json({ ok: true, purged: result.purged.length, failed: result.failed.length, retentionRemoved: retention.removed, knowledge });
 });
 
 /**

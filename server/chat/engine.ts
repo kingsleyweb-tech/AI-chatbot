@@ -4,6 +4,8 @@ import { trustedDb } from '../admin.js';
 import { modelConfig } from '../config/models.js';
 import { retrieveDocuments } from '../docs/documents.js';
 import { retrieveKnowledge, type KnowledgeContext } from '../knowledge/retrieve.js';
+import { recordTopic, retrieveCentral, type CentralContext } from '../central/retrieve.js';
+import { queueDiscovery } from '../central/manage.js';
 import { isTrivial } from '../search/decide.js';
 import { looksLikeFollowUp } from '../search/heuristics.js';
 import { embed } from '../embeddings.js';
@@ -458,6 +460,17 @@ export async function runChat(
           // whether a "do you know <company>" question still needs the web.
           // Greetings and arithmetic never touch any knowledge source.
           let knowledge: KnowledgeContext | null = null;
+          // Atlas verified knowledge (platform-wide, VERIFIED records only) is read alongside; it may
+          // never hold up the reply, so it gets 1.5 s and is dropped after that.
+          const centralP: Promise<CentralContext | null> = trivial
+            ? Promise.resolve(null)
+            : Promise.race([
+                retrieveCentral({ db, query, sourceOffset: 0 }).catch((err) => {
+                  console.warn('[chat] central knowledge retrieval failed', err instanceof Error ? err.message : err);
+                  return null;
+                }),
+                new Promise<null>((r) => setTimeout(() => r(null), 1_500)),
+              ]);
           if (!trivial) {
             const previous = body.messages.filter((m) => m.role === 'user').slice(-2, -1)[0]?.content ?? '';
             // short follow-ups ("what services do they offer?") are searched with the previous question
@@ -572,12 +585,28 @@ export async function runChat(
           }
           if (docs?.sources.length) sources.push(...docs.sources);
           if (knowledge?.sources.length) sources.push(...knowledge.sources);
+          // verified central records continue the [K n] numbering after the user's own knowledge
+          const centralRaw = await centralP;
+          const kOffset = knowledge?.sources.length ?? 0;
+          const central = centralRaw
+            ? {
+                ...centralRaw,
+                sources: centralRaw.sources.map((s) => ({ ...s, index: s.index + kOffset })),
+                text: centralRaw.text.replace(/^\[K(\d+)\]/gm, (_m, d: string) => `[K${Number(d) + kOffset}]`),
+              }
+            : null;
+          if (central?.sources.length) sources.push(...central.sources);
+          if (!trivial) {
+            // background, best effort: opt-in aggregated topics and source discovery (no conversation text kept)
+            void recordTopic(db, queryText, Boolean(central)).catch(() => undefined);
+            if (web?.sources.length) void queueDiscovery(db, web.sources.map((s) => s.url)).catch(() => undefined);
+          }
           if (sources.length) send({ type: 'sources', sources });
           contextUsed = {
             memories: memories.length,
             documents: docs?.sources.length ?? 0,
             conversations: new Set([...related.map((r) => r.id), ...pastHits.map((h) => h.conversationId)]).size,
-            knowledge: knowledge?.sources.length ?? 0,
+            knowledge: (knowledge?.sources.length ?? 0) + (central?.sources.length ?? 0),
             web: web?.sources.length ?? 0,
           };
           send({
@@ -585,7 +614,7 @@ export async function runChat(
             memories: memories.length,
             documents: docs?.sources.length ?? 0,
             conversations: new Set([...related.map((r) => r.id), ...pastHits.map((h) => h.conversationId)]).size,
-            knowledge: knowledge?.sources.length ?? 0,
+            knowledge: (knowledge?.sources.length ?? 0) + (central?.sources.length ?? 0),
           });
 
           const system = buildSystemPrompt({
@@ -600,6 +629,7 @@ export async function runChat(
             documents: docs?.text || undefined,
             failedDocuments: docs?.failed,
             knowledge: knowledge?.text || undefined,
+            centralKnowledge: central?.text || undefined,
             webResults: web?.text || undefined,
             webSearchFailed: web?.failure ?? null,
             news: Boolean(web?.news),
