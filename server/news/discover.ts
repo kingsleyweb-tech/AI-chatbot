@@ -99,7 +99,8 @@ const STOP = new Set(
 );
 /** generic topic words: a feed chosen for the topic already matches them */
 const GENERIC = new Set(
-  'technology tech ai artificial intelligence cybersecurity cyber security space exploration politics political global science business economy health sports world news developments industry'.split(' '),
+  ('technology tech ai artificial intelligence cybersecurity cyber security space exploration politics political global science business economy health sports world news developments industry ' +
+    'economic economics finance financial government governance policy policies education educational schools universities sector sectors').split(' '),
 );
 
 export function tokens(s: string): string[] {
@@ -265,6 +266,15 @@ export interface GatherArgs {
 /** Fewer stories than this inside the preferred window: widen once, and say so. */
 const MIN_STORIES = 3;
 
+const EDUCATION = /\b(education|educational|schools?|universit(?:y|ies)|students?|teachers?|pupils?|curriculum|tertiary|shs|jhs|basic school|exams?|waec|wassce|bece|scholarships?|ges|ministry of education)\b/i;
+const GOVERNANCE = /\b(ministers?|ministry|parliament|mps?|cabinet|government|policy|policies|budget|tax(?:es|ation)?|president|vice president|presidency|assembly|regulat(?:or|ion|ory)|authority|commission)\b/i;
+/** Broad country requests: the story must touch one of the requested sectors (one mention is enough). */
+function mentionsSector(text: string, topics: Topic[]): boolean {
+  if (matchesTopics(text, '', topics)) return true;
+  if (EDUCATION.test(text)) return true;
+  return topics.includes('politics') && GOVERNANCE.test(text);
+}
+
 function cacheHours(req: NewsRequest): number {
   const k = req.window.kind;
   return k === 'breaking' ? 0.25 : k === 'today' || k === 'latest' ? 0.5 : k === 'yesterday' ? 2 : 1;
@@ -352,7 +362,11 @@ export async function gatherNews(a: GatherArgs): Promise<NewsResult> {
     const f = x.feed ? feedById.get(x.feed) : undefined;
     if (f && entityFeedIds.has(f.id)) return true;
     const text = `${x.title} ${x.snippet}`;
-    if (topicsAsked.length && !specific.length && f && !f.topics.every((t) => topicsAsked.includes(t)) && !matchesTopics(x.title, x.snippet, topicsAsked)) return false;
+    // several sectors of one country ("Ghana's technology, economy, government and education") is a request for that
+    // country's news in general: the topic filter would drop most of it
+    const broadRegional = regional && topicsAsked.length >= 3;
+    if (broadRegional && !mentionsSector(text, topicsAsked)) return false;
+    if (!broadRegional && topicsAsked.length && !specific.length && f && !f.topics.every((t) => topicsAsked.includes(t)) && !matchesTopics(x.title, x.snippet, topicsAsked)) return false;
     if (regional) {
       const local = (f && regionFeed(f)) || [...regionDomains].some((d) => x.domain === d || x.domain.endsWith(`.${d}`)) || (req.region.gl && x.domain.endsWith(`.${req.region.gl}`));
       if (!local && !matchesRegion(text, req.region.id)) return false;

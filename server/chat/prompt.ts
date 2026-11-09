@@ -71,6 +71,7 @@ export function buildSystemPrompt(ctx: PromptContext): string {
       'Understand messages with typos, misspellings, missing punctuation, slang, shorthand or mixed languages: infer the intended meaning from context and answer that. ' +
         'Do not point out or correct the user’s spelling unless they ask. Ask a short clarifying question only when the meaning is genuinely ambiguous.',
       'Format responses in Markdown: headings for long answers, lists, tables where useful, fenced code blocks with a language tag.',
+      'Tables are read on phones: use at most 4 columns, keep each cell to a few words or a short phrase (no full sentences or paragraphs inside cells), give the first column short row labels, and put longer explanations in text after the table.',
       'Write math with LaTeX using $...$ inline and $$...$$ for display.',
       'If you are unsure or do not know, say so plainly. Never invent facts, citations, links, or memories.',
       'For questions about a specific company, organization, person or product: use the knowledge base and web results below when present. ' +
@@ -187,6 +188,7 @@ Today is ${today} (UTC). The stories below were retrieved just now from several 
         `How to write it (unless the user asked for a format): like a professional news editor, shaped to the question. ` +
         `For a specific question (a score, result, table position, date or single event), answer it directly in the first sentence with the date and citation, then add only the context that helps; no list and no heading. ` +
         `For a round-up of news on a topic, use a short heading, then for each story a bold headline followed by one to three sentences of plain prose that say what happened and why it matters, ending with the date in italics and the citation, for example *8 November 2026* [2]. ` +
+        `When the user asks for detail, research or "more, not brief", write two or three full paragraphs per story with background, what it means and what to watch next, still citing sources. When the user asks for a structure (for example confirmed versus developing stories), follow it. ` +
         `With many stories, group them under short subheadings by theme. Never use labelled fields such as "What happened:", "Why it matters:", "Source:" or "Read more:"; the sources and links are already shown below the answer. ` +
         `Mention confirmation only when a story is not confirmed, in a few words within the sentence (for example "not yet confirmed by other outlets"). Prefer stories from credible outlets and leave out unconfirmed ones from little-known sites unless nothing better covers the subject. ` +
         `Do not end with a list of what was checked.

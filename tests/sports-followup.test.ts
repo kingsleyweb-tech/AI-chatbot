@@ -81,3 +81,12 @@ describe('credibility of sports and major outlets', () => {
     expect(tierOf('https://twaslnews1.twaslnews.com/7326997')).toBe('unknown');
   });
 });
+
+describe('news keywords ignore instructions about the answer', () => {
+  it('keeps only the subject of a long research request', async () => {
+    const { detectNews } = await import('../server/news/freshness.js');
+    const req = detectNews('Research the latest developments in Ghana’s technology, economy, government and education sectors. Separate confirmed reports from developing stories. tell me more about them, not brief');
+    expect(req?.region.id).toBe('ghana');
+    expect(req?.keywords).toBe('technology economy government education');
+  });
+});

@@ -148,7 +148,14 @@ const FILLER = new Set(
     'latest newest current currently today tonight yesterday this that week month year morning evening right now recent recently lately breaking ' +
     'news headlines headline update updates development developments happening happened going stories story coverage new events affairs ' +
     'worldwide global globally world international around across all major top big key important biggest past last few hours days 24 48 72 hour day ' +
-    'industry sector'
+    'industry sector sectors area areas field fields ' +
+    // how the user wants the answer, not what it is about
+    'research researching investigate find look check search online web internet separate separately confirmed unconfirmed verified ' +
+    'reports report reported reporting developing more less them it its they their these those not no brief briefly short shorter long longer ' +
+    'detail details detailed in-depth depth deep dive full fully comprehensive overview summary summarise summarize explain explained analysis ' +
+    'analyse analyze also both including include such as like with without how why which where when do does did has have had be been ' +
+    'will should would i my we our want need know tell give provide list write paragraph paragraphs points bullet bullets format sources ' +
+    'source cite citations between versus vs very much many well just only'
   ).split(/\s+/).filter(Boolean),
 );
 

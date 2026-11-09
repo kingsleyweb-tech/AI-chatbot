@@ -152,7 +152,7 @@ export async function gatherWebContext(args: {
       cached: n.providers.filter((p) => p.id !== 'rss' && p.status === 'ok').every((p) => p.cached),
       message: `${n.stories.length} stor${n.stories.length === 1 ? 'y' : 'ies'} from ${n.windowLabel}; ${n.stats.rejectedOld} older articles rejected`,
     };
-    return {
+    const newsResult: WebContext = {
       sources: n.stories.length ? brief.sources : [],
       text: n.stories.length ? brief.text : '',
       info,
@@ -160,6 +160,41 @@ export async function gatherWebContext(args: {
       notices: n.notices,
       failure: n.failure,
       news: { windowLabel: n.windowLabel, expanded: n.expanded, stories: n.stories.length },
+    };
+    if (n.stories.length >= 2 || !service.configured().length) return newsResult;
+    // Very few dated stories (a broad or unusual request): a normal web search still gives the model
+    // current material, and the answer is not "I cannot access live information".
+    const region = newsReq.region.id !== 'world' ? newsReq.region.label : '';
+    const fallbackQuery = [region, newsReq.keywords || toSearchQuery(args.text)].filter(Boolean).join(' ').slice(0, 200);
+    const fb = await service.run({
+      uid: args.uid,
+      store,
+      limits,
+      query: fallbackQuery,
+      intent: 'news',
+      kind: 'news',
+      freshness: 'month',
+      region: newsReq.region.gl || newsReq.region.country ? { gl: newsReq.region.gl, country: newsReq.region.country } : undefined,
+      priority: decision.explicit ? 'explicit' : 'auto',
+      signal: args.signal,
+    });
+    if (!fb.ok || !fb.results.length) return newsResult;
+    const fbSources: Source[] = [];
+    const fbBlocks: string[] = [];
+    fb.results.forEach((r) => {
+      const index = fbSources.length + 1;
+      fbSources.push({ index, kind: 'web', title: r.title, url: r.url, snippet: r.snippet.slice(0, 280), site: r.site, provider: fb.provider, ...(r.publishedDate ? { publishedDate: r.publishedDate } : {}) });
+      fbBlocks.push(block(index, r));
+    });
+    return {
+      sources: fbSources,
+      text:
+        `Few articles with a confirmed publication date in ${n.windowLabel} matched this request, so these are general news search results from the last month. ` +
+        `Give each item's date when it is listed, say when a date is not known, and do not present older items as today's news.\n\n${fbBlocks.join('\n\n')}`,
+      info: { ...base, status: 'ok', provider: fb.provider, cached: fb.cached, query: fallbackQuery, message: `${n.stories.length} dated stor${n.stories.length === 1 ? 'y' : 'ies'} in ${n.windowLabel}; used a wider news search` },
+      steps: [],
+      notices: [...n.notices, ...fb.notices],
+      failure: null,
     };
   }
 
