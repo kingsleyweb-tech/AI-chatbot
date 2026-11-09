@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import type { ApprovalRequest, ChatRequestBody, ChatTurn, GeneratedImageInfo, ImageStage, ResearchStep, RouteInfo, SearchInfo, Source, StreamEvent } from '@shared/types';
 import { ApiError, streamChat } from '@/lib/api';
-import { saveAssistantFallback } from '@/lib/db';
+import { requestStop, saveAssistantFallback, storedReplyStatus } from '@/lib/db';
 import type { Message } from '@/lib/types';
 import { newId } from '@/lib/utils';
 import { rememberImage } from '../images/images';
@@ -40,6 +40,10 @@ export interface LiveReply {
 const replies = new Map<string, LiveReply[]>();
 const MAX_KEPT = 20;
 const aborts = new Map<string, AbortController>();
+/** replies the user stopped (as opposed to a connection that dropped) */
+const userStopped = new WeakSet<AbortController>();
+/** the reply each conversation is generating, so Stop can tell the server which one */
+const generatingReply = new Map<string, { uid: string; id: string }>();
 const listeners = new Set<() => void>();
 let scheduled = false;
 let version = 0;
@@ -109,7 +113,25 @@ export function clearLiveReply(conversationId: string, replyId: string) {
 }
 
 export function stopGeneration(conversationId: string) {
-  aborts.get(conversationId)?.abort();
+  const controller = aborts.get(conversationId);
+  const target = generatingReply.get(conversationId);
+  if (controller) userStopped.add(controller);
+  controller?.abort();
+  if (target) {
+    // the server no longer stops when the connection closes: tell it explicitly
+    const ask = () => requestStop(target.uid, conversationId, target.id);
+    ask().catch(() => setTimeout(() => ask().catch(() => undefined), 1500));
+  }
+}
+
+/** Forget a live reply (no matter its state) so the stored copy is shown. */
+function dropLiveReply(conversationId: string, replyId: string) {
+  const list = replies.get(conversationId);
+  if (!list) return;
+  const next = list.filter((r) => r.id !== replyId);
+  if (next.length) replies.set(conversationId, next);
+  else replies.delete(conversationId);
+  emit(true);
 }
 
 export function isGenerating(conversationId: string): boolean {
@@ -139,9 +161,11 @@ export async function generate(args: {
   replyId?: string;
 }): Promise<void> {
   const { uid, conversationId } = args;
-  aborts.get(conversationId)?.abort();
+  // a reply already running here (Regenerate) is stopped on the server too, not just disconnected
+  if (aborts.has(conversationId)) stopGeneration(conversationId);
   const controller = new AbortController();
   aborts.set(conversationId, controller);
+  let dropped = false;
   const reply: LiveReply = {
     id: args.replyId ?? newId(),
     conversationId,
@@ -155,6 +179,7 @@ export async function generate(args: {
     status: 'connecting',
     startedAt: Date.now(),
   };
+  generatingReply.set(conversationId, { uid, id: reply.id });
   const kept = (replies.get(conversationId) ?? []).filter((r) => r.id !== reply.id);
   replies.set(conversationId, [...kept, reply].slice(-MAX_KEPT));
   emit(true);
@@ -235,13 +260,16 @@ export async function generate(args: {
     }
     if (reply.status === 'streaming' || reply.status === 'connecting') {
       // stream ended without a terminal event (connection dropped): keep what arrived, marked as interrupted
+      dropped = true;
       reply.status = reply.content ? 'stopped' : 'error';
       if (!reply.content) reply.error = { code: 'network', message: 'The connection was interrupted.', retryable: true };
     }
   } catch (err) {
     if (controller.signal.aborted) {
       reply.status = 'stopped';
+      if (!userStopped.has(controller)) dropped = true;
     } else {
+      if (!(err instanceof ApiError) || err.status === 0) dropped = true;
       reply.status = 'error';
       if (err instanceof ApiError && err.code === 'duplicate_request') {
         // an earlier attempt reached the server and is still running: its stored reply will appear
@@ -254,7 +282,20 @@ export async function generate(args: {
     }
   } finally {
     if (aborts.get(conversationId) === controller) aborts.delete(conversationId);
+    if (generatingReply.get(conversationId)?.id === reply.id) generatingReply.delete(conversationId);
     emit(true);
+  }
+  // The connection dropped (the phone switched apps, the screen locked, the network blinked) but the
+  // server keeps generating and stores the reply. Show the stored copy, which fills in as it is
+  // written, instead of storing this browser's partial copy over it.
+  if (dropped && !reply.approval) {
+    const stored = await storedReplyStatus(uid, conversationId, reply.id).catch(() => undefined);
+    if (stored) {
+      reply.saved = true;
+      reply.settled = true;
+      dropLiveReply(conversationId, reply.id);
+      return;
+    }
   }
   // The server stores every reply before it ends the response. If it could
   // not (or the connection broke first), store what this browser received;

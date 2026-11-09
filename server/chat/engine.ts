@@ -208,9 +208,14 @@ export function friendlyError(err: unknown): Extract<StreamEvent, { type: 'error
 export async function runChat(
   ctx: Ctx,
   body: ChatRequestBody,
-  signal: AbortSignal,
+  requestSignal: AbortSignal,
   background: BackgroundRunner,
 ): Promise<Response> {
+  // Generation is NOT tied to the browser connection: on a phone, switching apps or locking the
+  // screen drops the connection, and the reply must still be finished and stored. It stops only
+  // when the user presses Stop (the browser marks the message with stopRequested, see watchAfterDisconnect).
+  const gen = new AbortController();
+  const signal = gen.signal;
   const { db, user } = ctx;
   const uid = user.uid;
   const base = `users/${uid}`;
@@ -294,12 +299,44 @@ export async function runChat(
     }
   })();
 
+  // ---- After the browser disconnects: honour Stop, and store the text so far ----
+  let finished = false;
+  let progressText = () => '';
+  let progress: Promise<unknown> = Promise.resolve();
+  const watchAfterDisconnect = async () => {
+    if (!(await placeholder)) return;
+    let stored = -1;
+    for (let i = 0; i < 40 && !finished && !signal.aborted; i++) {
+      await new Promise((r) => setTimeout(r, i === 0 ? 800 : 3000));
+      if (finished) return;
+      const doc = await db.get<{ stopRequested?: boolean }>(msgPath).catch(() => null);
+      if (finished) return;
+      if (doc?.data.stopRequested) {
+        gen.abort();
+        return;
+      }
+      const text = progressText();
+      if (text.length !== stored) {
+        stored = text.length;
+        // shown to the user if they come back before the reply is finished
+        progress = db.set(msgPath, { content: text }, true).catch(() => undefined);
+        await progress;
+      }
+    }
+  };
+  const onDisconnect = () => {
+    if (!finished) void watchAfterDisconnect();
+  };
+  if (requestSignal.aborted) onDisconnect();
+  else requestSignal.addEventListener('abort', onDisconnect, { once: true });
+
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       controllerRef = controller;
       const job = (async () => {
         let content = '';
         let reasoning = '';
+        progressText = () => content;
         let usage: UsageInfo | null = null;
         let usedModel = body.model;
         let status: 'complete' | 'stopped' | 'error' = 'complete';
@@ -737,6 +774,10 @@ export async function runChat(
         }
 
         activeRequests.delete(requestKey);
+        finished = true;
+        requestSignal.removeEventListener('abort', onDisconnect);
+        // a progress write still on its way must not land after the final copy
+        await progress;
         // ---- Persist the assistant message BEFORE the response ends ----
         // Work after the response has closed is not guaranteed to run on
         // Vercel (the function can be frozen), which lost replies before.
@@ -755,6 +796,7 @@ export async function runChat(
             data: {
               role: 'assistant',
               content,
+              stopRequested: null,
               reasoning: reasoning ? reasoning.slice(0, 20_000) : null,
               model: usedModel,
               status,
@@ -948,6 +990,7 @@ export async function runChat(
       background(
         job.catch((err) => {
           console.error('[chat] reply job failed', err instanceof Error ? err.message : err);
+          finished = true;
           activeRequests.delete(requestKey);
           closed = true;
           try {

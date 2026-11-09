@@ -136,18 +136,36 @@ describe('chat replies are stored permanently', () => {
     expect(db.docs.get(conv)).toMatchObject({ messageCount: 1 });
   });
 
-  it('an interrupted stream (browser gone) keeps the partial reply and the user message', async () => {
+  it('the browser leaving (phone switched apps) does not stop the reply: it is finished and stored', async () => {
     const abort = new AbortController();
     script = async function* (signal) {
       yield { type: 'delta', text: 'Half an ' };
       abort.abort();
+      await new Promise((r) => setTimeout(r, 20));
       if (signal.aborted) throw new DOMException('aborted', 'AbortError');
       yield { type: 'delta', text: 'answer' };
     };
     addUser('m1', 'hi');
     await chat('r1', [{ role: 'user', content: 'hi' }], abort.signal);
     expect(db.docs.get(`${conv}/messages/m1`)).toMatchObject({ content: 'hi' });
-    expect(db.docs.get(`${conv}/messages/r1`)).toMatchObject({ status: 'stopped', content: 'Half an ' });
+    expect(db.docs.get(`${conv}/messages/r1`)).toMatchObject({ status: 'complete', content: 'Half an answer' });
+  });
+
+  it('Stop still works after the browser left: the reply is stored as stopped with what was written', async () => {
+    const abort = new AbortController();
+    const path = `${conv}/messages/r1`;
+    script = async function* (signal) {
+      yield { type: 'delta', text: 'Half an ' };
+      await vi.waitFor(() => expect(db.docs.get(path)).toMatchObject({ status: 'processing' }));
+      abort.abort();
+      // the browser marks the reply (stopGeneration -> requestStop)
+      db.docs.set(path, { ...(db.docs.get(path) as object), stopRequested: true });
+      await vi.waitFor(() => expect(signal.aborted).toBe(true), { timeout: 4000 });
+      throw new DOMException('aborted', 'AbortError');
+    };
+    addUser('m1', 'hi');
+    await chat('r1', [{ role: 'user', content: 'hi' }], abort.signal);
+    expect(db.docs.get(path)).toMatchObject({ status: 'stopped', content: 'Half an ', stopRequested: null });
   });
 
   it('when the database write fails, the browser is told so it can store the reply itself', async () => {

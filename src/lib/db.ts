@@ -4,6 +4,7 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDocFromServer,
   getDocs,
   increment,
   limit,
@@ -171,6 +172,20 @@ export async function saveAssistantFallback(
     tx.set(ref, m.exists() ? { role: 'assistant', ...data } : { role: 'assistant', createdAt: serverTimestamp(), ...data }, { merge: true });
     return 'saved' as const;
   });
+}
+
+/**
+ * Ask the server to stop a reply. Needed because the server keeps generating when the connection
+ * drops (a phone switching apps): only an explicit Stop ends it. Fails quietly if the reply does not exist yet.
+ */
+export async function requestStop(uid: string, cid: string, id: string) {
+  await updateDoc(paths.message(uid, cid, id), { stopRequested: true });
+}
+
+/** Status of a stored reply, read from the server (not the local cache); null if it does not exist. */
+export async function storedReplyStatus(uid: string, cid: string, id: string): Promise<string | null> {
+  const snap = await getDocFromServer(paths.message(uid, cid, id));
+  return snap.exists() ? ((snap.data().status as string | undefined) ?? null) : null;
 }
 
 export async function editUserMessage(uid: string, cid: string, mid: string, content: string) {
