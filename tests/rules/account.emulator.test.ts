@@ -44,11 +44,11 @@ async function authCall<T>(path: string, body: object, owner = false): Promise<T
 const signIn = (email: string, password = 'secret123') =>
   authCall<{ idToken: string; localId: string }>('accounts:signInWithPassword', { email, password, returnSecureToken: true });
 
-async function call(handler: (r: Request) => Promise<Response>, path: string, body: object, token?: string) {
+async function call(handler: (r: Request) => Promise<Response>, path: string, body: object, token?: string, extra: Record<string, string> = {}) {
   const res = await handler(
     new Request(`http://x/api/${path}`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), 'user-agent': 'Mozilla/5.0 (Windows NT 10.0) Chrome/130' },
+      headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), 'user-agent': 'Mozilla/5.0 (Windows NT 10.0) Chrome/130', ...extra },
       body: JSON.stringify(body),
     }),
   );
@@ -94,7 +94,7 @@ beforeAll(async () => {
   await fetch(`http://${AUTH}/emulator/v1/projects/${PROJECT}/accounts`, { method: 'DELETE' });
   await fetch(`http://${FS}/emulator/v1/projects/${PROJECT}/databases/(default)/documents`, { method: 'DELETE' });
   // the rules only know the real bootstrap admin, so the test admin is also allow-listed
-  await allow(['esi@example.com', 'yaw@example.com', 'abena@example.com', 'boss@example.com']);
+  await allow(['esi@example.com', 'yaw@example.com', 'abena@example.com', 'boss@example.com', 'kofi@example.com']);
 });
 
 afterAll(() => {
@@ -186,6 +186,29 @@ describe.runIf(process.env.FIREBASE_AUTH_EMULATOR_HOST)('account security end to
     const logs = await call(adminApi, 'admin', { action: 'logs' }, admin.token);
     const actions = (logs.body.logs as { action: string }[]).map((l) => l.action);
     expect(actions).toEqual(expect.arrayContaining(['user_suspended', 'user_reactivated', 'user_deletion_scheduled', 'user_restored', 'user_purged']));
+  });
+
+  it("removing a device ends only that device's session", async (ctx) => {
+    if (!up) ctx.skip();
+    const { token: setup } = await verifiedUser('kofi@example.com', '0247778888');
+    void setup;
+    const A = { 'x-atlas-device': 'dev-aaaaaaaaaaaaaaaa' };
+    const B = { 'x-atlas-device': 'dev-bbbbbbbbbbbbbbbb' };
+    await new Promise((r) => setTimeout(r, 1100));
+    const tA = (await signIn('kofi@example.com')).idToken;
+    expect((await call(accountApi, 'account', { action: 'session' }, tA, A)).status).toBe(200);
+    await new Promise((r) => setTimeout(r, 1100));
+    const tB = (await signIn('kofi@example.com')).idToken;
+    expect((await call(accountApi, 'account', { action: 'session' }, tB, B)).status).toBe(200);
+    await new Promise((r) => setTimeout(r, 300)); // the device check runs after the response
+    const list = (await call(accountApi, 'account', { action: 'devices' }, tB, B)).body as { devices: { id: string; current: boolean }[] };
+    const other = list.devices.find((d) => !d.current);
+    expect(other).toBeTruthy();
+    expect((await call(accountApi, 'account', { action: 'forgetDevice', id: other!.id }, tB, B)).status).toBe(200);
+    const uid = (decodeJwt(tB) as { user_id: string }).user_id;
+    expect((await fsGet(`users/${uid}`)).fields?.removedDevices).toBeTruthy();
+    expect((await call(accountApi, 'account', { action: 'status' }, tA, A)).body.deviceRemoved).toBe(true);
+    expect((await call(accountApi, 'account', { action: 'status' }, tB, B)).body.deviceRemoved).toBe(false);
   });
 
   it('signing out everywhere revokes the current session', async (ctx) => {
