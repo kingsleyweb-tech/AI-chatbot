@@ -12,7 +12,14 @@
  *
  * Only the server identity writes either, after checking the caller.
  */
-import { accessConfig, clearAccessCache, decideAccess, type AccessConfig, type GateProfile, type GateState } from '../access.js';
+import {
+  accessConfig,
+  clearAccessCache,
+  decideAccess,
+  type AccessConfig,
+  type GateProfile,
+  type GateState,
+} from '../access.js';
 import { phoneKey } from '../auth/otp.js';
 import { maskPhone, normalizeInternational } from '../auth/phone.js';
 import type { AuthUser } from '../auth.js';
@@ -101,14 +108,28 @@ export async function ensureProfile(
 ): Promise<ProfileForAccess & { autoApproved?: boolean }> {
   const path = `users/${user.uid}`;
   const now = opts.now ?? Date.now();
-  const existing = opts.existing !== undefined ? (opts.existing ?? undefined) : (await db.get<ProfileForAccess>(path))?.data;
-  const decided = decideAccess({ ...user, emailVerified: true, phoneVerified: true }, existing, config, env().adminEmails, null, { ignoreConsent: true });
+  const existing =
+    opts.existing !== undefined
+      ? (opts.existing ?? undefined)
+      : (await db.get<ProfileForAccess>(path))?.data;
+  // phoneVerified is assumed (checked separately); the email's real state decides admin/allowlist matches.
+  const decided = decideAccess(
+    { ...user, phoneVerified: true },
+    existing,
+    config,
+    env().adminEmails,
+    null,
+    { ignoreConsent: true },
+  );
   const legacyApproved = decided.state === 'approved';
   if (!existing) {
     let autoApproved = false;
     if (!legacyApproved && opts.autoApprove && user.email) {
       // An earlier, rejected request for this email (e.g. a deleted and re-created account) stays a manual decision.
-      const prior = await db.list<AccessRequest>('accessRequests', { where: [['emailNorm', 'EQUAL', user.email.toLowerCase()]], limit: 5 });
+      const prior = await db.list<AccessRequest>('accessRequests', {
+        where: [['emailNorm', 'EQUAL', user.email.toLowerCase()]],
+        limit: 5,
+      });
       autoApproved = !prior.some((r) => r.data.status === 'rejected');
     }
     const profile: ProfileForAccess & Record<string, unknown> = {
@@ -124,16 +145,35 @@ export async function ensureProfile(
       lastSeenAt: new Date(now),
     };
     let created = true;
-    await db.commit([{ op: 'set', path, data: profile, precondition: { exists: false } }]).catch(async (err) => {
-      // created concurrently by another request: fine, use that one
-      if ((err as { status?: number }).status !== 409) throw err;
-      created = false;
-    });
+    await db
+      .commit([{ op: 'set', path, data: profile, precondition: { exists: false } }])
+      .catch(async (err) => {
+        // created concurrently by another request: fine, use that one
+        if ((err as { status?: number }).status !== 409) throw err;
+        created = false;
+      });
     if (!created) return (await db.get<ProfileForAccess>(path))?.data ?? profile;
     if (autoApproved) {
       await Promise.all([
-        recordSecurityEvent(db, user.uid, 'access_approved', { provider: user.provider, by: 'system', detail: 'Approved automatically' }, now),
-        recordAdminAction(db, { action: 'user_auto_approved', adminUid: 'system', adminEmail: null, targetUid: user.uid, targetEmail: user.email, detail: 'Automatic approval was on' }, now).catch(() => undefined),
+        recordSecurityEvent(
+          db,
+          user.uid,
+          'access_approved',
+          { provider: user.provider, by: 'system', detail: 'Approved automatically' },
+          now,
+        ),
+        recordAdminAction(
+          db,
+          {
+            action: 'user_auto_approved',
+            adminUid: 'system',
+            adminEmail: null,
+            targetUid: user.uid,
+            targetEmail: user.email,
+            detail: 'Automatic approval was on',
+          },
+          now,
+        ).catch(() => undefined),
       ]);
     }
     return { ...profile, autoApproved };
@@ -141,7 +181,8 @@ export async function ensureProfile(
   const patch: Record<string, unknown> = {};
   if (!existing.accessStatus) patch.accessStatus = legacyApproved ? 'approved' : 'pending';
   if (!existing.email && user.email) patch.email = user.email;
-  if (!existing.displayName && (name || user.name)) patch.displayName = (name || user.name)!.slice(0, 100);
+  if (!existing.displayName && (name || user.name))
+    patch.displayName = (name || user.name)!.slice(0, 100);
   if (Object.keys(patch).length) await db.set(path, patch, true);
   return { ...existing, ...patch };
 }
@@ -164,20 +205,30 @@ export async function submitRequest(
   input: RequestInput,
   now = Date.now(),
 ): Promise<{ state: GateState; request: AccessRequest | null; created: boolean }> {
-  if (!user.email || !user.emailVerified) throw new HttpError(403, 'email_unverified', 'Please verify your email address first.');
+  if (!user.email || !user.emailVerified)
+    throw new HttpError(403, 'email_unverified', 'Please verify your email address first.');
   const config = await accessConfig(db, true);
   const profile = await ensureProfile(db, user, config, input.fullName);
   const reqPath = `accessRequests/${user.uid}`;
   const existing = (await db.get<AccessRequest>(reqPath))?.data ?? null;
   const gate = decideAccess(user, profile, config, env().adminEmails, existing);
-  if (gate.state === 'phone') throw new HttpError(403, 'phone_unverified', 'Please verify your phone number first.');
-  if (gate.state === 'suspended' || gate.state === 'deleted') throw new HttpError(403, 'account_suspended', 'This account is not active.');
-  if (gate.state === 'consent') throw new HttpError(403, 'consent_required', 'Please accept the Terms of Use and Privacy Policy first.');
+  if (gate.state === 'phone')
+    throw new HttpError(403, 'phone_unverified', 'Please verify your phone number first.');
+  if (gate.state === 'suspended' || gate.state === 'deleted')
+    throw new HttpError(403, 'account_suspended', 'This account is not active.');
+  if (gate.state === 'consent')
+    throw new HttpError(
+      403,
+      'consent_required',
+      'Please accept the Terms of Use and Privacy Policy first.',
+    );
   // Already approved, or a request already exists: never create a second one.
-  if (gate.state === 'approved' || existing) return { state: gate.state, request: existing, created: false };
+  if (gate.state === 'approved' || existing)
+    return { state: gate.state, request: existing, created: false };
 
   const fullName = input.fullName.trim().replace(/\s+/g, ' ');
-  if (fullName.length < 2 || fullName.length > 100) throw new HttpError(400, 'bad_name', 'Enter your full name.');
+  if (fullName.length < 2 || fullName.length > 100)
+    throw new HttpError(400, 'bad_name', 'Enter your full name.');
   const reason = input.reason?.trim().slice(0, 500) || null;
 
   let phone: string | null;
@@ -187,21 +238,43 @@ export async function submitRequest(
     phoneVerified = Boolean(phone && profile.phoneVerified);
   } else {
     const n = normalizeInternational(input.phone ?? '', input.dialCode);
-    if (!n.ok) throw new HttpError(400, 'bad_phone', 'Enter a valid phone number, including the country code.');
+    if (!n.ok)
+      throw new HttpError(
+        400,
+        'bad_phone',
+        'Enter a valid phone number, including the country code.',
+      );
     phone = n.e164;
     phoneVerified = Boolean(profile.phoneVerified && profile.phoneNumber === phone);
   }
 
   // The same email or phone may not be pending under another account.
   const email = user.email.toLowerCase();
-  const sameEmail = await db.list<AccessRequest>('accessRequests', { where: [['emailNorm', 'EQUAL', email]], limit: 5 });
-  const samePhone = phone ? await db.list<AccessRequest>('accessRequests', { where: [['phoneNorm', 'EQUAL', phone]], limit: 5 }) : [];
+  const sameEmail = await db.list<AccessRequest>('accessRequests', {
+    where: [['emailNorm', 'EQUAL', email]],
+    limit: 5,
+  });
+  const samePhone = phone
+    ? await db.list<AccessRequest>('accessRequests', {
+        where: [['phoneNorm', 'EQUAL', phone]],
+        limit: 5,
+      })
+    : [];
   if ([...sameEmail, ...samePhone].some((d) => d.id !== user.uid && d.data.status !== 'rejected')) {
-    throw new HttpError(409, 'duplicate_request', 'A request with this email address or phone number already exists. Sign in with the account you used before.');
+    throw new HttpError(
+      409,
+      'duplicate_request',
+      'A request with this email address or phone number already exists. Sign in with the account you used before.',
+    );
   }
   if (phone && env().otpSecret.length >= 32) {
     const owner = await db.get<{ uid: string }>(`phoneNumbers/${phoneKey(env().otpSecret, phone)}`);
-    if (owner && owner.data.uid !== user.uid) throw new HttpError(409, 'phone_in_use', 'This phone number is already linked to another account.');
+    if (owner && owner.data.uid !== user.uid)
+      throw new HttpError(
+        409,
+        'phone_in_use',
+        'This phone number is already linked to another account.',
+      );
   }
 
   const request: AccessRequest = {
@@ -228,7 +301,11 @@ export async function submitRequest(
     {
       op: 'set',
       path: `users/${user.uid}`,
-      data: { accessStatus: 'pending', accessRequestedAt: now, ...(profile.displayName ? {} : { displayName: fullName }) },
+      data: {
+        accessStatus: 'pending',
+        accessRequestedAt: now,
+        ...(profile.displayName ? {} : { displayName: fullName }),
+      },
       merge: true,
     },
   ];
@@ -259,7 +336,10 @@ export async function setAccess(
   now = Date.now(),
 ): Promise<void> {
   const reqPath = `accessRequests/${target.uid}`;
-  const [request, config] = await Promise.all([db.get<AccessRequest>(reqPath), accessConfig(db, true)]);
+  const [request, config] = await Promise.all([
+    db.get<AccessRequest>(reqPath),
+    accessConfig(db, true),
+  ]);
   const status: RequestStatus = decision === 'approve' ? 'approved' : 'rejected';
   const by = actor.email ?? actor.uid;
   const writes: Write[] = [
@@ -268,8 +348,20 @@ export async function setAccess(
       path: `users/${target.uid}`,
       data:
         decision === 'approve'
-          ? { accessStatus: 'approved', approvedAt: now, approvedBy: by, rejectedAt: null, rejectedBy: null }
-          : { accessStatus: 'rejected', rejectedAt: now, rejectedBy: by, approvedAt: null, approvedBy: null },
+          ? {
+              accessStatus: 'approved',
+              approvedAt: now,
+              approvedBy: by,
+              rejectedAt: null,
+              rejectedBy: null,
+            }
+          : {
+              accessStatus: 'rejected',
+              rejectedAt: now,
+              rejectedBy: by,
+              approvedAt: null,
+              approvedBy: null,
+            },
       merge: true,
     },
   ];
@@ -283,7 +375,10 @@ export async function setAccess(
         reviewedBy: by,
         reviewNote: note?.slice(0, 300) ?? null,
         updatedAt: now,
-        history: [...(request.data.history ?? []), { status, at: now, by, note: note?.slice(0, 300) ?? null }].slice(-20),
+        history: [
+          ...(request.data.history ?? []),
+          { status, at: now, by, note: note?.slice(0, 300) ?? null },
+        ].slice(-20),
       },
       merge: true,
     });
@@ -293,29 +388,64 @@ export async function setAccess(
     writes.push({
       op: 'set',
       path: 'config/access',
-      data: { allowedEmails: lower(config?.allowedEmails).filter((e) => e !== email), adminEmails: config?.adminEmails ?? [], updatedAt: new Date(now) },
+      data: {
+        allowedEmails: lower(config?.allowedEmails).filter((e) => e !== email),
+        adminEmails: config?.adminEmails ?? [],
+        updatedAt: new Date(now),
+      },
       merge: true,
     });
   }
   await db.commit(writes);
   clearAccessCache();
-  await recordAdminAction(db, {
-    action: request ? (decision === 'approve' ? 'request_approved' : 'request_rejected') : decision === 'approve' ? 'user_approved' : 'user_unapproved',
-    adminUid: actor.uid,
-    adminEmail: actor.email,
-    targetUid: target.uid,
-    targetEmail: target.email,
-    detail: note,
-  }, now);
-  await recordSecurityEvent(db, target.uid, decision === 'approve' ? 'access_approved' : 'access_rejected', { by: 'admin' }, now);
+  await recordAdminAction(
+    db,
+    {
+      action: request
+        ? decision === 'approve'
+          ? 'request_approved'
+          : 'request_rejected'
+        : decision === 'approve'
+          ? 'user_approved'
+          : 'user_unapproved',
+      adminUid: actor.uid,
+      adminEmail: actor.email,
+      targetUid: target.uid,
+      targetEmail: target.email,
+      detail: note,
+    },
+    now,
+  );
+  await recordSecurityEvent(
+    db,
+    target.uid,
+    decision === 'approve' ? 'access_approved' : 'access_rejected',
+    { by: 'admin' },
+    now,
+  );
 }
 
 /** Remove a request (spam, mistakes). The account itself is untouched; the person may submit again. */
-export async function deleteRequest(db: Firestore, actor: Actor, targetUid: string, now = Date.now()): Promise<void> {
+export async function deleteRequest(
+  db: Firestore,
+  actor: Actor,
+  targetUid: string,
+  now = Date.now(),
+): Promise<void> {
   const request = await db.get<AccessRequest>(`accessRequests/${targetUid}`);
   if (!request) throw new HttpError(404, 'not_found', 'Request not found.');
   await db.delete(request.path);
-  await recordAdminAction(db, { action: 'request_deleted', adminUid: actor.uid, adminEmail: actor.email, targetUid, targetEmail: request.data.email }, now);
+  await recordAdminAction(
+    db,
+    {
+      action: 'request_deleted',
+      adminUid: actor.uid,
+      adminEmail: actor.email,
+      targetUid,
+      targetEmail: request.data.email,
+    },
+    now,
+  );
 }
 
 export interface AdminRequestRow {
@@ -337,7 +467,10 @@ export interface AdminRequestRow {
   accessStatus: string;
 }
 
-export function requestStats(rows: Pick<AdminRequestRow, 'status' | 'submittedAt'>[], now = Date.now()) {
+export function requestStats(
+  rows: Pick<AdminRequestRow, 'status' | 'submittedAt'>[],
+  now = Date.now(),
+) {
   const week = now - 7 * 86_400_000;
   return {
     total: rows.length,
@@ -352,7 +485,9 @@ export function requestStats(rows: Pick<AdminRequestRow, 'status' | 'submittedAt
 export async function listRequests(db: Firestore): Promise<AdminRequestRow[]> {
   const requests = await db.list<AccessRequest>('accessRequests', { limit: 2000 });
   // Only the profiles behind these requests (one batched read), not every user.
-  const profiles = requests.length ? await db.getMany<ProfileForAccess>(requests.map((r) => `users/${r.id}`)) : [];
+  const profiles = requests.length
+    ? await db.getMany<ProfileForAccess>(requests.map((r) => `users/${r.id}`))
+    : [];
   const byUid = new Map(profiles.map((p) => [p.id, p.data]));
   return requests
     .map(({ id, data: r }) => {
@@ -363,7 +498,9 @@ export async function listRequests(db: Firestore): Promise<AdminRequestRow[]> {
         email: r.email,
         phoneNumber: r.phoneNumber,
         authProvider: r.authProvider,
-        phoneVerified: Boolean(r.phoneVerified || (p?.phoneVerified && p.phoneNumber && p.phoneNumber === r.phoneNumber)),
+        phoneVerified: Boolean(
+          r.phoneVerified || (p?.phoneVerified && p.phoneNumber && p.phoneNumber === r.phoneNumber),
+        ),
         reason: r.reason,
         status: r.status,
         submittedAt: r.submittedAt,

@@ -40,7 +40,9 @@ export type AccessStatus = 'pending' | 'approved' | 'rejected';
 /**
  * Where an account stands, in the order the checks apply:
  * phone       email/password account without a verified phone number
- * unverified  email address not verified
+ * unverified  email address not verified and no verified phone number either
+ *             (an account with a verified phone may use the app before
+ *             verifying its email; sensitive actions call requireVerifiedEmail)
  * suspended   suspended by an administrator
  * deleted     scheduled for deletion
  * consent     the current Terms of Use and Privacy Policy are not accepted yet
@@ -49,7 +51,16 @@ export type AccessStatus = 'pending' | 'approved' | 'rejected';
  * pending     an access request is waiting for review
  * request     not approved and no request submitted yet
  */
-export type GateState = 'phone' | 'unverified' | 'suspended' | 'deleted' | 'consent' | 'approved' | 'rejected' | 'pending' | 'request';
+export type GateState =
+  | 'phone'
+  | 'unverified'
+  | 'suspended'
+  | 'deleted'
+  | 'consent'
+  | 'approved'
+  | 'rejected'
+  | 'pending'
+  | 'request';
 
 export interface GateProfile {
   accountStatus?: string;
@@ -67,13 +78,17 @@ export function decideAccess(
   opts: { ignoreConsent?: boolean } = {},
 ): { state: GateState; admin: boolean } {
   if (needsPhone(user)) return { state: 'phone', admin: false };
-  if (!user.email || !user.emailVerified) return { state: 'unverified', admin: false };
+  if (!user.email || (!user.emailVerified && !user.phoneVerified))
+    return { state: 'unverified', admin: false };
   if (profile?.accountStatus === 'suspended') return { state: 'suspended', admin: false };
   if (profile?.accountStatus === 'deleted') return { state: 'deleted', admin: false };
   // Everyone, administrators included, accepts the current documents first. Acceptance never
   // overrides a suspension (above) or a rejection (below: approval is decided separately).
-  if (!opts.ignoreConsent && !consentCurrent(profile?.consent)) return { state: 'consent', admin: false };
-  const legacy = evaluateAccess(user.email, true, config, bootstrapAdmins);
+  if (!opts.ignoreConsent && !consentCurrent(profile?.consent))
+    return { state: 'consent', admin: false };
+  // Administrator and allowlist entries match only a verified address: an unverified
+  // account must never inherit the rights of an email it has not proved it owns.
+  const legacy = evaluateAccess(user.email, user.emailVerified, config, bootstrapAdmins);
   if (legacy.admin) return { state: 'approved', admin: true };
   if (profile?.accessStatus === 'rejected') return { state: 'rejected', admin: false };
   if (profile?.accessStatus === 'approved' || legacy.ok) return { state: 'approved', admin: false };
@@ -100,8 +115,12 @@ export async function accessConfig(sdb: Firestore, fresh = false): Promise<Acces
   return value;
 }
 /** config/approval (automatic approval), same short cache; `fresh` for decisions that create accounts. */
-export async function approvalConfig(sdb: Firestore, fresh = false): Promise<ApprovalConfig | null> {
-  if (!fresh && approvalCache && Date.now() - approvalCache.at < CONFIG_TTL) return approvalCache.value;
+export async function approvalConfig(
+  sdb: Firestore,
+  fresh = false,
+): Promise<ApprovalConfig | null> {
+  if (!fresh && approvalCache && Date.now() - approvalCache.at < CONFIG_TTL)
+    return approvalCache.value;
   const value = (await sdb.get<ApprovalConfig>('config/approval'))?.data ?? null;
   approvalCache = { value, at: Date.now() };
   return value;
@@ -114,15 +133,31 @@ export function clearAccessCache() {
 }
 
 function denied(state: GateState): HttpError {
-  if (state === 'pending') return new HttpError(403, 'access_pending', 'Your access request is waiting for administrator approval.');
-  if (state === 'rejected') return new HttpError(403, 'access_rejected', 'Access to Atlas AI was not approved for this account.');
-  if (state === 'consent') return new HttpError(403, 'consent_required', 'Please accept the Terms of Use and Privacy Policy to continue.');
+  if (state === 'pending')
+    return new HttpError(
+      403,
+      'access_pending',
+      'Your access request is waiting for administrator approval.',
+    );
+  if (state === 'rejected')
+    return new HttpError(
+      403,
+      'access_rejected',
+      'Access to Atlas AI was not approved for this account.',
+    );
+  if (state === 'consent')
+    return new HttpError(
+      403,
+      'consent_required',
+      'Please accept the Terms of Use and Privacy Policy to continue.',
+    );
   return new HttpError(403, 'not_allowed', 'This account is not approved.');
 }
 
 /**
  * Authenticate + authorize every protected API call. The account must have
- * a verified email (and a verified phone for password sign-ins), must not
+ * a verified email or a verified phone (and a verified phone for password
+ * sign-ins), must not
  * be suspended, deleted or signed out, and must be approved by an
  * administrator: users/{uid}.accessStatus == 'approved', an admin, or an
  * email on the legacy allowlist (config/access). The Firestore rules apply
@@ -133,14 +168,17 @@ export async function requireAllowedUser(request: Request): Promise<Ctx> {
   if (needsPhone(user)) {
     throw new HttpError(403, 'phone_unverified', 'Please verify your phone number first.');
   }
-  if (!user.emailVerified) {
+  if (!user.emailVerified && !user.phoneVerified) {
     throw new HttpError(403, 'email_unverified', 'Please verify your email address first.');
   }
   const db = new Firestore(user.token);
   if (adminConfigured()) {
     try {
       const sdb = await adminDb();
-      const [profile, config] = await Promise.all([sdb.get<GateProfile>(`users/${user.uid}`), accessConfig(sdb)]);
+      const [profile, config] = await Promise.all([
+        sdb.get<GateProfile>(`users/${user.uid}`),
+        accessConfig(sdb),
+      ]);
       const block = accountBlock(profile?.data, user.authTime);
       if (block) throw block;
       const r = decideAccess(user, profile?.data, config, env().adminEmails);
@@ -148,10 +186,24 @@ export async function requireAllowedUser(request: Request): Promise<Ctx> {
       return { user, db, admin: r.admin };
     } catch (err) {
       // The server identity is unavailable (rules not published yet): fall back to the user's own token.
-      if (!(err instanceof HttpError) || !['admin_unconfigured', 'admin_unavailable'].includes(err.code)) throw err;
+      if (
+        !(err instanceof HttpError) ||
+        !['admin_unconfigured', 'admin_unavailable'].includes(err.code)
+      )
+        throw err;
     }
   }
   return legacyAccess(user, db);
+}
+
+/** Sensitive actions (password, sign-in methods, phone number, data export…) need a verified email. */
+export function requireVerifiedEmail(user: Pick<AuthUser, 'emailVerified'>): void {
+  if (!user.emailVerified)
+    throw new HttpError(
+      403,
+      'email_unverified',
+      'Verify your email address first. You can do it in Settings › Security.',
+    );
 }
 
 async function legacyAccess(user: AuthUser, db: Firestore): Promise<Ctx> {
@@ -183,8 +235,14 @@ interface ProfileGate {
 /** Why an approved account's profile is unreadable: suspended, deleted, or a revoked session. */
 export function accountBlock(profile: ProfileGate | undefined, authTime: number): HttpError | null {
   if (!profile) return null;
-  if (profile.accountStatus === 'suspended') return new HttpError(403, 'account_suspended', 'This account has been suspended. Contact the administrator.');
-  if (profile.accountStatus === 'deleted') return new HttpError(403, 'account_deleted', 'This account has been deleted.');
+  if (profile.accountStatus === 'suspended')
+    return new HttpError(
+      403,
+      'account_suspended',
+      'This account has been suspended. Contact the administrator.',
+    );
+  if (profile.accountStatus === 'deleted')
+    return new HttpError(403, 'account_deleted', 'This account has been deleted.');
   if (profile.sessionsValidAfter && authTime < profile.sessionsValidAfter) {
     return new HttpError(401, 'session_revoked', 'You were signed out. Please sign in again.');
   }
@@ -198,13 +256,18 @@ export function accountBlock(profile: ProfileGate | undefined, authTime: number)
  */
 async function assertAccountActive(user: AuthUser, db: Firestore): Promise<void> {
   try {
-    const block = accountBlock((await db.get<ProfileGate>(`users/${user.uid}`))?.data, user.authTime);
+    const block = accountBlock(
+      (await db.get<ProfileGate>(`users/${user.uid}`))?.data,
+      user.authTime,
+    );
     if (block) throw block;
   } catch (err) {
     if (!(err instanceof HttpError) || err.status !== 403 || err.code !== 'forbidden') throw err;
     cache.delete(user.uid);
     if (adminConfigured()) {
-      const profile = (await (await adminDb()).get<ProfileGate>(`users/${user.uid}`).catch(() => null))?.data;
+      const profile = (
+        await (await adminDb()).get<ProfileGate>(`users/${user.uid}`).catch(() => null)
+      )?.data;
       const block = accountBlock(profile, user.authTime);
       if (block) throw block;
     }

@@ -15,7 +15,11 @@ const SETTLE_MS = 2500;
 
 function shownThisSession(): boolean {
   try {
-    return sessionStorage.getItem(SHOWN_KEY) === '1';
+    // one reminder per session: not after the email reminder either
+    return (
+      sessionStorage.getItem(SHOWN_KEY) === '1' ||
+      sessionStorage.getItem('atlas.emailReminderShown') === '1'
+    );
   } catch {
     return false;
   }
@@ -82,7 +86,9 @@ export function PhoneReminder() {
         </span>
       }
     >
-      <p className="mb-4 text-sm text-muted">Add your phone number to strengthen your account security and make account recovery easier.</p>
+      <p className="mb-4 text-sm text-muted">
+        Add your phone number to strengthen your account security and make account recovery easier.
+      </p>
       <PhoneVerifyFlow
         submitLabel="Continue"
         onVerified={() => {

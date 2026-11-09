@@ -1,7 +1,29 @@
 import type { Timestamp } from 'firebase/firestore';
-import type { ApprovalRequest, Attachment, GeneratedImageInfo, MemoryCategory, MessageStatus, ResearchStep, RouteInfo, SearchInfo, Source, UsageInfo } from '@shared/types';
+import type {
+  ApprovalRequest,
+  Attachment,
+  GeneratedImageInfo,
+  MemoryCategory,
+  MessageStatus,
+  ResearchStep,
+  RouteInfo,
+  SearchInfo,
+  Source,
+  UsageInfo,
+} from '@shared/types';
 
-export type { ApprovalRequest, Attachment, GeneratedImageInfo, MemoryCategory, MessageStatus, ResearchStep, RouteInfo, SearchInfo, Source, UsageInfo };
+export type {
+  ApprovalRequest,
+  Attachment,
+  GeneratedImageInfo,
+  MemoryCategory,
+  MessageStatus,
+  ResearchStep,
+  RouteInfo,
+  SearchInfo,
+  Source,
+  UsageInfo,
+};
 
 export type Theme = 'light' | 'dark' | 'system';
 export type Accent = 'teal' | 'cyan' | 'emerald' | 'blue' | 'amber' | 'graphite';
@@ -86,6 +108,9 @@ export interface UserProfile {
   /** "Secure your account" reminder: when it was last skipped, and when it may show again (ms) */
   phoneReminderDismissedAt?: Timestamp;
   phoneReminderNextAt?: number | null;
+  /** "Verify your email" reminder: when it may show again (ms) and how often it was skipped */
+  emailReminderNextAt?: number | null;
+  emailReminderSkips?: number;
 }
 
 export interface Conversation {
@@ -245,11 +270,19 @@ export interface UsageDay {
   cost?: number;
   models?: Record<string, { requests?: number; tokens?: number }>;
   /** per AI provider (gemini, openrouter) */
-  providers?: Record<string, { requests?: number; tokens?: number; failed?: number; rateLimited?: number }>;
+  providers?: Record<
+    string,
+    { requests?: number; tokens?: number; failed?: number; rateLimited?: number }
+  >;
   routing?: { fallbacks?: number; providerSwitches?: number; switched?: number };
   /** per search provider (serpapi, tavily) */
-  search?: Record<string, { requests?: number; cached?: number; failed?: number; credits?: number }>;
+  search?: Record<
+    string,
+    { requests?: number; cached?: number; failed?: number; credits?: number }
+  >;
   /** decision engine outcomes: none/search/extract/research counts, plus reasons */
-  searchDecisions?: Record<string, number | Record<string, number> | undefined> & { reasons?: Record<string, number> };
+  searchDecisions?: Record<string, number | Record<string, number> | undefined> & {
+    reasons?: Record<string, number>;
+  };
   knowledge?: { retrievals?: number; used?: number; hits?: number };
 }

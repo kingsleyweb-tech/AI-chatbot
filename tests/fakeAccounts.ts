@@ -39,6 +39,7 @@ export class FakeAccounts implements AccountAdmin {
     if (!u) throw new Error('no user');
     this.updates.push({ uid, change });
     if (change.disabled !== undefined) u.disabled = change.disabled;
+    if (change.emailVerified !== undefined) u.emailVerified = change.emailVerified;
     if (change.revokeSessions) u.validSince = Date.now();
     if (change.password) {
       u.password = change.password;

@@ -1,5 +1,8 @@
+import { waitUntil } from '@vercel/functions';
 import { z } from 'zod';
+import { clientInfo } from '../server/account/devices.js';
 import { deviceLabel } from '../server/account/events.js';
+import { emailDeps } from '../server/email/index.js';
 import { accountAdmin, adminConfigured, adminDb } from '../server/admin.js';
 import { recordFailedLogin, resetPassword, startRecovery, verifyRecovery, type RecoveryDeps } from '../server/auth/recovery.js';
 import { env } from '../server/env.js';
@@ -7,7 +10,7 @@ import { handle, HttpError, json, readJson } from '../server/http.js';
 import { getSmsProvider } from '../server/sms/provider.js';
 
 const schema = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('start'), email: z.string().min(3).max(320) }),
+  z.object({ action: z.literal('start'), email: z.string().min(3).max(320), channel: z.enum(['sms', 'email']).optional() }),
   z.object({ action: z.literal('verify'), recoveryId: z.string().max(64), code: z.string().max(10) }),
   z.object({ action: z.literal('reset'), recoveryId: z.string().max(64), resetToken: z.string().max(100), password: z.string().max(200) }),
   z.object({ action: z.literal('failedLogin'), email: z.string().min(3).max(320) }),
@@ -19,13 +22,23 @@ export function setRecoveryDeps(d: Partial<RecoveryDeps> | null) {
   depsOverride = d;
 }
 
-async function deps(): Promise<RecoveryDeps> {
+async function deps(request: Request): Promise<RecoveryDeps> {
   const e = env();
-  const sms = getSmsProvider();
-  if (!adminConfigured() || !sms || e.otpSecret.length < 32) {
-    throw new HttpError(503, 'recovery_unavailable', 'Password reset by text message is not available right now. Use the email link instead.');
+  if (!adminConfigured() || e.otpSecret.length < 32) {
+    throw new HttpError(503, 'recovery_unavailable', 'Password reset with a code is not available right now. Use the email link instead.');
   }
-  return { db: await adminDb(), sms, accounts: accountAdmin(), secret: e.otpSecret, dailyCap: e.otpDailyCap, ...depsOverride };
+  const db = await adminDb();
+  return {
+    db,
+    sms: getSmsProvider(),
+    mail: emailDeps(db),
+    client: clientInfo(request.headers),
+    background: (p) => waitUntil(p),
+    accounts: accountAdmin(),
+    secret: e.otpSecret,
+    dailyCap: e.otpDailyCap,
+    ...depsOverride,
+  };
 }
 
 function clientIp(request: Request) {
@@ -33,8 +46,8 @@ function clientIp(request: Request) {
 }
 
 /**
- * Public (signed-out) account recovery: password reset by SMS code for
- * email/password accounts with a verified phone number. Responses never
+ * Public (signed-out) account recovery: password reset by a code sent by SMS
+ * (accounts with a verified phone number) or by email. Responses never
  * reveal whether an email address has an account.
  */
 export const POST = handle(async (request) => {
@@ -45,14 +58,16 @@ export const POST = handle(async (request) => {
 
   if (b.action === 'failedLogin') {
     if (adminConfigured() && env().otpSecret.length >= 32) {
-      await recordFailedLogin({ db: await adminDb(), accounts: accountAdmin(), secret: env().otpSecret, ...depsOverride }, b.email, device).catch((err) =>
+      const db = await adminDb();
+      const extra = { mail: emailDeps(db), client: clientInfo(request.headers), background: (p: Promise<unknown>) => waitUntil(p) };
+      await recordFailedLogin({ db, accounts: accountAdmin(), secret: env().otpSecret, ...extra, ...depsOverride }, b.email, device).catch((err) =>
         console.warn('[recovery] failed-login record skipped', err instanceof Error ? err.message : err),
       );
     }
     return json({ ok: true });
   }
-  const d = await deps();
-  if (b.action === 'start') return json({ ok: true, ...(await startRecovery(d, b.email, clientIp(request))) });
+  const d = await deps(request);
+  if (b.action === 'start') return json({ ok: true, ...(await startRecovery(d, b.email, clientIp(request), b.channel ?? 'sms')) });
   if (b.action === 'verify') return json({ ok: true, ...(await verifyRecovery(d, b.recoveryId, b.code.trim())) });
   await resetPassword(d, b.recoveryId, b.resetToken, b.password, device);
   return json({ ok: true });

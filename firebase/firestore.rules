@@ -3,11 +3,15 @@ rules_version = '2';
 // Atlas AI Firestore security rules.
 //
 // Access model:
-// - Only users with a VERIFIED email who are approved can read/write any
-//   data: a bootstrap admin, an admin in config/access.adminEmails, an
-//   account whose profile has accessStatus == 'approved' (set only by the
-//   server after an administrator approves it), or an email on the legacy
-//   allowlist config/access.allowedEmails (unless the profile is 'rejected').
+// - Only approved users can read/write any data: a bootstrap admin, an admin
+//   in config/access.adminEmails, an account whose profile has
+//   accessStatus == 'approved' (set only by the server after an
+//   administrator approves it), or an email on the legacy allowlist
+//   config/access.allowedEmails (unless the profile is 'rejected').
+// - Admin and allowlist matches need a VERIFIED email (verified()). An
+//   approved account may use the app with a verified email OR a verified
+//   phone number (member()), so people can verify their email later; the
+//   server keeps sensitive actions for verified emails.
 // - Access requests (accessRequests/{uid}) are written only by the server;
 //   administrators can read them, nobody else.
 // - The server signs in as its own Firebase identity (uid atlas-server with
@@ -63,6 +67,12 @@ service cloud.firestore {
     function verified() {
       return signedIn() && request.auth.token.email_verified == true && phoneOk() && accountActive();
     }
+    // Verified email or verified phone (the phoneVerified claim is set only by the server).
+    function member() {
+      return signedIn()
+        && (request.auth.token.email_verified == true || request.auth.token.get('phoneVerified', false) == true)
+        && phoneOk() && accountActive();
+    }
     function serverOnlyProfileKeys() {
       return ['phoneNumber', 'phoneVerified', 'phoneVerifiedAt', 'accountStatus', 'sessionsValidAfter',
         'suspendedAt', 'suspendedReason', 'deletionScheduledAt', 'purgeAfter', 'lastAuthTime',
@@ -100,7 +110,7 @@ service cloud.firestore {
     function isAllowed() {
       return consentOk() && (
         isAdmin()
-        || (verified() && accessStatus() == 'approved')
+        || (member() && accessStatus() == 'approved')
         || (verified() && accessStatus() != 'rejected'
           && exists(accessPath()) && email() in accessDoc().get('allowedEmails', [])));
     }

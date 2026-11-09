@@ -32,6 +32,8 @@ export const SECURITY_EVENTS = [
   'access_rejected',
   'unauthorized_access',
   'terms_accepted',
+  'email_verified',
+  'device_removed',
 ] as const;
 export type SecurityEventType = (typeof SECURITY_EVENTS)[number];
 
@@ -70,8 +72,30 @@ export function eventId(now = Date.now()) {
 /** Coarse device description from a user agent ("Safari on iPhone"); never the full string. */
 export function deviceLabel(ua: string | null | undefined): string {
   if (!ua) return 'Unknown device';
-  const os = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android' : /Mac OS X|Macintosh/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : /Linux/.test(ua) ? 'Linux' : 'Unknown OS';
-  const browser = /Edg\//.test(ua) ? 'Edge' : /OPR\//.test(ua) ? 'Opera' : /CriOS|Chrome\//.test(ua) ? 'Chrome' : /FxiOS|Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
+  const os = /iPhone/.test(ua)
+    ? 'iPhone'
+    : /iPad/.test(ua)
+      ? 'iPad'
+      : /Android/.test(ua)
+        ? 'Android'
+        : /Mac OS X|Macintosh/.test(ua)
+          ? 'Mac'
+          : /Windows/.test(ua)
+            ? 'Windows'
+            : /Linux/.test(ua)
+              ? 'Linux'
+              : 'Unknown OS';
+  const browser = /Edg\//.test(ua)
+    ? 'Edge'
+    : /OPR\//.test(ua)
+      ? 'Opera'
+      : /CriOS|Chrome\//.test(ua)
+        ? 'Chrome'
+        : /FxiOS|Firefox\//.test(ua)
+          ? 'Firefox'
+          : /Safari\//.test(ua)
+            ? 'Safari'
+            : 'Browser';
   return `${browser} on ${os}`;
 }
 
@@ -79,7 +103,12 @@ export async function recordSecurityEvent(
   db: Firestore,
   uid: string,
   type: SecurityEventType,
-  meta: { provider?: string; device?: string; by?: 'user' | 'admin' | 'system'; detail?: string } = {},
+  meta: {
+    provider?: string;
+    device?: string;
+    by?: 'user' | 'admin' | 'system';
+    detail?: string;
+  } = {},
   now = Date.now(),
 ): Promise<void> {
   await db
@@ -91,12 +120,21 @@ export async function recordSecurityEvent(
       by: meta.by ?? 'user',
       detail: meta.detail?.slice(0, 200) ?? null,
     })
-    .catch((err) => console.warn('[security] event not recorded', type, err instanceof Error ? err.message : err));
+    .catch((err) =>
+      console.warn('[security] event not recorded', type, err instanceof Error ? err.message : err),
+    );
 }
 
 export async function recordAdminAction(
   db: Firestore,
-  entry: { action: AdminAction; adminUid: string; adminEmail: string | null; targetUid: string; targetEmail: string | null; detail?: string },
+  entry: {
+    action: AdminAction;
+    adminUid: string;
+    adminEmail: string | null;
+    targetUid: string;
+    targetEmail: string | null;
+    detail?: string;
+  },
   now = Date.now(),
 ): Promise<void> {
   await db.set(`adminLogs/${eventId(now)}`, {
@@ -111,13 +149,24 @@ export async function recordAdminAction(
  * Logged (best effort, never blocking the 403) so repeated probing is visible;
  * the account is not suspended automatically.
  */
-export async function noteUnauthorizedAccess(uid: string, area: string, userAgent: string | null): Promise<void> {
+export async function noteUnauthorizedAccess(
+  uid: string,
+  area: string,
+  userAgent: string | null,
+): Promise<void> {
   console.warn('[security] unauthorized access attempt', { uid, area });
   try {
     const { adminConfigured, adminDb } = await import('../admin.js');
     if (!adminConfigured()) return;
-    await recordSecurityEvent(await adminDb(), uid, 'unauthorized_access', { device: deviceLabel(userAgent), by: 'system', detail: area });
+    await recordSecurityEvent(await adminDb(), uid, 'unauthorized_access', {
+      device: deviceLabel(userAgent),
+      by: 'system',
+      detail: area,
+    });
   } catch (err) {
-    console.warn('[security] unauthorized access log skipped', err instanceof Error ? err.message : err);
+    console.warn(
+      '[security] unauthorized access log skipped',
+      err instanceof Error ? err.message : err,
+    );
   }
 }

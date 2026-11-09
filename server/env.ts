@@ -56,5 +56,17 @@ export function env() {
     vynfyWebhookSecret: (e.VYNFY_WEBHOOK_SECRET ?? '').trim(),
     /** App-wide cap on verification texts per day (protects the SMS balance). */
     otpDailyCap: Number(e.OTP_DAILY_CAP ?? 200) || 200,
+    /** Transactional email (server-only). Only 'brevo' is implemented. */
+    emailProvider: (e.EMAIL_PROVIDER ?? 'brevo').toLowerCase(),
+    brevoKey: (e.BREVO_API_KEY ?? '').trim(),
+    /** Verified sender address in the provider account. */
+    emailFrom: (e.EMAIL_FROM_ADDRESS ?? '').trim(),
+    emailFromName: (e.EMAIL_FROM_NAME ?? 'Atlas AI').trim() || 'Atlas AI',
+    /** App-wide cap on emails per day (Brevo's free plan allows 300). */
+    emailDailyCap: Number(e.EMAIL_DAILY_CAP ?? 250) || 250,
+    /** app-wide daily limit for notification texts (support updates); verification codes have their own */
+    smsNotifyDailyCap: Number(e.SMS_NOTIFY_DAILY_CAP ?? 50) || 50,
+    /** Public address of the app used for links and the logo in emails (must be reachable from the internet). */
+    publicUrl: (e.PUBLIC_APP_URL ?? (e.APP_URL && !/localhost|127\.0\.0\.1/.test(e.APP_URL) ? e.APP_URL : 'https://chatatlasai.vercel.app')).replace(/\/+$/, ''),
   };
 }

@@ -1,5 +1,14 @@
+import { waitUntil } from '@vercel/functions';
 import { z } from 'zod';
-import { decideAccess, type AccessConfig, type GateProfile } from '../server/access.js';
+import {
+  decideAccess,
+  requireVerifiedEmail,
+  type AccessConfig,
+  type GateProfile,
+} from '../server/access.js';
+import { securityChangeAlert } from '../server/account/alerts.js';
+import { clientInfo } from '../server/account/devices.js';
+import { emailDeps } from '../server/email/index.js';
 import { deviceLabel, recordSecurityEvent } from '../server/account/events.js';
 import { accountAdmin, adminConfigured, adminDb, mergeCustomClaims } from '../server/admin.js';
 import { needsPhone, requireUser, type AuthUser } from '../server/auth.js';
@@ -24,7 +33,11 @@ async function deps(): Promise<OtpDeps> {
   const sms = getSmsProvider();
   const otp = getOtpGateway();
   if (!adminConfigured() || !(sms || otp) || e.otpSecret.length < 32) {
-    throw new HttpError(503, 'otp_unavailable', 'Phone verification is not configured on the server yet.');
+    throw new HttpError(
+      503,
+      'otp_unavailable',
+      'Phone verification is not configured on the server yet.',
+    );
   }
   return {
     db: await adminDb(),
@@ -52,8 +65,20 @@ async function assertMayVerify(user: AuthUser, db: OtpDeps['db']) {
   if (profile?.accountStatus && profile.accountStatus !== 'active') {
     throw new HttpError(403, 'account_suspended', 'This account is not active.');
   }
-  const gate = decideAccess({ ...user, emailVerified: true, phoneVerified: true }, profile, config, env().adminEmails, null, { ignoreConsent: true });
-  if (gate.state === 'rejected') throw new HttpError(403, 'access_rejected', 'Access to Atlas AI was not approved for this account.');
+  const gate = decideAccess(
+    { ...user, emailVerified: true, phoneVerified: true },
+    profile,
+    config,
+    env().adminEmails,
+    null,
+    { ignoreConsent: true },
+  );
+  if (gate.state === 'rejected')
+    throw new HttpError(
+      403,
+      'access_rejected',
+      'Access to Atlas AI was not approved for this account.',
+    );
 }
 
 /**
@@ -72,7 +97,12 @@ export const POST = handle(async (request) => {
   // Vynfy delivery reports (configured in the Vynfy dashboard as .../api/phone?webhook=vynfy)
   if (new URL(request.url).searchParams.get('webhook') === 'vynfy') {
     if (!adminConfigured()) throw new HttpError(503, 'unavailable', 'Not configured.');
-    const r = await handleVynfyWebhook(await adminDb(), env().vynfyWebhookSecret, await readText(request, 20_000), request.headers.get('x-webhook-signature'));
+    const r = await handleVynfyWebhook(
+      await adminDb(),
+      env().vynfyWebhookSecret,
+      await readText(request, 20_000),
+      request.headers.get('x-webhook-signature'),
+    );
     return json(r.body, { status: r.status });
   }
   const user = await requireUser(request);
@@ -80,53 +110,131 @@ export const POST = handle(async (request) => {
   if (!parsed.success) throw new HttpError(400, 'bad_request', 'Invalid request.');
   const b = parsed.data;
   const required = user.provider === 'password';
-  const configured = adminConfigured() && Boolean(getSmsProvider() || getOtpGateway()) && env().otpSecret.length >= 32;
+  const configured =
+    adminConfigured() &&
+    Boolean(getSmsProvider() || getOtpGateway()) &&
+    env().otpSecret.length >= 32;
 
   if (b.action === 'status') {
-    if (!configured) return json({ required, verified: !needsPhone(user), phoneVerified: user.phoneVerified, configured });
+    if (!configured)
+      return json({
+        required,
+        verified: !needsPhone(user),
+        phoneVerified: user.phoneVerified,
+        configured,
+      });
     const d = await deps();
-    return json({ required, verified: !needsPhone(user), phoneVerified: user.phoneVerified, configured, ...(await otpStatus(d, user.uid)) });
+    return json({
+      required,
+      verified: !needsPhone(user),
+      phoneVerified: user.phoneVerified,
+      configured,
+      ...(await otpStatus(d, user.uid)),
+    });
   }
 
   const d = await deps();
   const device = deviceLabel(request.headers.get('user-agent'));
 
   if (b.action === 'send' || b.action === 'resend') {
+    // Adding the first number is part of sign-up; changing a verified one needs a verified email.
+    if (user.phoneVerified) requireVerifiedEmail(user);
     await assertMayVerify(user, d.db);
-    return json({ ok: true, ...(await sendCode(d, user.uid, b.action === 'send' ? b.phone : null)) });
+    return json({
+      ok: true,
+      ...(await sendCode(d, user.uid, b.action === 'send' ? b.phone : null)),
+    });
   }
 
   if (b.action === 'remove') {
+    requireVerifiedEmail(user);
     await assertMayVerify(user, d.db);
     // Password accounts need a verified number to sign in: they can change it, not remove it.
     const account = await accountAdmin().get(user.uid);
     if (!account || account.providers.includes('password')) {
-      throw new HttpError(400, 'phone_required', 'Accounts with a password need a verified phone number. You can change it instead.');
+      throw new HttpError(
+        400,
+        'phone_required',
+        'Accounts with a password need a verified phone number. You can change it instead.',
+      );
     }
     const profile = (await d.db.get<{ phoneNumber?: string | null }>(`users/${user.uid}`))?.data;
     const writes: Write[] = [
-      { op: 'set', path: `users/${user.uid}`, data: { phoneNumber: null, phoneVerified: false, phoneVerifiedAt: null, phoneReminderNextAt: null }, merge: true },
-      { op: 'set', path: `otp/${user.uid}`, data: { verifiedPhoneHash: null, codeHash: null }, merge: true },
+      {
+        op: 'set',
+        path: `users/${user.uid}`,
+        data: {
+          phoneNumber: null,
+          phoneVerified: false,
+          phoneVerifiedAt: null,
+          phoneReminderNextAt: null,
+        },
+        merge: true,
+      },
+      {
+        op: 'set',
+        path: `otp/${user.uid}`,
+        data: { verifiedPhoneHash: null, codeHash: null },
+        merge: true,
+      },
     ];
     if (profile?.phoneNumber) {
-      const owner = await d.db.get<{ uid: string }>(`phoneNumbers/${phoneKey(d.secret, profile.phoneNumber)}`);
+      const owner = await d.db.get<{ uid: string }>(
+        `phoneNumbers/${phoneKey(d.secret, profile.phoneNumber)}`,
+      );
       if (owner?.data.uid === user.uid) writes.push({ op: 'delete', path: owner.path });
     }
     await d.db.commit(writes);
     await mergeCustomClaims(user.uid, { phoneVerified: null });
     await recordSecurityEvent(d.db, user.uid, 'phone_removed', { provider: user.provider, device });
+    waitUntil(
+      securityChangeAlert(
+        emailDeps(d.db),
+        user,
+        'The phone number was removed from your account',
+        clientInfo(request.headers),
+      ),
+    );
     return json({ ok: true });
   }
 
-  const previous = (await d.db.get<{ phoneNumber?: string | null }>(`users/${user.uid}`))?.data.phoneNumber ?? null;
+  const previous =
+    (await d.db.get<{ phoneNumber?: string | null }>(`users/${user.uid}`))?.data.phoneNumber ??
+    null;
   const { phone } = await verifyCode(d, user.uid, b.code.trim());
   await mergeCustomClaims(user.uid, { phoneVerified: true });
-  await d.db.set(`users/${user.uid}`, { phoneNumber: phone, phoneVerified: true, phoneVerifiedAt: SERVER_TIME }, true);
+  await d.db.set(
+    `users/${user.uid}`,
+    { phoneNumber: phone, phoneVerified: true, phoneVerifiedAt: SERVER_TIME },
+    true,
+  );
   // keep a pending access request in step with the verified number
-  const req = await d.db.get<{ phoneNumber?: string | null; status?: string }>(`accessRequests/${user.uid}`);
+  const req = await d.db.get<{ phoneNumber?: string | null; status?: string }>(
+    `accessRequests/${user.uid}`,
+  );
   if (req && (req.data.phoneNumber === phone || user.provider === 'password')) {
-    await d.db.set(req.path, { phoneNumber: phone, phoneNorm: phone, phoneVerified: true, updatedAt: Date.now() }, true);
+    await d.db.set(
+      req.path,
+      { phoneNumber: phone, phoneNorm: phone, phoneVerified: true, updatedAt: Date.now() },
+      true,
+    );
   }
-  await recordSecurityEvent(d.db, user.uid, previous && previous !== phone ? 'phone_changed' : 'phone_verified', { provider: user.provider, device });
+  await recordSecurityEvent(
+    d.db,
+    user.uid,
+    previous && previous !== phone ? 'phone_changed' : 'phone_verified',
+    { provider: user.provider, device },
+  );
+  // A first verification is part of signing up; a change of number is worth an email.
+  if (previous && previous !== phone) {
+    waitUntil(
+      securityChangeAlert(
+        emailDeps(d.db),
+        user,
+        `The phone number on your account was changed to one ending in ${phone.slice(-3)}`,
+        clientInfo(request.headers),
+      ),
+    );
+  }
   return json({ ok: true, verified: true, phoneMasked: maskPhone(phone) });
 });

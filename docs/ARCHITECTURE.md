@@ -205,6 +205,46 @@ All user data is under `users/{uid}`:
 - Enforcement is server-side: the Firestore rules' `verified()` and every API (`requireAllowedUser`) reject password sign-ins without the claim. Only allowlisted accounts can trigger texts.
 - Profiles (`users/{uid}`) hold `uid`, `email`, `displayName`, `photoURL`, `provider`, `emailVerified`, `accountCreatedAt`, `lastLoginAt` and the server-written phone fields and `accountStatus`. Name and photo are filled in, never overwritten. One Firebase account per email prevents duplicate profiles; a sign-in with a different provider for an existing email shows how to sign in instead.
 
+## Transactional email (`server/email`, `server/auth/emailCode.ts`, `server/account/devices.ts`)
+
+- **Provider abstraction** (`server/email/provider.ts`): the app calls an `EmailProvider`. Brevo's HTTP API is the one implemented (`BREVO_API_KEY`, server-only). Temporary failures (network, 429, 5xx) are retried up to 3 times. A second provider only needs `send` and a case in `getEmailProvider`.
+- **One send path** (`server/email/service.ts`): `sendEmail()` never throws, so email trouble never breaks sign-in, reset or verification. It checks, in order:
+  - the person's `users/{uid}.emailPrefs`, for optional categories only
+  - a de-duplication key (`emailDedupe`)
+  - a per-address limit for notifications (6 per hour)
+  - an app-wide daily cap (`emailStats/{day}`, `EMAIL_DAILY_CAP`)
+- **Templates** (`server/email/templates.ts`): table-based HTML plus plain text, with the logo (`/pwa-192.png` on `PUBLIC_APP_URL`) and the Atlas AI name, in deep teal and cyan. Every value is escaped.
+- **Log** (`emailLog`, server-only): type, masked recipient, provider message id and status. It never holds the subject, body, code or full address.
+  - *Accepted* means Brevo took the email.
+  - *Delivered*, *bounced*, *blocked* and *deferred* come only from Brevo's event API, which is polled when an administrator opens Admin > Email.
+- **Email codes** (`emailCodes/{uid}_{purpose}`):
+  - 6 digits from `crypto.randomInt`, stored as an HMAC
+  - valid for 10 minutes, single use, 5 attempts; the newest code replaces older ones
+  - 60 s between sends, at most 5 per hour and 10 per day
+  - `verify_email` marks the Firebase account verified through the admin API. Firebase's link stays as the fallback.
+  - `sensitive` gives a 10-minute step-up (`hasRecentStepUp`). No operation requires it yet.
+- **Password recovery** (`server/auth/recovery.ts`): the same flow sends the code by email (an email/password account with a **verified** address) or by SMS (verified phone). Responses and limits are uniform for both. An SMS reset also emails the owner, and every reset sends a password-changed email.
+- **New-device alerts** (`users/{uid}/devices`, server-only):
+  - Checked once per sign-in session (new `auth_time`), never on token refresh.
+  - The browser sends a random `x-atlas-device` id and its time zone.
+  - Every new sign-in session sends an alert that says whether the device is recognised, except the sign-in right after registering. A new device in a country the account hasn't used before is reported as an unusual sign-in.
+  - Location comes from Vercel's IP headers, and the IP is shown only partly (`102.176.x.x`).
+- **Other notices:**
+  - 5 failed password attempts in an hour (reported by the sign-in page)
+  - password changed
+  - phone number changed or removed
+  - sign-in method added
+  - signed out everywhere
+  - device removed
+  - a welcome email, sent once to new accounts that are approved and verified
+- **Support updates** (`server/support/notifyOut.ts`): after an administrator replies or changes a report's status, the owner gets an email (category `support`). "Resolved" and "we need more information" also send a text to a verified phone (`supportSms` preference), limited to 2 per report and 5 per person per 24 hours and `SMS_NOTIFY_DAILY_CAP` per day for the app. Texts never contain the report's content; they are logged in `smsLog` with purpose `support`.
+- **Only verified addresses get mail**: alerts, support updates and reset codes are never sent to an unverified address (it could belong to someone else after a typo). The verification code is the only exception.
+- **Verifying later**: an email/password account (which always has a verified phone) may choose "Skip for now" on the email step after sign-up. It can use the app, but:
+  - administrator and allowlist entries match only verified addresses (`decideAccess`, and `verified()` in the rules);
+  - changing or removing the phone number, the `sensitive` step-up and email recovery need a verified email on the server (`requireVerifiedEmail`); password changes, adding sign-in methods and data export are locked in the interface;
+  - a reminder (`EmailReminder`) shows at most once per session, then waits 1 day after the sign-up skip, 3 days after the next skips and a week from the third (`users/{uid}.emailReminderNextAt`, `emailReminderSkips`).
+- **Rules**: `member()` (verified email or the server-set `phoneVerified` claim) gives an approved account access; every new collection is server-only through the default deny and the users catch-all.
+
 ## Terms and Privacy acceptance (`server/shared/legal.ts`, `server/account/consent.ts`)
 
 - Current versions: Terms of Use **1.2**, Privacy Policy **1.2** (published 8 November 2026; acceptances of 1.0 and 1.1 stay in the history) (`TERMS_VERSION`, `PRIVACY_VERSION`). The Firestore rules' `consentOk()` repeats them, so **change both places together** when a document changes; everyone is then asked again.

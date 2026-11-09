@@ -16,6 +16,7 @@ import {
   KeyRound,
   Library,
   LogOut,
+  MailCheck,
   MessageSquareText,
   Palette,
   Phone,
@@ -33,7 +34,16 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Button, ConfirmDialog, Input, Label, Select, Spinner, Switch, Textarea } from '@/components/ui';
+import {
+  Button,
+  ConfirmDialog,
+  Input,
+  Label,
+  Select,
+  Spinner,
+  Switch,
+  Textarea,
+} from '@/components/ui';
 import { api } from '@/lib/api';
 import { paths } from '@/lib/db';
 import { db } from '@/lib/firebase';
@@ -53,7 +63,17 @@ import { PhoneManager, SecuritySection } from './AccountSecurity';
 import { ElevenAdminPanel, ElevenVoiceRows } from './ElevenLabsSettings';
 import { maskPhone, PageTitle, providerLabel, Row, Section } from './parts';
 
-type SectionId = 'account' | 'security' | 'appearance' | 'personalization' | 'general' | 'models' | 'memory' | 'usage' | 'access' | 'about';
+type SectionId =
+  | 'account'
+  | 'security'
+  | 'appearance'
+  | 'personalization'
+  | 'general'
+  | 'models'
+  | 'memory'
+  | 'usage'
+  | 'access'
+  | 'about';
 const SECTIONS: { id: SectionId; label: string; admin?: boolean }[] = [
   { id: 'account', label: 'Account' },
   { id: 'security', label: 'Security' },
@@ -68,12 +88,24 @@ const SECTIONS: { id: SectionId; label: string; admin?: boolean }[] = [
 ];
 
 /** A tappable row in the main list: icon, label, value and chevron. */
-function NavRow({ to, icon: Icon, label, value }: { to?: string; icon: LucideIcon; label: string; value?: ReactNode }) {
+function NavRow({
+  to,
+  icon: Icon,
+  label,
+  value,
+}: {
+  to?: string;
+  icon: LucideIcon;
+  label: string;
+  value?: ReactNode;
+}) {
   const inner = (
     <>
       <Icon className="size-5 shrink-0 text-fg/80" strokeWidth={1.75} />
       <span className="min-w-0 flex-1 truncate text-[15px]">{label}</span>
-      {value !== undefined && <span className="max-w-[55%] truncate text-right text-[15px] text-muted">{value}</span>}
+      {value !== undefined && (
+        <span className="max-w-[55%] truncate text-right text-[15px] text-muted">{value}</span>
+      )}
       {to && <ChevronRight className="size-4 shrink-0 text-subtle" />}
     </>
   );
@@ -90,7 +122,9 @@ function Group({ title, children }: { title?: string; children: ReactNode }) {
   return (
     <section className="mb-7">
       {title && <h2 className="mb-1.5 px-4 text-[13px] font-medium text-muted">{title}</h2>}
-      <div className="divide-y divide-border overflow-hidden rounded-2xl bg-elevated">{children}</div>
+      <div className="divide-y divide-border overflow-hidden rounded-2xl bg-elevated">
+        {children}
+      </div>
     </section>
   );
 }
@@ -118,30 +152,46 @@ function AccountSection() {
   const toast = useToast();
   const name = useDraft(profile?.displayName ?? user?.displayName ?? '', async (v) => {
     await updateDoc(paths.user(uid), { displayName: v.trim().slice(0, 80) });
-    if (user) await updateProfile(user, { displayName: v.trim().slice(0, 80) }).catch(() => undefined);
+    if (user)
+      await updateProfile(user, { displayName: v.trim().slice(0, 80) }).catch(() => undefined);
     toast('Name updated.', 'success');
   });
   return (
     <>
-    <Section title="Account">
-      <Row title="Email" description={admin ? 'Administrator' : 'Approved user'}>
-        <span className="break-all text-sm text-muted">{user?.email}</span>
-      </Row>
-      <Row title="Display name" description="Used to greet you.">
-        <div className="flex gap-2">
-          <Input value={name.draft} maxLength={80} onChange={(e) => name.setDraft(e.target.value)} onBlur={name.commit} className="sm:w-60" />
-        </div>
-      </Row>
-      <Row title="Sign-in method">
-        <span className="text-sm text-muted">{user?.providerData.map((p) => providerLabel(p.providerId)).join(', ')}</span>
-      </Row>
-      <Row title="Sign out" description="Signs out on this device. Cached chats remain until the browser storage is cleared.">
-        <Button variant="outline" icon={<LogOut className="size-4" />} onClick={() => void signOut()}>
-          Sign out
-        </Button>
-      </Row>
-    </Section>
-    <PhoneManager />
+      <Section title="Account">
+        <Row title="Email" description={admin ? 'Administrator' : 'Approved user'}>
+          <span className="break-all text-sm text-muted">{user?.email}</span>
+        </Row>
+        <Row title="Display name" description="Used to greet you.">
+          <div className="flex gap-2">
+            <Input
+              value={name.draft}
+              maxLength={80}
+              onChange={(e) => name.setDraft(e.target.value)}
+              onBlur={name.commit}
+              className="sm:w-60"
+            />
+          </div>
+        </Row>
+        <Row title="Sign-in method">
+          <span className="text-sm text-muted">
+            {user?.providerData.map((p) => providerLabel(p.providerId)).join(', ')}
+          </span>
+        </Row>
+        <Row
+          title="Sign out"
+          description="Signs out on this device. Cached chats remain until the browser storage is cleared."
+        >
+          <Button
+            variant="outline"
+            icon={<LogOut className="size-4" />}
+            onClick={() => void signOut()}
+          >
+            Sign out
+          </Button>
+        </Row>
+      </Section>
+      <PhoneManager />
     </>
   );
 }
@@ -217,11 +267,28 @@ function GeneralSection() {
   }, []);
   return (
     <Section title="General">
-      <Row title="App language" description="Atlas AI replies in this language. Leave empty to reply in the language you write in.">
-        <Input className="sm:w-48" placeholder="Automatic" value={lang.draft} maxLength={40} onChange={(e) => lang.setDraft(e.target.value)} onBlur={lang.commit} />
+      <Row
+        title="App language"
+        description="Atlas AI replies in this language. Leave empty to reply in the language you write in."
+      >
+        <Input
+          className="sm:w-48"
+          placeholder="Automatic"
+          value={lang.draft}
+          maxLength={40}
+          onChange={(e) => lang.setDraft(e.target.value)}
+          onBlur={lang.commit}
+        />
       </Row>
-      <Row title="Send with Enter" description="On a keyboard, Enter sends and Shift+Enter adds a line. On touch screens, use the send button.">
-        <Switch label="Send with Enter" checked={settings.sendOnEnter} onChange={(v) => update({ sendOnEnter: v })} />
+      <Row
+        title="Send with Enter"
+        description="On a keyboard, Enter sends and Shift+Enter adds a line. On touch screens, use the send button."
+      >
+        <Switch
+          label="Send with Enter"
+          checked={settings.sendOnEnter}
+          onChange={(v) => update({ sendOnEnter: v })}
+        />
       </Row>
       {ttsSupported() && voices.length > 0 && (
         <Row title="Read-aloud voice">
@@ -229,7 +296,10 @@ function GeneralSection() {
             className="sm:w-60"
             value={settings.voiceName ?? ''}
             onChange={(v) => update({ voiceName: v || null })}
-            options={[{ value: '', label: 'System default' }, ...voices.map((v) => ({ value: v.name, label: `${v.name} (${v.lang})` }))]}
+            options={[
+              { value: '', label: 'System default' },
+              ...voices.map((v) => ({ value: v.name, label: `${v.name} (${v.lang})` })),
+            ]}
           />
         </Row>
       )}
@@ -241,7 +311,12 @@ function GeneralSection() {
             : `A more natural voice for Read aloud and Voice Mode, from Cloudflare (free, with a small daily share${voiceInfo?.naturalVoice ? `: about ${voiceInfo.naturalVoice.charactersLeft.toLocaleString()} characters left for you today` : ''}). When it is used up, your device voice takes over.`
         }
       >
-        <Switch label="Natural voice" checked={settings.naturalVoice} disabled={voiceInfo?.configured === false} onChange={(v) => update({ naturalVoice: v })} />
+        <Switch
+          label="Natural voice"
+          checked={settings.naturalVoice}
+          disabled={voiceInfo?.configured === false}
+          onChange={(v) => update({ naturalVoice: v })}
+        />
       </Row>
       <ElevenVoiceRows info={voiceInfo?.elevenlabs} />
       {admin && <ElevenAdminPanel />}
@@ -260,21 +335,44 @@ function PersonalizationSection() {
     await update({ customInstructions: v.slice(0, 8000) });
     toast('Saved.', 'success');
   });
-  const set = <K extends keyof UserSettings>(k: K) => (v: UserSettings[K]) => void update({ [k]: v } as Partial<UserSettings>);
+  const set =
+    <K extends keyof UserSettings>(k: K) =>
+    (v: UserSettings[K]) =>
+      void update({ [k]: v } as Partial<UserSettings>);
 
   return (
     <Section title="Personalization">
       <div className="py-4">
-        <Label htmlFor="about" hint="Role, background, location, anything that helps answers fit you.">
+        <Label
+          htmlFor="about"
+          hint="Role, background, location, anything that helps answers fit you."
+        >
           About you
         </Label>
-        <Textarea id="about" rows={4} maxLength={4000} value={about.draft} onChange={(e) => about.setDraft(e.target.value)} onBlur={about.commit} />
+        <Textarea
+          id="about"
+          rows={4}
+          maxLength={4000}
+          value={about.draft}
+          onChange={(e) => about.setDraft(e.target.value)}
+          onBlur={about.commit}
+        />
       </div>
       <div className="py-4">
-        <Label htmlFor="custom" hint="How Atlas AI should respond: format, things to always or never do.">
+        <Label
+          htmlFor="custom"
+          hint="How Atlas AI should respond: format, things to always or never do."
+        >
           Custom instructions
         </Label>
-        <Textarea id="custom" rows={5} maxLength={8000} value={custom.draft} onChange={(e) => custom.setDraft(e.target.value)} onBlur={custom.commit} />
+        <Textarea
+          id="custom"
+          rows={5}
+          maxLength={8000}
+          value={custom.draft}
+          onChange={(e) => custom.setDraft(e.target.value)}
+          onBlur={custom.commit}
+        />
       </div>
       <Row title="Response length">
         <Select
@@ -322,12 +420,18 @@ function ModelsSection() {
   const def = settings.defaultModel ?? catalog?.defaultModel ?? '';
   return (
     <Section title="Models and search">
-      <Row title="Default model" description="Used for new chats. You can switch per chat from the header.">
+      <Row
+        title="Default model"
+        description="Used for new chats. You can switch per chat from the header."
+      >
         <div className="-mx-2.5">
           <ModelPicker value={def} onChange={(id) => update({ defaultModel: id })} align="end" />
         </div>
       </Row>
-      <Row title="Fallbacks" description="If the chosen model is busy or unavailable, Atlas AI tries these in order and tells you which one answered.">
+      <Row
+        title="Fallbacks"
+        description="If the chosen model is busy or unavailable, Atlas AI tries these in order and tells you which one answered."
+      >
         <ol className="space-y-0.5 text-sm text-muted">
           {(catalog?.fallbackModels ?? []).map((id, i) => (
             <li key={id}>
@@ -336,21 +440,39 @@ function ModelsSection() {
           ))}
         </ol>
       </Row>
-      <Row title="Provider" description="Model access is proxied through the server. The API key is never sent to this device.">
+      <Row
+        title="Provider"
+        description="Model access is proxied through the server. The API key is never sent to this device."
+      >
         <span className="text-sm text-muted">
           {caps?.providers.length
             ? [...caps.providers]
-                .sort((a, b) => Number(a !== (catalog?.preferredProvider ?? 'gemini')) - Number(b !== (catalog?.preferredProvider ?? 'gemini')))
-                .map((p, i) => `${p === 'openrouter' ? 'OpenRouter' : p === 'gemini' ? 'Google Gemini' : p}${caps.providers.length > 1 ? (i === 0 ? ' (primary)' : ' (secondary)') : ''}`)
+                .sort(
+                  (a, b) =>
+                    Number(a !== (catalog?.preferredProvider ?? 'gemini')) -
+                    Number(b !== (catalog?.preferredProvider ?? 'gemini')),
+                )
+                .map(
+                  (p, i) =>
+                    `${p === 'openrouter' ? 'OpenRouter' : p === 'gemini' ? 'Google Gemini' : p}${caps.providers.length > 1 ? (i === 0 ? ' (primary)' : ' (secondary)') : ''}`,
+                )
                 .join(', ')
             : 'Not configured'}
-          {catalog && (catalog.paidAvailable ? ' · OpenRouter paid models enabled' : ' · OpenRouter free models only (no credits)')}
+          {catalog &&
+            (catalog.paidAvailable
+              ? ' · OpenRouter paid models enabled'
+              : ' · OpenRouter free models only (no credits)')}
         </span>
       </Row>
-      <Row title="Web search" description="SerpAPI handles general and news searches; Tavily handles research and page reading. Keys stay on the server.">
+      <Row
+        title="Web search"
+        description="SerpAPI handles general and news searches; Tavily handles research and page reading. Keys stay on the server."
+      >
         <span className="text-sm text-muted">
           {caps?.searchProviders?.length
-            ? caps.searchProviders.map((p) => `${p.label}: ${p.configured ? 'on' : 'not configured'}`).join(' · ')
+            ? caps.searchProviders
+                .map((p) => `${p.label}: ${p.configured ? 'on' : 'not configured'}`)
+                .join(' · ')
             : caps?.searchAvailable
               ? `Enabled (${caps.searchProvider})`
               : 'Not configured'}
@@ -363,7 +485,9 @@ function ModelsSection() {
         <Select
           className="sm:w-56"
           value={settings.searchMode ?? (settings.autoSearch === false ? 'manual' : 'auto')}
-          onChange={(v) => update({ searchMode: v as UserSettings['searchMode'], autoSearch: v !== 'manual' })}
+          onChange={(v) =>
+            update({ searchMode: v as UserSettings['searchMode'], autoSearch: v !== 'manual' })
+          }
           options={[
             { value: 'auto', label: 'Automatic (recommended)' },
             { value: 'manual', label: 'Only when I ask' },
@@ -371,7 +495,10 @@ function ModelsSection() {
           ]}
         />
       </Row>
-      <Row title="Search toggle on by default" description="Turns the Search toggle on for new chats. Each informational message then uses a search unless cached (greetings and similar never do).">
+      <Row
+        title="Search toggle on by default"
+        description="Turns the Search toggle on for new chats. Each informational message then uses a search unless cached (greetings and similar never do)."
+      >
         <Switch
           label="Search by default"
           checked={settings.webSearchDefault}
@@ -411,8 +538,13 @@ function AdminAiRows() {
   };
   return (
     <>
-      <h3 className="bg-surface-2/50 py-2 text-xs font-medium uppercase tracking-wide text-muted">Admin: AI routing (all users)</h3>
-      <Row title="Preferred provider" description="Tried first whenever Atlas AI picks a model automatically. A model a user chose is always kept when it can answer.">
+      <h3 className="bg-surface-2/50 py-2 text-xs font-medium uppercase tracking-wide text-muted">
+        Admin: AI routing (all users)
+      </h3>
+      <Row
+        title="Preferred provider"
+        description="Tried first whenever Atlas AI picks a model automatically. A model a user chose is always kept when it can answer."
+      >
         <Select
           className="sm:w-48"
           value={current.preferredProvider}
@@ -422,8 +554,11 @@ function AdminAiRows() {
             // Choosing Cloudflare also makes a Cloudflare model the app default; otherwise users
             // would keep the old default (a chosen model is always kept when it can answer).
             if (provider === 'cloudflare') {
-              const currentDefault = catalog?.models.find((m) => m.id === (current.defaultModel ?? catalog?.defaultModel));
-              const cf = catalog?.models.filter((m) => m.provider === 'cloudflare' && m.available) ?? [];
+              const currentDefault = catalog?.models.find(
+                (m) => m.id === (current.defaultModel ?? catalog?.defaultModel),
+              );
+              const cf =
+                catalog?.models.filter((m) => m.provider === 'cloudflare' && m.available) ?? [];
               const pick = cf.find((m) => m.id === '@cf/google/gemma-4-26b-a4b-it') ?? cf[0];
               if (currentDefault?.provider !== 'cloudflare' && pick) patch.defaultModel = pick.id;
             }
@@ -438,16 +573,28 @@ function AdminAiRows() {
       </Row>
       {current.preferredProvider === 'cloudflare' && (
         <p className="pb-3 text-xs text-muted">
-          Cloudflare uses the free daily allowance (10,000 Neurons, shared with image creation; Atlas AI stops at 9,000). When it is used up, replies
-          continue on Gemini or OpenRouter until 00:00 UTC (unless automatic fallback is off or limited to the same provider). Titles, summaries and memory still use Gemini.
+          Cloudflare uses the free daily allowance (10,000 Neurons, shared with image creation;
+          Atlas AI stops at 9,000). When it is used up, replies continue on Gemini or OpenRouter
+          until 00:00 UTC (unless automatic fallback is off or limited to the same provider).
+          Titles, summaries and memory still use Gemini.
         </p>
       )}
-      <Row title="App default model" description="For users who have not chosen a default model themselves.">
+      <Row
+        title="App default model"
+        description="For users who have not chosen a default model themselves."
+      >
         <div className="-mx-2.5">
-          <ModelPicker value={current.defaultModel ?? catalog?.defaultModel ?? ''} onChange={(id) => void save({ defaultModel: id })} align="end" />
+          <ModelPicker
+            value={current.defaultModel ?? catalog?.defaultModel ?? ''}
+            onChange={(id) => void save({ defaultModel: id })}
+            align="end"
+          />
         </div>
       </Row>
-      <Row title="Automatic fallback" description="When a model fails with a recoverable error (busy, quota, outage). Paid models are never used without the user's approval.">
+      <Row
+        title="Automatic fallback"
+        description="When a model fails with a recoverable error (busy, quota, outage). Paid models are never used without the user's approval."
+      >
         <Select
           className="sm:w-56"
           value={current.fallback}
@@ -467,8 +614,15 @@ function MemorySection() {
   const { settings, update } = useSettings();
   return (
     <Section title="Memory">
-      <Row title="Use memory" description="Save lasting details from chats and recall them later. Turning this off stops both saving and recall.">
-        <Switch label="Use memory" checked={settings.memoryEnabled} onChange={(v) => update({ memoryEnabled: v })} />
+      <Row
+        title="Use memory"
+        description="Save lasting details from chats and recall them later. Turning this off stops both saving and recall."
+      >
+        <Switch
+          label="Use memory"
+          checked={settings.memoryEnabled}
+          onChange={(v) => update({ memoryEnabled: v })}
+        />
       </Row>
       <Row title="Manage memories" description="Review, edit or delete what Atlas AI remembers.">
         <Link to="/memory" className="text-sm font-medium text-accent hover:underline">
@@ -482,21 +636,31 @@ function MemorySection() {
 function UsageSection() {
   const uid = useUid();
   const { getModel } = useCatalog();
-  const { data, loading } = useQuery<UsageDay>(query(paths.usage(uid), orderBy('date', 'desc'), limit(30)), [uid]);
+  const { data, loading } = useQuery<UsageDay>(
+    query(paths.usage(uid), orderBy('date', 'desc'), limit(30)),
+    [uid],
+  );
   const totals = useMemo(() => {
-    const t = { requests: 0, prompt: 0, completion: 0, cost: 0, models: {} as Record<string, number> };
+    const t = {
+      requests: 0,
+      prompt: 0,
+      completion: 0,
+      cost: 0,
+      models: {} as Record<string, number>,
+    };
     for (const d of data) {
       t.requests += d.requests ?? 0;
       t.prompt += d.promptTokens ?? 0;
       t.completion += d.completionTokens ?? 0;
       t.cost += d.cost ?? 0;
-      for (const [k, v] of Object.entries(d.models ?? {})) t.models[k] = (t.models[k] ?? 0) + (v.requests ?? 0);
+      for (const [k, v] of Object.entries(d.models ?? {}))
+        t.models[k] = (t.models[k] ?? 0) + (v.requests ?? 0);
     }
     return t;
   }, [data]);
   const max = Math.max(1, ...data.map((d) => d.requests ?? 0));
   const modelLabel = (key: string) => {
-    const m = getModel(key.replace(/_/g, '/')) ;
+    const m = getModel(key.replace(/_/g, '/'));
     return m?.name ?? key;
   };
 
@@ -526,8 +690,15 @@ function UsageSection() {
             {data.length ? (
               <div className="flex h-24 items-end gap-1" role="img" aria-label="Requests per day">
                 {[...data].reverse().map((d) => (
-                  <div key={d.id} className="flex-1" title={`${d.date}: ${d.requests ?? 0} requests`}>
-                    <div className="w-full rounded-t-sm bg-accent" style={{ height: `${Math.max(4, ((d.requests ?? 0) / max) * 96)}px` }} />
+                  <div
+                    key={d.id}
+                    className="flex-1"
+                    title={`${d.date}: ${d.requests ?? 0} requests`}
+                  >
+                    <div
+                      className="w-full rounded-t-sm bg-accent"
+                      style={{ height: `${Math.max(4, ((d.requests ?? 0) / max) * 96)}px` }}
+                    />
                   </div>
                 ))}
               </div>
@@ -552,7 +723,9 @@ function UsageSection() {
           )}
           <UsageBreakdown data={data} />
           <p className="py-4 text-xs text-subtle">
-            Token counts and cost are as reported by the provider. Free models (including Gemini on the free tier) report zero cost. Counts cover the last 30 active days and are recorded on the server; they never include message text.
+            Token counts and cost are as reported by the provider. Free models (including Gemini on
+            the free tier) report zero cost. Counts cover the last 30 active days and are recorded
+            on the server; they never include message text.
           </p>
         </>
       )}
@@ -560,7 +733,12 @@ function UsageSection() {
   );
 }
 
-const PROVIDER_LABEL: Record<string, string> = { gemini: 'Google Gemini', openrouter: 'OpenRouter', serpapi: 'SerpAPI', tavily: 'Tavily' };
+const PROVIDER_LABEL: Record<string, string> = {
+  gemini: 'Google Gemini',
+  openrouter: 'OpenRouter',
+  serpapi: 'SerpAPI',
+  tavily: 'Tavily',
+};
 const REASON_LABEL: Record<string, string> = {
   smalltalk: 'Greeting or small talk',
   math: 'Arithmetic',
@@ -579,7 +757,10 @@ const REASON_LABEL: Record<string, string> = {
   research_request: 'Asked for in-depth research',
 };
 
-function sumInto(target: Record<string, Record<string, number>>, src: Record<string, Record<string, number | undefined>> | undefined) {
+function sumInto(
+  target: Record<string, Record<string, number>>,
+  src: Record<string, Record<string, number | undefined>> | undefined,
+) {
   for (const [k, v] of Object.entries(src ?? {})) {
     const t = (target[k] ??= {});
     for (const [f, n] of Object.entries(v ?? {})) if (typeof n === 'number') t[f] = (t[f] ?? 0) + n;
@@ -597,9 +778,12 @@ function UsageBreakdown({ data }: { data: UsageDay[] }) {
     for (const d of data) {
       sumInto(providers, d.providers);
       sumInto(search, d.search);
-      for (const [k, n] of Object.entries(d.routing ?? {})) routing[k] = (routing[k] ?? 0) + (n ?? 0);
-      for (const [k, n] of Object.entries(d.searchDecisions ?? {})) if (typeof n === 'number') decisions[k] = (decisions[k] ?? 0) + n;
-      for (const [k, n] of Object.entries(d.searchDecisions?.reasons ?? {})) reasons[k] = (reasons[k] ?? 0) + n;
+      for (const [k, n] of Object.entries(d.routing ?? {}))
+        routing[k] = (routing[k] ?? 0) + (n ?? 0);
+      for (const [k, n] of Object.entries(d.searchDecisions ?? {}))
+        if (typeof n === 'number') decisions[k] = (decisions[k] ?? 0) + n;
+      for (const [k, n] of Object.entries(d.searchDecisions?.reasons ?? {}))
+        reasons[k] = (reasons[k] ?? 0) + n;
     }
     return { providers, search, routing, decisions, reasons };
   }, [data]);
@@ -645,12 +829,19 @@ function UsageBreakdown({ data }: { data: UsageDay[] }) {
           {table(
             Object.entries(t.providers)
               .sort((a, b) => Number(b[0] === 'gemini') - Number(a[0] === 'gemini'))
-              .map(([id, p]) => [PROVIDER_LABEL[id] ?? id, p.requests ?? 0, formatTokens(p.tokens ?? 0), p.failed ?? 0, p.rateLimited ?? 0]),
+              .map(([id, p]) => [
+                PROVIDER_LABEL[id] ?? id,
+                p.requests ?? 0,
+                formatTokens(p.tokens ?? 0),
+                p.failed ?? 0,
+                p.rateLimited ?? 0,
+              ]),
             ['Provider', 'Replies', 'Tokens', 'Failed', 'Rate limited'],
           )}
           <p className="mt-2 text-xs text-subtle">
-            {t.routing.fallbacks ?? 0} fallbacks, {t.routing.providerSwitches ?? 0} switched provider, {t.routing.switched ?? 0} replies routed to a
-            different model than the one selected.
+            {t.routing.fallbacks ?? 0} fallbacks, {t.routing.providerSwitches ?? 0} switched
+            provider, {t.routing.switched ?? 0} replies routed to a different model than the one
+            selected.
           </p>
         </div>
       )}
@@ -672,7 +863,13 @@ function UsageBreakdown({ data }: { data: UsageDay[] }) {
           </div>
           {Object.keys(t.search).length > 0 &&
             table(
-              Object.entries(t.search).map(([id, s]) => [PROVIDER_LABEL[id] ?? id, s.requests ?? 0, s.cached ?? 0, s.failed ?? 0, s.credits ?? 0]),
+              Object.entries(t.search).map(([id, s]) => [
+                PROVIDER_LABEL[id] ?? id,
+                s.requests ?? 0,
+                s.cached ?? 0,
+                s.failed ?? 0,
+                s.credits ?? 0,
+              ]),
               ['Provider', 'Searches', 'From cache', 'Failed', 'Credits'],
             )}
           {Object.keys(t.reasons).length > 0 && (
@@ -691,7 +888,8 @@ function UsageBreakdown({ data }: { data: UsageDay[] }) {
             </>
           )}
           <p className="mt-2 text-xs text-subtle">
-            Deep Research runs: {t.decisions.research ?? 0}. Credits are counted by Atlas AI; the provider dashboards show the account totals.
+            Deep Research runs: {t.decisions.research ?? 0}. Credits are counted by Atlas AI; the
+            provider dashboards show the account totals.
           </p>
         </div>
       )}
@@ -738,7 +936,10 @@ function EmailList({
       <div className="mt-0.5 text-xs text-muted">{description}</div>
       <ul className="mt-3 space-y-1">
         {locked.map((e) => (
-          <li key={e} className="flex items-center justify-between rounded-lg bg-surface px-3 py-2 text-sm">
+          <li
+            key={e}
+            className="flex items-center justify-between rounded-lg bg-surface px-3 py-2 text-sm"
+          >
             <span className="truncate">{e}</span>
             <span className="text-xs text-subtle">Owner</span>
           </li>
@@ -746,10 +947,17 @@ function EmailList({
         {emails
           .filter((e) => !locked.includes(e))
           .map((e) => (
-            <li key={e} className="flex items-center justify-between rounded-lg bg-surface px-3 py-2 text-sm">
+            <li
+              key={e}
+              className="flex items-center justify-between rounded-lg bg-surface px-3 py-2 text-sm"
+            >
               <span className="truncate">{e}</span>
               <button
-                onClick={() => onChange(emails.filter((x) => x !== e)).catch(() => toast('Could not update the list.', 'error'))}
+                onClick={() =>
+                  onChange(emails.filter((x) => x !== e)).catch(() =>
+                    toast('Could not update the list.', 'error'),
+                  )
+                }
                 className="rounded p-0.5 text-subtle hover:text-danger"
                 aria-label={`Remove ${e}`}
               >
@@ -765,7 +973,12 @@ function EmailList({
           void add();
         }}
       >
-        <Input type="email" value={value} onChange={(e) => setValue(e.target.value)} placeholder="name@example.com" />
+        <Input
+          type="email"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="name@example.com"
+        />
         <Button type="submit" variant="outline" loading={busy} icon={<Plus className="size-4" />}>
           Add
         </Button>
@@ -777,18 +990,34 @@ function EmailList({
 function AccessSection() {
   const { admin } = useAuth();
   const toast = useToast();
-  const access = useDocument<{ allowedEmails?: string[]; adminEmails?: string[] }>(doc(db, 'config', 'access'), []);
+  const access = useDocument<{ allowedEmails?: string[]; adminEmails?: string[] }>(
+    doc(db, 'config', 'access'),
+    [],
+  );
   const pub = useDocument<{ registrationOpen?: boolean }>(doc(db, 'config', 'public'), []);
   const [confirmOpen, setConfirmOpen] = useState(false);
-  if (!admin) return <Section title="Access"><p className="py-4 text-sm text-muted">Only administrators can manage access.</p></Section>;
+  if (!admin)
+    return (
+      <Section title="Access">
+        <p className="py-4 text-sm text-muted">Only administrators can manage access.</p>
+      </Section>
+    );
 
   const allowed = access.data?.allowedEmails ?? [];
   const admins = access.data?.adminEmails ?? [];
   const write = (patch: { allowedEmails?: string[]; adminEmails?: string[] }) =>
-    setDoc(doc(db, 'config', 'access'), { allowedEmails: allowed, adminEmails: admins, ...patch, updatedAt: serverTimestamp() });
+    setDoc(doc(db, 'config', 'access'), {
+      allowedEmails: allowed,
+      adminEmails: admins,
+      ...patch,
+      updatedAt: serverTimestamp(),
+    });
   const setRegistration = async (open: boolean) => {
     try {
-      await setDoc(doc(db, 'config', 'public'), { registrationOpen: open, updatedAt: serverTimestamp() });
+      await setDoc(doc(db, 'config', 'public'), {
+        registrationOpen: open,
+        updatedAt: serverTimestamp(),
+      });
     } catch {
       toast('Could not update registration.', 'error');
     }
@@ -797,7 +1026,8 @@ function AccessSection() {
   return (
     <Section title="Access">
       <p className="py-4 text-sm text-muted">
-        Atlas AI is private. Only verified emails on these lists can sign in and use it. Changes apply within a few minutes.
+        Atlas AI is private. Only verified emails on these lists can sign in and use it. Changes
+        apply within a few minutes.
       </p>
       <Row
         title="Show the registration page"
@@ -827,7 +1057,9 @@ function AccessSection() {
             description="Can manage these lists. Administrators cannot read other users' chats."
             emails={[...BOOTSTRAP_ADMINS, ...admins.filter((e) => !BOOTSTRAP_ADMINS.includes(e))]}
             locked={BOOTSTRAP_ADMINS}
-            onChange={(next) => write({ adminEmails: next.filter((e) => !BOOTSTRAP_ADMINS.includes(e)) })}
+            onChange={(next) =>
+              write({ adminEmails: next.filter((e) => !BOOTSTRAP_ADMINS.includes(e)) })
+            }
           />
         </>
       )}
@@ -863,7 +1095,9 @@ function AboutSection() {
       </Group>
       {!installed && (
         <p className="-mt-4 mb-7 px-4 text-xs text-muted">
-          {isIOS() ? 'To install: in Safari, tap Share, then “Add to Home Screen”.' : 'To install: use your browser’s Install option.'}
+          {isIOS()
+            ? 'To install: in Safari, tap Share, then “Add to Home Screen”.'
+            : 'To install: use your browser’s Install option.'}
         </p>
       )}
     </>
@@ -878,16 +1112,24 @@ function SettingsHome() {
   const photo = profile?.photoURL ?? user?.photoURL;
   const accent = ACCENTS.find((a) => a.id === settings.accent) ?? ACCENTS[0];
   const model = settings.defaultModel ?? catalog?.defaultModel ?? '';
-  const autoSearch = (settings.searchMode ?? (settings.autoSearch === false ? 'manual' : 'auto')) !== 'manual';
+  const autoSearch =
+    (settings.searchMode ?? (settings.autoSearch === false ? 'manual' : 'auto')) !== 'manual';
   const [confirmOut, setConfirmOut] = useState(false);
 
   return (
     <div className="mx-auto max-w-xl">
       <div className="mb-8 flex flex-col items-center text-center">
         {photo ? (
-          <img src={photo} alt="" referrerPolicy="no-referrer" className="size-20 rounded-full object-cover" />
+          <img
+            src={photo}
+            alt=""
+            referrerPolicy="no-referrer"
+            className="size-20 rounded-full object-cover"
+          />
         ) : (
-          <div className="flex size-20 items-center justify-center rounded-full bg-accent text-3xl font-semibold text-white">{name.slice(0, 1).toUpperCase()}</div>
+          <div className="flex size-20 items-center justify-center rounded-full bg-accent text-3xl font-semibold text-white">
+            {name.slice(0, 1).toUpperCase()}
+          </div>
         )}
         <div className="mt-3 text-xl font-semibold tracking-tight">{name}</div>
         <div className="mt-0.5 text-sm text-muted">{user?.email}</div>
@@ -895,7 +1137,12 @@ function SettingsHome() {
 
       <Group title="Customize">
         <NavRow to="/settings/personalization" icon={Sparkles} label="Personalization" />
-        <NavRow to="/settings/memory" icon={Brain} label="Memory" value={settings.memoryEnabled ? 'On' : 'Off'} />
+        <NavRow
+          to="/settings/memory"
+          icon={Brain}
+          label="Memory"
+          value={settings.memoryEnabled ? 'On' : 'Off'}
+        />
         <NavRow to="/knowledge" icon={Library} label="Knowledge base" />
       </Group>
 
@@ -905,18 +1152,43 @@ function SettingsHome() {
           to="/settings/account"
           icon={Phone}
           label="Phone number"
-          value={profile?.phoneNumber ? maskPhone(profile.phoneNumber) : provider === 'password' ? 'Not added' : 'Not required'}
+          value={
+            profile?.phoneNumber
+              ? maskPhone(profile.phoneNumber)
+              : provider === 'password'
+                ? 'Not added'
+                : 'Not required'
+          }
         />
-        <NavRow to="/settings/account" icon={KeyRound} label="Sign-in method" value={provider ? providerLabel(provider) : ''} />
+        <NavRow
+          to="/settings/account"
+          icon={KeyRound}
+          label="Sign-in method"
+          value={provider ? providerLabel(provider) : ''}
+        />
         <NavRow to="/settings/security" icon={ShieldCheck} label="Security and activity" />
         <NavRow to="/settings/usage" icon={BarChart3} label="Usage" />
         {admin && <NavRow to="/admin/users" icon={Users} label="Users" value="Admin" />}
-        {admin && <NavRow to="/admin/requests" icon={UserPlus} label="Access requests" value="Admin" />}
-        {admin && <NavRow to="/settings/access" icon={ShieldCheck} label="Access and registration" value="Admin" />}
+        {admin && (
+          <NavRow to="/admin/requests" icon={UserPlus} label="Access requests" value="Admin" />
+        )}
+        {admin && (
+          <NavRow
+            to="/settings/access"
+            icon={ShieldCheck}
+            label="Access and registration"
+            value="Admin"
+          />
+        )}
       </Group>
 
       <Group title="Theme">
-        <NavRow to="/settings/appearance" icon={SunMoon} label="Appearance" value={settings.theme[0].toUpperCase() + settings.theme.slice(1)} />
+        <NavRow
+          to="/settings/appearance"
+          icon={SunMoon}
+          label="Appearance"
+          value={settings.theme[0].toUpperCase() + settings.theme.slice(1)}
+        />
         <NavRow
           to="/settings/appearance"
           icon={Palette}
@@ -935,7 +1207,12 @@ function SettingsHome() {
       </Group>
 
       <Group title="Intelligence">
-        <NavRow to="/settings/models" icon={Cpu} label="Default model" value={model ? (getModel(model)?.name ?? modelShortName(model)) : 'Automatic'} />
+        <NavRow
+          to="/settings/models"
+          icon={Cpu}
+          label="Default model"
+          value={model ? (getModel(model)?.name ?? modelShortName(model)) : 'Automatic'}
+        />
       </Group>
 
       <Group title="Automatically use">
@@ -943,7 +1220,9 @@ function SettingsHome() {
           <Globe className="size-5 shrink-0 text-fg/80" strokeWidth={1.75} />
           <div className="min-w-0 flex-1">
             <div className="text-[15px]">Web search</div>
-            {!caps?.searchAvailable && <div className="text-xs text-muted">Not configured on the server</div>}
+            {!caps?.searchAvailable && (
+              <div className="text-xs text-muted">Not configured on the server</div>
+            )}
           </div>
           <Switch
             label="Search the web automatically"
@@ -958,14 +1237,36 @@ function SettingsHome() {
         <NavRow to="/help" icon={CircleHelp} label="Help Centre" />
         <NavRow to="/support/new" icon={LifeBuoy} label="Report an issue" />
         <NavRow to="/support" icon={Inbox} label="My reports" />
-        {admin && <NavRow to="/admin/support" icon={LifeBuoy} label="Support & issue reports" value="Admin" />}
-        {admin && <NavRow to="/admin/sms" icon={MessageSquareText} label="SMS & verification" value="Admin" />}
+        {admin && (
+          <NavRow
+            to="/admin/support"
+            icon={LifeBuoy}
+            label="Support & issue reports"
+            value="Admin"
+          />
+        )}
+        {admin && (
+          <NavRow
+            to="/admin/sms"
+            icon={MessageSquareText}
+            label="SMS & verification"
+            value="Admin"
+          />
+        )}
+        {admin && (
+          <NavRow to="/admin/email" icon={MailCheck} label="Email delivery" value="Admin" />
+        )}
         {admin && <NavRow to="/admin/news" icon={Newspaper} label="News sources" value="Admin" />}
         <KnowledgeCenterLink admin={admin} />
       </Group>
 
       <Group>
-        <NavRow to="/settings/about" icon={Info} label="About" value={`Version ${__APP_VERSION__}`} />
+        <NavRow
+          to="/settings/about"
+          icon={Info}
+          label="About"
+          value={`Version ${__APP_VERSION__}`}
+        />
         <button
           onClick={() => setConfirmOut(true)}
           className="flex min-h-12 w-full items-center gap-3 px-4 py-2.5 text-left text-danger transition-colors hover:bg-surface-2"
@@ -1001,7 +1302,9 @@ export default function SettingsPage() {
   if (!current) {
     return (
       <Page title="Settings" className="bg-surface-2/60">
-        <h1 className="mb-6 hidden text-center text-xl font-semibold tracking-tight lg:block">Settings</h1>
+        <h1 className="mb-6 hidden text-center text-xl font-semibold tracking-tight lg:block">
+          Settings
+        </h1>
         <SettingsHome />
       </Page>
     );
@@ -1051,5 +1354,12 @@ function KnowledgeCenterLink({ admin }: { admin: boolean }) {
     };
   }, [admin]);
   if (!allowed) return null;
-  return <NavRow to="/admin/knowledge-center" icon={ShieldCheck} label="Knowledge management" value={admin ? 'Admin' : 'Reviewer'} />;
+  return (
+    <NavRow
+      to="/admin/knowledge-center"
+      icon={ShieldCheck}
+      label="Knowledge management"
+      value={admin ? 'Admin' : 'Reviewer'}
+    />
+  );
 }

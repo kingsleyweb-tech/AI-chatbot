@@ -1,9 +1,26 @@
 import { cleanupPurgedRecords } from '../server/account/retention.js';
 import { centralMaintenance } from '../server/central/manage.js';
 import { z } from 'zod';
-import { CONSENT_METHOD_LABEL, consentCurrent, type ConsentMethod, type ConsentRecord } from '../server/shared/legal.js';
-import { approvalConfig, clearAccessCache, requireAllowedUser, type AccessConfig, type ApprovalConfig } from '../server/access.js';
-import { deleteRequest, listRequests, requestStats, setAccess, type AccessRequest } from '../server/account/requests.js';
+import {
+  CONSENT_METHOD_LABEL,
+  consentCurrent,
+  type ConsentMethod,
+  type ConsentRecord,
+} from '../server/shared/legal.js';
+import {
+  approvalConfig,
+  clearAccessCache,
+  requireAllowedUser,
+  type AccessConfig,
+  type ApprovalConfig,
+} from '../server/access.js';
+import {
+  deleteRequest,
+  listRequests,
+  requestStats,
+  setAccess,
+  type AccessRequest,
+} from '../server/account/requests.js';
 import {
   purgeAccount,
   purgeDue,
@@ -14,7 +31,13 @@ import {
   type Actor,
   type ProfileStatus,
 } from '../server/account/lifecycle.js';
-import { accountAdmin, adminConfigured, adminDb, SERVER_UID, type AuthAccount } from '../server/admin.js';
+import {
+  accountAdmin,
+  adminConfigured,
+  adminDb,
+  SERVER_UID,
+  type AuthAccount,
+} from '../server/admin.js';
 import { maskPhone } from '../server/auth/phone.js';
 import { env } from '../server/env.js';
 import type { Firestore } from '../server/firestore.js';
@@ -22,10 +45,16 @@ import { noteUnauthorizedAccess, recordAdminAction } from '../server/account/eve
 import { handle, HttpError, json, readJson } from '../server/http.js';
 import { DEFAULT_FEEDS } from '../server/news/sources.js';
 import { loadFeeds, newsAdminView, saveFeedConfig } from '../server/news/stats.js';
+import { emailOverview } from '../server/email/log.js';
+import { EmailError, getEmailProvider } from '../server/email/provider.js';
 import { smsOverview } from '../server/sms/log.js';
 import { getOtpGateway, getSmsProvider, vynfyBalances } from '../server/sms/provider.js';
 
-const uid = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
+const uid = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z0-9_-]+$/);
 const feedId = z.string().regex(/^[a-z0-9_]{2,40}$/);
 const schema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('list') }),
@@ -34,27 +63,65 @@ const schema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('reactivate'), uid }),
   z.object({ action: z.literal('delete'), uid, confirmEmail: z.string().max(320) }),
   z.object({ action: z.literal('restore'), uid }),
-  z.object({ action: z.literal('purge'), uid, confirmEmail: z.string().max(320), acknowledge: z.literal(true) }),
+  z.object({
+    action: z.literal('purge'),
+    uid,
+    confirmEmail: z.string().max(320),
+    acknowledge: z.literal(true),
+  }),
   z.object({ action: z.literal('approve'), uid, approved: z.boolean() }),
   z.object({ action: z.literal('logs') }),
   z.object({ action: z.literal('sms') }),
+  z.object({ action: z.literal('email') }),
   z.object({ action: z.literal('requests') }),
-  z.object({ action: z.literal('requestDecision'), uid, decision: z.enum(['approve', 'reject']), note: z.string().max(300).optional() }),
+  z.object({
+    action: z.literal('requestDecision'),
+    uid,
+    decision: z.enum(['approve', 'reject']),
+    note: z.string().max(300).optional(),
+  }),
   z.object({ action: z.literal('requestDelete'), uid }),
   z.object({ action: z.literal('setAutoApprove'), enabled: z.boolean() }),
   z.object({ action: z.literal('approveAllPending'), confirm: z.literal(true) }),
   z.object({ action: z.literal('news'), days: z.number().int().min(1).max(30).optional() }),
-  z.object({ action: z.literal('newsFeedDisable'), id: feedId, reason: z.string().max(200).optional() }),
+  z.object({
+    action: z.literal('newsFeedDisable'),
+    id: feedId,
+    reason: z.string().max(200).optional(),
+  }),
   z.object({ action: z.literal('newsFeedEnable'), id: feedId }),
   z.object({
     action: z.literal('newsFeedAdd'),
     feed: z.object({
       id: feedId,
       name: z.string().min(1).max(80),
-      url: z.string().url().max(500).regex(/^https:\/\//),
+      url: z
+        .string()
+        .url()
+        .max(500)
+        .regex(/^https:\/\//),
       tier: z.enum(['official', 'wire', 'specialist', 'regional', 'social', 'unknown']),
-      topics: z.array(z.enum(['ai', 'tech', 'security', 'space', 'science', 'politics', 'business', 'health', 'sports', 'general'])).min(1).max(6),
-      regions: z.array(z.string().regex(/^[a-z_]{2,20}$/)).min(1).max(6),
+      topics: z
+        .array(
+          z.enum([
+            'ai',
+            'tech',
+            'security',
+            'space',
+            'science',
+            'politics',
+            'business',
+            'health',
+            'sports',
+            'general',
+          ]),
+        )
+        .min(1)
+        .max(6),
+      regions: z
+        .array(z.string().regex(/^[a-z_]{2,20}$/))
+        .min(1)
+        .max(6),
     }),
   }),
   z.object({ action: z.literal('newsFeedRemove'), id: feedId }),
@@ -88,7 +155,13 @@ export interface AdminUserRow {
   owner: boolean;
   purgeAfter: number | null;
   /** Terms of Use and Privacy Policy acceptance (current: matches the versions in force) */
-  consent: { termsVersion: string; privacyVersion: string; acceptedAt: number | null; method: string; current: boolean } | null;
+  consent: {
+    termsVersion: string;
+    privacyVersion: string;
+    acceptedAt: number | null;
+    method: string;
+    current: boolean;
+  } | null;
 }
 
 const NEW_DAYS = 7;
@@ -101,7 +174,12 @@ function row(a: AuthAccount, p: Profile | undefined, access: AccessConfig | null
   const owners = lower(env().adminEmails);
   const admins = [...owners, ...lower(access?.adminEmails)];
   const email = a.email ?? null;
-  const status = p?.accountStatus === 'deleted' ? 'deleted' : p?.accountStatus === 'suspended' || (a.disabled && p?.accountStatus !== 'active') ? 'suspended' : 'active';
+  const status =
+    p?.accountStatus === 'deleted'
+      ? 'deleted'
+      : p?.accountStatus === 'suspended' || (a.disabled && p?.accountStatus !== 'active')
+        ? 'suspended'
+        : 'active';
   return {
     uid: a.uid,
     email,
@@ -131,10 +209,16 @@ function row(a: AuthAccount, p: Profile | undefined, access: AccessConfig | null
   };
 }
 
-function accessOf(email: string | null, p: Profile | undefined, access: AccessConfig | null, admins: string[]): AdminUserRow['accessStatus'] {
+function accessOf(
+  email: string | null,
+  p: Profile | undefined,
+  access: AccessConfig | null,
+  admins: string[],
+): AdminUserRow['accessStatus'] {
   if (email && admins.includes(email)) return 'approved';
   if (p?.accessStatus === 'rejected') return 'rejected';
-  if (p?.accessStatus === 'approved' || (email && lower(access?.allowedEmails).includes(email))) return 'approved';
+  if (p?.accessStatus === 'approved' || (email && lower(access?.allowedEmails).includes(email)))
+    return 'approved';
   return 'pending';
 }
 
@@ -156,20 +240,30 @@ export function stats(rows: AdminUserRow[], now = Date.now()) {
     rejected: rows.filter((r) => r.accessStatus === 'rejected').length,
     phoneUnverified: rows.filter((r) => !r.phoneVerified).length,
     /** password accounts that cannot use the app until they verify a phone */
-    phoneRequiredPending: rows.filter((r) => r.providers.includes('password') && !r.phoneVerified).length,
+    phoneRequiredPending: rows.filter((r) => r.providers.includes('password') && !r.phoneVerified)
+      .length,
   };
 }
 
 function approvalView(a: ApprovalConfig | null) {
-  return { autoApprove: a?.autoApprove === true, updatedAt: a?.updatedAt ?? null, updatedBy: a?.updatedBy ?? null };
+  return {
+    autoApprove: a?.autoApprove === true,
+    updatedAt: a?.updatedAt ?? null,
+    updatedBy: a?.updatedBy ?? null,
+  };
 }
 
 /** The ten newest profiles with their approval state (for the Access Requests page). */
 async function recentProfiles(db: Firestore) {
-  const docs = await db.list<{ displayName?: string; email?: string | null; provider?: string; accessStatus?: string; approvedBy?: string; accountStatus?: string; createdAt?: unknown }>(
-    'users',
-    { orderBy: 'createdAt', direction: 'DESCENDING', limit: 10 },
-  );
+  const docs = await db.list<{
+    displayName?: string;
+    email?: string | null;
+    provider?: string;
+    accessStatus?: string;
+    approvedBy?: string;
+    accountStatus?: string;
+    createdAt?: unknown;
+  }>('users', { orderBy: 'createdAt', direction: 'DESCENDING', limit: 10 });
   return docs
     .filter((d) => d.id !== SERVER_UID)
     .map((d) => ({
@@ -203,21 +297,32 @@ async function loadTarget(db: Firestore, targetUid: string) {
 
 /** Administrators cannot act on themselves or the owner; only the owner can act on other admins. */
 function assertCanModerate(actor: Actor, actorIsOwner: boolean, target: AdminUserRow) {
-  if (target.uid === actor.uid) throw new HttpError(400, 'self', 'You cannot do this to your own account.');
-  if (target.owner) throw new HttpError(403, 'owner', 'The owner account cannot be suspended or deleted.');
-  if (target.admin && !actorIsOwner) throw new HttpError(403, 'admin_target', 'Only the owner can suspend or delete another administrator.');
+  if (target.uid === actor.uid)
+    throw new HttpError(400, 'self', 'You cannot do this to your own account.');
+  if (target.owner)
+    throw new HttpError(403, 'owner', 'The owner account cannot be suspended or deleted.');
+  if (target.admin && !actorIsOwner)
+    throw new HttpError(
+      403,
+      'admin_target',
+      'Only the owner can suspend or delete another administrator.',
+    );
 }
 
 function assertConfirmed(target: AdminUserRow, confirmEmail: string) {
   const expected = (target.email ?? target.uid).toLowerCase();
-  if (confirmEmail.trim().toLowerCase() !== expected) throw new HttpError(400, 'confirm_mismatch', 'The confirmation does not match this account.');
+  if (confirmEmail.trim().toLowerCase() !== expected)
+    throw new HttpError(400, 'confirm_mismatch', 'The confirmation does not match this account.');
 }
 
 async function usageSummary(db: Firestore, targetUid: string) {
-  const days = await db.list<{ date?: string; requests?: number; promptTokens?: number; completionTokens?: number; models?: Record<string, { requests?: number; tokens?: number }> }>(
-    `users/${targetUid}/usage`,
-    { orderBy: 'date', direction: 'DESCENDING', limit: 30 },
-  );
+  const days = await db.list<{
+    date?: string;
+    requests?: number;
+    promptTokens?: number;
+    completionTokens?: number;
+    models?: Record<string, { requests?: number; tokens?: number }>;
+  }>(`users/${targetUid}/usage`, { orderBy: 'date', direction: 'DESCENDING', limit: 30 });
   const models: Record<string, { requests: number; tokens: number }> = {};
   let requests = 0;
   let tokens = 0;
@@ -234,7 +339,14 @@ async function usageSummary(db: Firestore, targetUid: string) {
     .sort((a, b) => b[1].requests - a[1].requests)
     .slice(0, 6)
     .map(([model, v]) => ({ model, ...v }));
-  return { days: days.length, requests, tokens, activeDays: days.filter((d) => (d.data.requests ?? 0) > 0).length, lastActive: days[0]?.data.date ?? null, topModels };
+  return {
+    days: days.length,
+    requests,
+    tokens,
+    activeDays: days.filter((d) => (d.data.requests ?? 0) > 0).length,
+    lastActive: days[0]?.data.date ?? null,
+    topModels,
+  };
 }
 
 /**
@@ -244,9 +356,12 @@ async function usageSummary(db: Firestore, targetUid: string) {
  */
 export const GET = handle(async (request) => {
   const secret = process.env.CRON_SECRET ?? '';
-  if (new URL(request.url).searchParams.get('job') !== 'purge') throw new HttpError(404, 'not_found', 'Not found.');
-  if (secret.length < 16 || request.headers.get('authorization') !== `Bearer ${secret}`) throw new HttpError(401, 'unauthenticated', 'Not allowed.');
-  if (!adminConfigured()) throw new HttpError(503, 'admin_unconfigured', 'Service account not configured.');
+  if (new URL(request.url).searchParams.get('job') !== 'purge')
+    throw new HttpError(404, 'not_found', 'Not found.');
+  if (secret.length < 16 || request.headers.get('authorization') !== `Bearer ${secret}`)
+    throw new HttpError(401, 'unauthenticated', 'Not allowed.');
+  if (!adminConfigured())
+    throw new HttpError(503, 'admin_unconfigured', 'Service account not configured.');
   const db = await adminDb();
   const result = await purgeDue(db);
   // Records kept after a purge (admin log entries, access request) go 30 days later.
@@ -260,7 +375,13 @@ export const GET = handle(async (request) => {
     console.error('[central] maintenance failed', err instanceof Error ? err.message : err);
     return null;
   });
-  return json({ ok: true, purged: result.purged.length, failed: result.failed.length, retentionRemoved: retention.removed, knowledge });
+  return json({
+    ok: true,
+    purged: result.purged.length,
+    failed: result.failed.length,
+    retentionRemoved: retention.removed,
+    knowledge,
+  });
 });
 
 /**
@@ -273,10 +394,19 @@ export const GET = handle(async (request) => {
 export const POST = handle(async (request) => {
   const ctx = await requireAllowedUser(request);
   if (!ctx.admin) {
-    await noteUnauthorizedAccess(ctx.user.uid, 'Administrator user management', request.headers.get('user-agent'));
+    await noteUnauthorizedAccess(
+      ctx.user.uid,
+      'Administrator user management',
+      request.headers.get('user-agent'),
+    );
     throw new HttpError(403, 'not_admin', 'Administrator access is required.');
   }
-  if (!adminConfigured()) throw new HttpError(503, 'admin_unconfigured', 'User management needs FIREBASE_SERVICE_ACCOUNT on the server.');
+  if (!adminConfigured())
+    throw new HttpError(
+      503,
+      'admin_unconfigured',
+      'User management needs FIREBASE_SERVICE_ACCOUNT on the server.',
+    );
   const parsed = schema.safeParse(await readJson(request, 5_000));
   if (!parsed.success) throw new HttpError(400, 'bad_request', 'Invalid request.');
   const b = parsed.data;
@@ -291,13 +421,26 @@ export const POST = handle(async (request) => {
       db.get<AccessConfig>('config/access').then((d) => d?.data ?? null),
     ]);
     const byUid = new Map(profiles.map((p) => [p.id, p.data]));
-    const rows = accounts.filter((a) => a.uid !== SERVER_UID).map((a) => row(a, byUid.get(a.uid), access)).sort((x, y) => (y.createdAt ?? 0) - (x.createdAt ?? 0));
+    const rows = accounts
+      .filter((a) => a.uid !== SERVER_UID)
+      .map((a) => row(a, byUid.get(a.uid), access))
+      .sort((x, y) => (y.createdAt ?? 0) - (x.createdAt ?? 0));
     return json({ users: rows, stats: stats(rows), generatedAt: Date.now() });
   }
 
   if (b.action === 'requests') {
-    const [rows, approval, recentUsers] = await Promise.all([listRequests(db), approvalConfig(db, true), recentProfiles(db)]);
-    return json({ requests: rows, stats: requestStats(rows), approval: approvalView(approval), recentUsers, generatedAt: Date.now() });
+    const [rows, approval, recentUsers] = await Promise.all([
+      listRequests(db),
+      approvalConfig(db, true),
+      recentProfiles(db),
+    ]);
+    return json({
+      requests: rows,
+      stats: requestStats(rows),
+      approval: approvalView(approval),
+      recentUsers,
+      generatedAt: Date.now(),
+    });
   }
 
   if (b.action === 'setAutoApprove') {
@@ -306,33 +449,58 @@ export const POST = handle(async (request) => {
     const previous = before?.autoApprove === true;
     if (previous !== b.enabled) {
       const now = Date.now();
-      await db.set('config/approval', { autoApprove: b.enabled, updatedAt: now, updatedBy: ctx.user.email ?? ctx.user.uid } satisfies ApprovalConfig, true);
+      await db.set(
+        'config/approval',
+        {
+          autoApprove: b.enabled,
+          updatedAt: now,
+          updatedBy: ctx.user.email ?? ctx.user.uid,
+        } satisfies ApprovalConfig,
+        true,
+      );
       clearAccessCache();
-      await recordAdminAction(db, {
-        action: 'auto_approve_changed',
-        adminUid: ctx.user.uid,
-        adminEmail: ctx.user.email,
-        targetUid: 'config/approval',
-        targetEmail: null,
-        detail: `Automatic approval ${previous ? 'on' : 'off'} → ${b.enabled ? 'on' : 'off'}`,
-      }, now);
+      await recordAdminAction(
+        db,
+        {
+          action: 'auto_approve_changed',
+          adminUid: ctx.user.uid,
+          adminEmail: ctx.user.email,
+          targetUid: 'config/approval',
+          targetEmail: null,
+          detail: `Automatic approval ${previous ? 'on' : 'off'} → ${b.enabled ? 'on' : 'off'}`,
+        },
+        now,
+      );
     }
     return json({ ok: true, approval: approvalView(await approvalConfig(db, true)) });
   }
 
   if (b.action === 'approveAllPending') {
     // An explicit administrator choice: automatic approval never touches existing requests.
-    const pending = (await listRequests(db)).filter((r) => r.status === 'pending' && r.accountStatus === 'active');
+    const pending = (await listRequests(db)).filter(
+      (r) => r.status === 'pending' && r.accountStatus === 'active',
+    );
     let approved = 0;
     for (const r of pending.slice(0, 200)) {
       try {
         await setAccess(db, actor, { uid: r.uid, email: r.email }, 'approve');
         approved++;
       } catch (err) {
-        console.warn('[admin] bulk approve skipped', r.uid, err instanceof Error ? err.message : err);
+        console.warn(
+          '[admin] bulk approve skipped',
+          r.uid,
+          err instanceof Error ? err.message : err,
+        );
       }
     }
-    await recordAdminAction(db, { action: 'pending_bulk_approved', adminUid: ctx.user.uid, adminEmail: ctx.user.email, targetUid: 'accessRequests', targetEmail: null, detail: `${approved} of ${pending.length} pending requests approved` });
+    await recordAdminAction(db, {
+      action: 'pending_bulk_approved',
+      adminUid: ctx.user.uid,
+      adminEmail: ctx.user.email,
+      targetUid: 'accessRequests',
+      targetEmail: null,
+      detail: `${approved} of ${pending.length} pending requests approved`,
+    });
     return json({ ok: true, approved, total: pending.length });
   }
 
@@ -340,14 +508,25 @@ export const POST = handle(async (request) => {
     return json({ ...(await newsAdminView(db, b.days ?? 7)), generatedAt: Date.now() });
   }
 
-  if (b.action === 'newsFeedDisable' || b.action === 'newsFeedEnable' || b.action === 'newsFeedAdd' || b.action === 'newsFeedRemove') {
+  if (
+    b.action === 'newsFeedDisable' ||
+    b.action === 'newsFeedEnable' ||
+    b.action === 'newsFeedAdd' ||
+    b.action === 'newsFeedRemove'
+  ) {
     const { config } = await loadFeeds(db);
-    const next = { disabled: { ...config.disabled }, enabled: [...config.enabled], custom: [...config.custom] };
+    const next = {
+      disabled: { ...config.disabled },
+      enabled: [...config.enabled],
+      custom: [...config.custom],
+    };
     const isDefault = (id: string) => DEFAULT_FEEDS.some((f) => f.id === id);
     let detail: string;
     if (b.action === 'newsFeedAdd') {
-      if (isDefault(b.feed.id) || next.custom.some((c) => c.id === b.feed.id)) throw new HttpError(409, 'exists', 'A feed with this id already exists.');
-      if (next.custom.length >= 100) throw new HttpError(400, 'too_many', 'At most 100 added feeds.');
+      if (isDefault(b.feed.id) || next.custom.some((c) => c.id === b.feed.id))
+        throw new HttpError(409, 'exists', 'A feed with this id already exists.');
+      if (next.custom.length >= 100)
+        throw new HttpError(400, 'too_many', 'At most 100 added feeds.');
       let domain: string;
       try {
         domain = new URL(b.feed.url).hostname.replace(/^(www|feeds?|rss)\./, '');
@@ -368,32 +547,74 @@ export const POST = handle(async (request) => {
         if (isDefault(b.id) && !next.enabled.includes(b.id)) next.enabled.push(b.id);
         detail = `news feed enabled: ${b.id}`;
       } else {
-        if (isDefault(b.id)) throw new HttpError(400, 'built_in', 'Built-in feeds can be switched off but not removed.');
+        if (isDefault(b.id))
+          throw new HttpError(
+            400,
+            'built_in',
+            'Built-in feeds can be switched off but not removed.',
+          );
         next.custom = next.custom.filter((c) => c.id !== b.id);
         delete next.disabled[b.id];
         detail = `news feed removed: ${b.id}`;
       }
     }
     await saveFeedConfig(db, next, ctx.user.uid);
-    await recordAdminAction(db, { action: 'news_feeds_changed', adminUid: ctx.user.uid, adminEmail: ctx.user.email, targetUid: 'newsFeeds', targetEmail: null, detail });
+    await recordAdminAction(db, {
+      action: 'news_feeds_changed',
+      adminUid: ctx.user.uid,
+      adminEmail: ctx.user.email,
+      targetUid: 'newsFeeds',
+      targetEmail: null,
+      detail,
+    });
     return json({ ok: true });
   }
 
   if (b.action === 'logs') {
-    const logs = await db.list<Record<string, unknown>>('adminLogs', { orderBy: 'at', direction: 'DESCENDING', limit: 100 });
+    const logs = await db.list<Record<string, unknown>>('adminLogs', {
+      orderBy: 'at',
+      direction: 'DESCENDING',
+      limit: 100,
+    });
     return json({ logs: logs.map((l) => ({ id: l.id, ...l.data })) });
   }
 
   if (b.action === 'sms') {
-    const [overview, balances] = await Promise.all([smsOverview(db, getSmsProvider(), Date.now(), getOtpGateway()), vynfyBalances()]);
-    const uids = [...new Set(overview.recent.map((r) => r.uid).filter((u): u is string => Boolean(u)))];
-    const accounts = await Promise.all(uids.map((u) => accountAdmin().get(u).catch(() => null)));
-    const who = new Map(uids.map((u, i) => [u, accounts[i] ? { email: accounts[i]!.email ?? null, name: accounts[i]!.displayName ?? null } : null]));
+    const [overview, balances] = await Promise.all([
+      smsOverview(db, getSmsProvider(), Date.now(), getOtpGateway()),
+      vynfyBalances(),
+    ]);
+    const uids = [
+      ...new Set(overview.recent.map((r) => r.uid).filter((u): u is string => Boolean(u))),
+    ];
+    const accounts = await Promise.all(
+      uids.map((u) =>
+        accountAdmin()
+          .get(u)
+          .catch(() => null),
+      ),
+    );
+    const who = new Map(
+      uids.map((u, i) => [
+        u,
+        accounts[i]
+          ? { email: accounts[i]!.email ?? null, name: accounts[i]!.displayName ?? null }
+          : null,
+      ]),
+    );
     const e = env();
     return json({
       totals: overview.totals,
       balances,
-      config: { sender: e.vynfySender || null, otpService: Boolean(getOtpGateway()), otpLength: e.otpLength, otpExpiryMin: e.otpExpiryMin, smsFallback: e.otpSmsFallback, webhook: Boolean(e.vynfyWebhookSecret), sandbox: e.vynfySandbox },
+      config: {
+        sender: e.vynfySender || null,
+        otpService: Boolean(getOtpGateway()),
+        otpLength: e.otpLength,
+        otpExpiryMin: e.otpExpiryMin,
+        smsFallback: e.otpSmsFallback,
+        webhook: Boolean(e.vynfyWebhookSecret),
+        sandbox: e.vynfySandbox,
+      },
       recent: overview.recent.map((r) => ({
         id: r.id,
         at: r.at,
@@ -401,7 +622,9 @@ export const POST = handle(async (request) => {
         purpose: r.purpose,
         route: r.route,
         // network prefix + last four digits only
-        phone: r.phone ? `${r.phone.slice(0, 4)} ${r.phone.slice(4, 6)} ••• ${r.phone.slice(-4)}` : null,
+        phone: r.phone
+          ? `${r.phone.slice(0, 4)} ${r.phone.slice(4, 6)} ••• ${r.phone.slice(-4)}`
+          : null,
         ref: r.ref,
         accepted: r.accepted,
         delivery: r.delivery,
@@ -410,6 +633,79 @@ export const POST = handle(async (request) => {
         outcome: r.outcome,
         uid: r.uid,
         user: r.uid ? (who.get(r.uid) ?? null) : null,
+      })),
+      generatedAt: Date.now(),
+    });
+  }
+
+  if (b.action === 'email') {
+    // Only what the provider and our log actually report: no message contents, codes or keys.
+    const e = env();
+    const provider = getEmailProvider();
+    let connection: {
+      state: 'unconfigured' | 'connected' | 'error';
+      code: string | null;
+      message: string | null;
+      plan: string | null;
+      credits: number | null;
+    } = {
+      state: 'unconfigured',
+      code: null,
+      message: null,
+      plan: null,
+      credits: null,
+    };
+    if (provider?.account) {
+      try {
+        const a = await provider.account();
+        connection = {
+          state: 'connected',
+          code: null,
+          message: null,
+          plan: a?.plan ?? null,
+          credits: a?.credits ?? null,
+        };
+      } catch (err) {
+        connection = {
+          state: 'error',
+          code: err instanceof EmailError ? err.code : 'failed',
+          message: err instanceof Error ? err.message : 'Connection check failed',
+          plan: null,
+          credits: null,
+        };
+      }
+    }
+    const overview = await emailOverview(db, provider);
+    const day = new Date().toISOString().slice(0, 10);
+    const today = (await db.get<{ sent?: number }>(`emailStats/${day}`))?.data.sent ?? 0;
+    return json({
+      config: {
+        provider: e.emailProvider,
+        apiKeySet: Boolean(e.brevoKey),
+        sender: e.emailFrom || null,
+        senderName: e.emailFromName,
+        dailyCap: e.emailDailyCap,
+        sentToday: today,
+        publicUrl: e.publicUrl,
+        // a free-mail sender is not authenticated for Brevo (SPF/DKIM/DMARC)
+        senderDomainWarning: /@(gmail|yahoo|outlook|hotmail|icloud|live|aol)\./i.test(e.emailFrom),
+      },
+      connection,
+      totals: overview.totals,
+      byType: overview.byType,
+      recent: overview.recent.map((r) => ({
+        id: r.id,
+        at: r.at,
+        type: r.type,
+        to: r.to,
+        from: r.from ?? null,
+        accepted: r.accepted,
+        status: r.status,
+        providerStatus: r.providerStatus ?? null,
+        error: r.error ?? null,
+        errorCode: r.errorCode ?? null,
+        attempts: r.attempts ?? null,
+        opened: Boolean(r.opened),
       })),
       generatedAt: Date.now(),
     });
@@ -424,7 +720,12 @@ export const POST = handle(async (request) => {
 
   if (b.action === 'requestDecision') {
     if (target.row.owner) throw new HttpError(400, 'owner', 'The owner is always approved.');
-    if (b.decision === 'reject' && target.row.admin) throw new HttpError(400, 'admin_target', 'Remove administrator rights before rejecting this account.');
+    if (b.decision === 'reject' && target.row.admin)
+      throw new HttpError(
+        400,
+        'admin_target',
+        'Remove administrator rights before rejecting this account.',
+      );
     await setAccess(db, actor, { uid: b.uid, email: target.account.email }, b.decision, b.note);
     return json({ ok: true });
   }
@@ -432,7 +733,17 @@ export const POST = handle(async (request) => {
   if (b.action === 'detail') {
     const base = `users/${b.uid}`;
     const count = (c: string) => db.count(`${base}/${c}`).catch(() => null);
-    const [conversations, documents, memories, projects, knowledgeSources, savedResponses, usage, events, logs] = await Promise.all([
+    const [
+      conversations,
+      documents,
+      memories,
+      projects,
+      knowledgeSources,
+      savedResponses,
+      usage,
+      events,
+      logs,
+    ] = await Promise.all([
       count('conversations'),
       count('documents'),
       count('memories'),
@@ -440,10 +751,22 @@ export const POST = handle(async (request) => {
       count('kbSources'),
       count('savedResponses'),
       usageSummary(db, b.uid).catch(() => null),
-      db.list<Record<string, unknown>>(`${base}/securityEvents`, { orderBy: 'at', direction: 'DESCENDING', limit: 15 }).catch(() => []),
-      db.list<Record<string, unknown>>('adminLogs', { where: [['targetUid', 'EQUAL', b.uid]], limit: 50 }).catch(() => []),
+      db
+        .list<Record<string, unknown>>(`${base}/securityEvents`, {
+          orderBy: 'at',
+          direction: 'DESCENDING',
+          limit: 15,
+        })
+        .catch(() => []),
+      db
+        .list<Record<string, unknown>>('adminLogs', {
+          where: [['targetUid', 'EQUAL', b.uid]],
+          limit: 50,
+        })
+        .catch(() => []),
     ]);
-    const accessRequest = (await db.get<AccessRequest>(`accessRequests/${b.uid}`).catch(() => null))?.data ?? null;
+    const accessRequest =
+      (await db.get<AccessRequest>(`accessRequests/${b.uid}`).catch(() => null))?.data ?? null;
     return json({
       user: target.row,
       accessRequest,
@@ -464,30 +787,48 @@ export const POST = handle(async (request) => {
 
   if (b.action === 'approve') {
     if (target.row.owner) throw new HttpError(400, 'owner', 'The owner is always approved.');
-    if (!b.approved && target.row.admin) throw new HttpError(400, 'admin_target', 'Remove administrator rights before revoking access.');
-    await setAccess(db, actor, { uid: b.uid, email: target.account.email }, b.approved ? 'approve' : 'reject');
+    if (!b.approved && target.row.admin)
+      throw new HttpError(
+        400,
+        'admin_target',
+        'Remove administrator rights before revoking access.',
+      );
+    await setAccess(
+      db,
+      actor,
+      { uid: b.uid, email: target.account.email },
+      b.approved ? 'approve' : 'reject',
+    );
     return json({ ok: true });
   }
 
   assertCanModerate(actor, actorIsOwner, target.row);
 
   if (b.action === 'suspend') {
-    if (target.row.status !== 'active') throw new HttpError(400, 'not_active', 'Only active accounts can be suspended.');
+    if (target.row.status !== 'active')
+      throw new HttpError(400, 'not_active', 'Only active accounts can be suspended.');
     await suspendAccount(db, actor, target.account, b.reason);
     return json({ ok: true });
   }
   if (b.action === 'reactivate') {
-    if (target.row.status !== 'suspended') throw new HttpError(400, 'not_suspended', 'This account is not suspended.');
+    if (target.row.status !== 'suspended')
+      throw new HttpError(400, 'not_suspended', 'This account is not suspended.');
     await reactivateAccount(db, actor, target.account);
     return json({ ok: true });
   }
   if (b.action === 'delete') {
     assertConfirmed(target.row, b.confirmEmail);
-    if (target.row.status === 'deleted') throw new HttpError(400, 'already_deleted', 'This account is already scheduled for deletion.');
+    if (target.row.status === 'deleted')
+      throw new HttpError(
+        400,
+        'already_deleted',
+        'This account is already scheduled for deletion.',
+      );
     return json({ ok: true, ...(await scheduleDeletion(db, actor, target.account)) });
   }
   if (b.action === 'restore') {
-    if (target.row.status !== 'deleted') throw new HttpError(400, 'not_deleted', 'This account is not scheduled for deletion.');
+    if (target.row.status !== 'deleted')
+      throw new HttpError(400, 'not_deleted', 'This account is not scheduled for deletion.');
     await restoreAccount(db, actor, target.account);
     return json({ ok: true });
   }

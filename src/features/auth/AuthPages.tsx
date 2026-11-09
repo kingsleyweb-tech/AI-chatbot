@@ -1,23 +1,46 @@
 import {
   createUserWithEmailAndPassword,
-  sendEmailVerification,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
   updateProfile,
 } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
-import { ArrowLeft, CheckCircle2, Clock, Eye, EyeOff, Mail, ShieldAlert, Smartphone, UserPlus } from 'lucide-react';
+import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import {
+  ArrowLeft,
+  CheckCircle2,
+  Clock,
+  Eye,
+  EyeOff,
+  Mail,
+  ShieldAlert,
+  Smartphone,
+  UserPlus,
+} from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { LogoMark, TAGLINE } from '@/components/Logo';
 import { Button, Input, Label, Spinner, Textarea } from '@/components/ui';
 import { api, ApiError, publicApi } from '@/lib/api';
-import { authErrorMessage, redirectPending, signInWithProvider, type SocialProvider } from '@/lib/authProviders';
+import {
+  authErrorMessage,
+  redirectPending,
+  signInWithProvider,
+  type SocialProvider,
+} from '@/lib/authProviders';
 import { countryByCode, toE164 } from '@/lib/phone';
 import { PhoneField } from './PhoneField';
 import { auth, db } from '@/lib/firebase';
 import { validateRegistration } from './validate';
-import { CodeBoxes, DeliveryLine, mmss, phoneError, useCountdown, type DeliveryState } from './otpUi';
+import {
+  CodeBoxes,
+  DeliveryLine,
+  mmss,
+  phoneError,
+  useCountdown,
+  type DeliveryState,
+} from './otpUi';
+import { EmailVerifyPanel } from './EmailVerifyPanel';
+import { EMAIL_FIRST_REMINDER_MS } from '../shell/emailReminderRules';
 import { acceptTermsOnServer, useAuth, type AccessState } from '@/state/auth';
 import { PRIVACY_VERSION, TERMS_VERSION } from '@shared/legal';
 
@@ -94,10 +117,19 @@ function ErrorText({ children }: { children: ReactNode }) {
 
 const GoogleIcon = (
   <svg viewBox="0 0 24 24" className="size-[18px]" aria-hidden="true">
-    <path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.4h6.5a5.6 5.6 0 0 1-2.4 3.6v3h3.9c2.2-2.1 3.5-5.1 3.5-8.7z" />
-    <path fill="#34A853" d="M12 24c3.2 0 6-1.1 8-2.9l-3.9-3c-1.1.7-2.5 1.2-4.1 1.2-3.1 0-5.8-2.1-6.7-5H1.3v3.1A12 12 0 0 0 12 24z" />
+    <path
+      fill="#4285F4"
+      d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.4h6.5a5.6 5.6 0 0 1-2.4 3.6v3h3.9c2.2-2.1 3.5-5.1 3.5-8.7z"
+    />
+    <path
+      fill="#34A853"
+      d="M12 24c3.2 0 6-1.1 8-2.9l-3.9-3c-1.1.7-2.5 1.2-4.1 1.2-3.1 0-5.8-2.1-6.7-5H1.3v3.1A12 12 0 0 0 12 24z"
+    />
     <path fill="#FBBC05" d="M5.3 14.3a7.2 7.2 0 0 1 0-4.6V6.6h-4a12 12 0 0 0 0 10.8l4-3.1z" />
-    <path fill="#EA4335" d="M12 4.8c1.8 0 3.3.6 4.6 1.8l3.4-3.4A12 12 0 0 0 1.3 6.6l4 3.1c.9-2.9 3.6-4.9 6.7-4.9z" />
+    <path
+      fill="#EA4335"
+      d="M12 4.8c1.8 0 3.3.6 4.6 1.8l3.4-3.4A12 12 0 0 0 1.3 6.6l4 3.1c.9-2.9 3.6-4.9 6.7-4.9z"
+    />
   </svg>
 );
 
@@ -119,7 +151,15 @@ function SocialButtons({ onError }: { onError: (m: string) => void }) {
   };
   return (
     <div className="space-y-2.5">
-      <Button variant="outline" size="lg" className="w-full" loading={busy === 'google'} disabled={busy !== null} onClick={() => go('google')} icon={GoogleIcon}>
+      <Button
+        variant="outline"
+        size="lg"
+        className="w-full"
+        loading={busy === 'google'}
+        disabled={busy !== null}
+        onClick={() => go('google')}
+        icon={GoogleIcon}
+      >
         Continue with Google
       </Button>
     </div>
@@ -136,7 +176,19 @@ function Divider() {
   );
 }
 
-function PasswordInput({ id, value, onChange, autoComplete, invalid }: { id: string; value: string; onChange: (v: string) => void; autoComplete: string; invalid?: boolean }) {
+function PasswordInput({
+  id,
+  value,
+  onChange,
+  autoComplete,
+  invalid,
+}: {
+  id: string;
+  value: string;
+  onChange: (v: string) => void;
+  autoComplete: string;
+  invalid?: boolean;
+}) {
   const [show, setShow] = useState(false);
   return (
     <div className="relative">
@@ -216,16 +268,25 @@ function Login() {
       setError(authErrorMessage(err));
       // best-effort security event for the account owner (silent for unknown addresses)
       const code = (err as { code?: string }).code;
-      if (code === 'auth/invalid-credential' || code === 'auth/wrong-password') void publicApi('recovery', { action: 'failedLogin', email: email.trim() }).catch(() => undefined);
+      if (code === 'auth/invalid-credential' || code === 'auth/wrong-password')
+        void publicApi('recovery', { action: 'failedLogin', email: email.trim() }).catch(
+          () => undefined,
+        );
       setBusy(false);
     }
   };
 
   return (
     <Shell>
-      <Heading title="Welcome to Atlas AI" subtitle="Your intelligent assistant for thinking, creating and discovering." />
+      <Heading
+        title="Welcome to Atlas AI"
+        subtitle="Your intelligent assistant for thinking, creating and discovering."
+      />
       {endedText && !shown && (
-        <p role="status" className="mb-5 flex items-start gap-2 rounded-xl border border-border bg-surface-2 px-3.5 py-3 text-sm text-muted">
+        <p
+          role="status"
+          className="mb-5 flex items-start gap-2 rounded-xl border border-border bg-surface-2 px-3.5 py-3 text-sm text-muted"
+        >
           <Clock className="mt-0.5 size-4 shrink-0" /> {endedText}
         </p>
       )}
@@ -240,7 +301,14 @@ function Login() {
         <form className="space-y-3.5" onSubmit={submit} noValidate>
           <div>
             <Label htmlFor="email">Email</Label>
-            <Input id="email" type="email" autoComplete="email" inputMode="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+            <Input
+              id="email"
+              type="email"
+              autoComplete="email"
+              inputMode="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
           </div>
           <div>
             <div className="flex items-baseline justify-between">
@@ -249,7 +317,12 @@ function Login() {
                 Forgot password?
               </Link>
             </div>
-            <PasswordInput id="password" autoComplete="current-password" value={password} onChange={setPassword} />
+            <PasswordInput
+              id="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={setPassword}
+            />
           </div>
           <ErrorText>{shown}</ErrorText>
           <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy}>
@@ -275,7 +348,14 @@ function FieldError({ children }: { children?: string }) {
 
 function Register() {
   const regOpen = useRegistrationOpen();
-  const [v, setV] = useState({ name: '', email: '', country: 'GH', phone: '', password: '', confirm: '' });
+  const [v, setV] = useState({
+    name: '',
+    email: '',
+    country: 'GH',
+    phone: '',
+    password: '',
+    confirm: '',
+  });
   const [agreed, setAgreed] = useState(false);
   const [touched, setTouched] = useState(false);
   const [error, setError] = useState('');
@@ -287,8 +367,14 @@ function Register() {
   if (!regOpen) {
     return (
       <Shell>
-        <Heading title="Registration is closed" subtitle="Atlas AI is invitation-only. Ask the administrator to approve your email, or sign in with an approved Google account." />
-        <Link to="/login" className="block text-center text-sm font-medium text-accent hover:underline">
+        <Heading
+          title="Registration is closed"
+          subtitle="Atlas AI is invitation-only. Ask the administrator to approve your email, or sign in with an approved Google account."
+        />
+        <Link
+          to="/login"
+          className="block text-center text-sm font-medium text-accent hover:underline"
+        >
           Back to sign in
         </Link>
       </Shell>
@@ -308,7 +394,8 @@ function Register() {
       // account is refused by the server when the code is requested.
       const cred = await createUserWithEmailAndPassword(auth, v.email.trim(), v.password);
       await updateProfile(cred.user, { displayName: v.name.trim() });
-      await sendEmailVerification(cred.user, { url: window.location.origin + '/' }).catch(() => undefined);
+      // The email address is verified on the "Verify your email" screen with a code we email
+      // (or Firebase's link when email sending is unavailable).
       // Store the new account with the acceptance given on this form (recorded by the server),
       // then text the code straight away. If recording fails, the consent screen asks again.
       await acceptTermsOnServer(TERMS_VERSION, PRIVACY_VERSION).catch(() =>
@@ -329,47 +416,97 @@ function Register() {
   const show = (k: keyof typeof errors) => (touched ? errors[k] : undefined);
   return (
     <Shell>
-      <Heading title="Create your account" subtitle="Your intelligent assistant for thinking, creating and discovering." />
+      <Heading
+        title="Create your account"
+        subtitle="Your intelligent assistant for thinking, creating and discovering."
+      />
       <div className="space-y-5">
         <SocialButtons onError={setError} />
         <Divider />
         <form className="space-y-3.5" onSubmit={submit} noValidate>
           <div>
             <Label htmlFor="name">Full name</Label>
-            <Input id="name" autoComplete="name" value={v.name} aria-invalid={!!show('name') || undefined} onChange={(e) => set('name')(e.target.value)} />
+            <Input
+              id="name"
+              autoComplete="name"
+              value={v.name}
+              aria-invalid={!!show('name') || undefined}
+              onChange={(e) => set('name')(e.target.value)}
+            />
             <FieldError>{show('name')}</FieldError>
           </div>
           <div>
             <Label htmlFor="email">Email</Label>
-            <Input id="email" type="email" autoComplete="email" inputMode="email" value={v.email} aria-invalid={!!show('email') || undefined} onChange={(e) => set('email')(e.target.value)} />
+            <Input
+              id="email"
+              type="email"
+              autoComplete="email"
+              inputMode="email"
+              value={v.email}
+              aria-invalid={!!show('email') || undefined}
+              onChange={(e) => set('email')(e.target.value)}
+            />
             <FieldError>{show('email')}</FieldError>
           </div>
           <div>
             <Label htmlFor="phone">Mobile number</Label>
-            <PhoneField id="phone" country={v.country} onCountry={set('country')} value={v.phone} onChange={set('phone')} invalid={!!show('phone')} />
+            <PhoneField
+              id="phone"
+              country={v.country}
+              onCountry={set('country')}
+              value={v.phone}
+              onChange={set('phone')}
+              invalid={!!show('phone')}
+            />
             <FieldError>{show('phone')}</FieldError>
           </div>
           <div>
             <Label htmlFor="password" hint="At least 8 characters, with a number.">
               Password
             </Label>
-            <PasswordInput id="password" autoComplete="new-password" value={v.password} onChange={set('password')} invalid={!!show('password')} />
+            <PasswordInput
+              id="password"
+              autoComplete="new-password"
+              value={v.password}
+              onChange={set('password')}
+              invalid={!!show('password')}
+            />
             <FieldError>{show('password')}</FieldError>
           </div>
           <div>
             <Label htmlFor="confirm">Confirm password</Label>
-            <PasswordInput id="confirm" autoComplete="new-password" value={v.confirm} onChange={set('confirm')} invalid={!!show('confirm')} />
+            <PasswordInput
+              id="confirm"
+              autoComplete="new-password"
+              value={v.confirm}
+              onChange={set('confirm')}
+              invalid={!!show('confirm')}
+            />
             <FieldError>{show('confirm')}</FieldError>
           </div>
           <div>
             <ConsentCheckbox id="reg-consent" checked={agreed} onChange={setAgreed} />
-            <FieldError>{touched && !agreed ? 'Please accept the Terms of Use and Privacy Policy to continue.' : undefined}</FieldError>
+            <FieldError>
+              {touched && !agreed
+                ? 'Please accept the Terms of Use and Privacy Policy to continue.'
+                : undefined}
+            </FieldError>
           </div>
           <ErrorText>{error}</ErrorText>
-          <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy} disabled={!agreed}>
+          <Button
+            type="submit"
+            variant="primary"
+            size="lg"
+            className="w-full"
+            loading={busy}
+            disabled={!agreed}
+          >
             Create account
           </Button>
-          <p className="text-center text-xs text-subtle">We will text a 6-digit code to confirm your number. New accounts may need an administrator’s approval before they can use Atlas AI.</p>
+          <p className="text-center text-xs text-subtle">
+            We will text a 6-digit code to confirm your number. New accounts may need an
+            administrator’s approval before they can use Atlas AI.
+          </p>
         </form>
         <p className="text-center text-sm text-muted">
           Already have an account?{' '}
@@ -385,15 +522,16 @@ function Register() {
 type ResetStep = 'email' | 'code' | 'password' | 'done' | 'link-sent';
 
 /**
- * Password reset. Email/password accounts with a verified phone get a
- * 6-digit code by text message; the email link stays available for everyone
- * else. The page never says whether an address has an account.
+ * Password reset with a 6-digit code, by email (any email/password account)
+ * or by text message (accounts with a verified phone). Firebase's email link
+ * stays available as well. The page never says whether an address has an account.
  */
 function Reset() {
   const navigate = useNavigate();
   const [step, setStep] = useState<ResetStep>('email');
   const [email, setEmail] = useState('');
   const [rid, setRid] = useState('');
+  const [channel, setChannel] = useState<'email' | 'sms'>('email');
   const [code, setCode] = useState('');
   const [resetToken, setResetToken] = useState('');
   const [password, setPassword] = useState('');
@@ -416,9 +554,13 @@ function Reset() {
     }
   };
 
-  const start = () =>
+  const start = (via: 'email' | 'sms' = channel) =>
     run(async () => {
-      const r = await publicApi<{ recoveryId: string; expiresIn: number; resendIn: number }>('recovery', { action: 'start', email: email.trim() });
+      setChannel(via);
+      const r = await publicApi<{ recoveryId: string; expiresIn: number; resendIn: number }>(
+        'recovery',
+        { action: 'start', email: email.trim(), channel: via },
+      );
       setRid(r.recoveryId);
       setCode('');
       resend.start(r.resendIn);
@@ -429,15 +571,21 @@ function Reset() {
   const sendLink = () =>
     run(async () => {
       try {
-        await sendPasswordResetEmail(auth, email.trim(), { url: window.location.origin + '/login' });
+        await sendPasswordResetEmail(auth, email.trim(), {
+          url: window.location.origin + '/login',
+        });
       } catch (err) {
-        if ((err as { code?: string }).code !== 'auth/user-not-found') throw new ApiError(400, 'email', authErrorMessage(err));
+        if ((err as { code?: string }).code !== 'auth/user-not-found')
+          throw new ApiError(400, 'email', authErrorMessage(err));
       }
       setStep('link-sent');
     });
 
   const back = (
-    <Link to="/login" className="mb-6 inline-flex items-center gap-1.5 text-sm text-muted hover:text-fg">
+    <Link
+      to="/login"
+      className="mb-6 inline-flex items-center gap-1.5 text-sm text-muted hover:text-fg"
+    >
       <ArrowLeft className="size-4" /> Back to sign in
     </Link>
   );
@@ -445,8 +593,16 @@ function Reset() {
   if (step === 'done') {
     return (
       <Shell>
-        <Heading title="Password changed" subtitle="Your password has been updated and every device was signed out. Sign in with your new password." />
-        <Button variant="primary" size="lg" className="w-full" onClick={() => navigate('/login', { replace: true })}>
+        <Heading
+          title="Password changed"
+          subtitle="Your password has been updated and every device was signed out. Sign in with your new password."
+        />
+        <Button
+          variant="primary"
+          size="lg"
+          className="w-full"
+          onClick={() => navigate('/login', { replace: true })}
+        >
           Go to sign in
         </Button>
       </Shell>
@@ -461,7 +617,8 @@ function Reset() {
         <div className="mt-4 flex gap-3 rounded-xl border border-border bg-surface p-4 text-sm">
           <Mail className="mt-0.5 size-4 shrink-0 text-accent" />
           <p>
-            If an account exists for <b>{email}</b>, a reset link is on its way. Check your inbox and spam folder.
+            If an account exists for <b>{email}</b>, a reset link is on its way. Check your inbox
+            and spam folder.
           </p>
         </div>
       </Shell>
@@ -471,14 +628,29 @@ function Reset() {
   if (step === 'code') {
     return (
       <Shell>
-        <button type="button" onClick={() => setStep('email')} className="mb-6 inline-flex items-center gap-1.5 text-sm text-muted hover:text-fg">
+        <button
+          type="button"
+          onClick={() => setStep('email')}
+          className="mb-6 inline-flex items-center gap-1.5 text-sm text-muted hover:text-fg"
+        >
           <ArrowLeft className="size-4" /> Change email
         </button>
         <h1 className="mb-1 text-xl font-semibold tracking-tight">Enter the code</h1>
         <p className="mb-6 text-sm text-muted">
-          If <b className="font-medium text-fg">{email}</b> signs in with a password and has a verified phone number, we texted a 6-digit code to that
-          number.
-          {expiry.left > 0 ? ` It expires in ${Math.floor(expiry.left / 60)}:${String(expiry.left % 60).padStart(2, '0')}.` : ' The code has expired; request a new one.'}
+          {channel === 'email' ? (
+            <>
+              If <b className="font-medium text-fg">{email}</b> has an Atlas AI account that signs
+              in with a password, we emailed it a 6-digit code. Check your spam folder too.
+            </>
+          ) : (
+            <>
+              If <b className="font-medium text-fg">{email}</b> signs in with a password and has a
+              verified phone number, we texted a 6-digit code to that number.
+            </>
+          )}
+          {expiry.left > 0
+            ? ` It expires in ${Math.floor(expiry.left / 60)}:${String(expiry.left % 60).padStart(2, '0')}.`
+            : ' The code has expired; request a new one.'}
         </p>
         <form
           className="space-y-4"
@@ -486,7 +658,11 @@ function Reset() {
             e.preventDefault();
             if (code.length !== 6) return setError('Enter the 6-digit code.');
             void run(async () => {
-              const r = await publicApi<{ resetToken: string }>('recovery', { action: 'verify', recoveryId: rid, code });
+              const r = await publicApi<{ resetToken: string }>('recovery', {
+                action: 'verify',
+                recoveryId: rid,
+                code,
+              });
               setResetToken(r.resetToken);
               setStep('password');
             });
@@ -499,12 +675,33 @@ function Reset() {
           </Button>
         </form>
         <div className="mt-4 flex flex-col items-center gap-2 text-sm">
-          <button type="button" className="text-accent disabled:text-subtle" disabled={busy || resend.left > 0} onClick={() => void start()}>
+          <button
+            type="button"
+            className="text-accent disabled:text-subtle"
+            disabled={busy || resend.left > 0}
+            onClick={() => void start()}
+          >
             {resend.left > 0 ? `Resend code in ${resend.left} s` : 'Resend code'}
           </button>
-          <button type="button" className="text-muted hover:text-fg" disabled={busy} onClick={() => void sendLink()}>
-            No text message? Email me a reset link instead
-          </button>
+          {channel === 'sms' ? (
+            <button
+              type="button"
+              className="text-muted hover:text-fg"
+              disabled={busy}
+              onClick={() => void start('email')}
+            >
+              No text message? Email me a code instead
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="text-muted hover:text-fg"
+              disabled={busy}
+              onClick={() => void sendLink()}
+            >
+              No email? Send me a reset link instead
+            </button>
+          )}
         </div>
       </Shell>
     );
@@ -514,15 +711,23 @@ function Reset() {
     return (
       <Shell>
         <h1 className="mb-1 text-xl font-semibold tracking-tight">Choose a new password</h1>
-        <p className="mb-6 text-sm text-muted">Use at least 8 characters with letters and a number. All devices will be signed out.</p>
+        <p className="mb-6 text-sm text-muted">
+          Use at least 8 characters with letters and a number. All devices will be signed out.
+        </p>
         <form
           className="space-y-3.5"
           onSubmit={(e) => {
             e.preventDefault();
-            if (password.length < 8 || !/[A-Za-z]/.test(password) || !/\d/.test(password)) return setError('Use at least 8 characters with letters and at least one number.');
+            if (password.length < 8 || !/[A-Za-z]/.test(password) || !/\d/.test(password))
+              return setError('Use at least 8 characters with letters and at least one number.');
             if (password !== confirm) return setError('The passwords do not match.');
             void run(async () => {
-              await publicApi('recovery', { action: 'reset', recoveryId: rid, resetToken, password });
+              await publicApi('recovery', {
+                action: 'reset',
+                recoveryId: rid,
+                resetToken,
+                password,
+              });
               setPassword('');
               setConfirm('');
               setStep('done');
@@ -532,15 +737,33 @@ function Reset() {
           <div>
             <Label htmlFor="new-password">New password</Label>
             <div className="relative">
-              <Input id="new-password" type={show ? 'text' : 'password'} autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} className="pr-10" />
-              <button type="button" aria-label={show ? 'Hide password' : 'Show password'} onClick={() => setShow(!show)} className="absolute top-1/2 right-2.5 -translate-y-1/2 text-subtle hover:text-fg">
+              <Input
+                id="new-password"
+                type={show ? 'text' : 'password'}
+                autoComplete="new-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="pr-10"
+              />
+              <button
+                type="button"
+                aria-label={show ? 'Hide password' : 'Show password'}
+                onClick={() => setShow(!show)}
+                className="absolute top-1/2 right-2.5 -translate-y-1/2 text-subtle hover:text-fg"
+              >
                 {show ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
               </button>
             </div>
           </div>
           <div>
             <Label htmlFor="confirm-password">Confirm new password</Label>
-            <Input id="confirm-password" type={show ? 'text' : 'password'} autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+            <Input
+              id="confirm-password"
+              type={show ? 'text' : 'password'}
+              autoComplete="new-password"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+            />
           </div>
           <ErrorText>{error}</ErrorText>
           <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy}>
@@ -556,27 +779,59 @@ function Reset() {
       {back}
       <h1 className="mb-1 text-xl font-semibold tracking-tight">Reset your password</h1>
       <p className="mb-6 text-sm text-muted">
-        Enter your account email. If it signs in with a password and has a verified phone number, we will text you a 6-digit code. Signed up with
-        Google? There is no password to reset: use Continue with Google on the sign-in page.
+        Enter your account email and we will send you a 6-digit code to choose a new password.
+        Signed up with Google? There is no password to reset: use Continue with Google on the
+        sign-in page.
       </p>
       <form
         className="space-y-3.5"
         onSubmit={(e) => {
           e.preventDefault();
-          if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim())) return setError('Enter a valid email address.');
-          void start();
+          if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim()))
+            return setError('Enter a valid email address.');
+          void start('email');
         }}
         noValidate
       >
         <div>
           <Label htmlFor="email">Email</Label>
-          <Input id="email" type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <Input
+            id="email"
+            type="email"
+            required
+            autoComplete="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
         </div>
         <ErrorText>{error}</ErrorText>
-        <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy} icon={<Smartphone className="size-4" />}>
-          Text me a code
+        <Button
+          type="submit"
+          variant="primary"
+          size="lg"
+          className="w-full"
+          loading={busy}
+          icon={<Mail className="size-4" />}
+        >
+          Email me a code
         </Button>
-        <Button type="button" variant="ghost" className="w-full" disabled={busy || !email.trim()} onClick={() => void sendLink()}>
+        <Button
+          type="button"
+          variant="ghost"
+          className="w-full"
+          disabled={busy || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim())}
+          icon={<Smartphone className="size-4" />}
+          onClick={() => void start('sms')}
+        >
+          Text me a code instead
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          className="w-full"
+          disabled={busy || !email.trim()}
+          onClick={() => void sendLink()}
+        >
           Email me a reset link instead
         </Button>
       </form>
@@ -639,7 +894,9 @@ function PhoneVerify() {
   const [phone, setPhone] = useState(carried?.phone ?? '');
   const [masked, setMasked] = useState('');
   const [codeLength, setCodeLength] = useState(6);
-  const [delivery, setDelivery] = useState<{ state: DeliveryState; error: string | null } | null>(null);
+  const [delivery, setDelivery] = useState<{ state: DeliveryState; error: string | null } | null>(
+    null,
+  );
   const [code, setCode] = useState('');
   const [error, setError] = useState(carried?.message ?? '');
   const [hint, setHint] = useState('');
@@ -676,7 +933,10 @@ function PhoneVerify() {
   }, [access, load]);
 
   // While waiting for an ordinary SMS, check the delivery report a few times (free status calls).
-  const waiting = step === 'code' && (delivery?.state === 'pending' || delivery?.state === 'sent') && expiry.left > 0;
+  const waiting =
+    step === 'code' &&
+    (delivery?.state === 'pending' || delivery?.state === 'sent') &&
+    expiry.left > 0;
   useEffect(() => {
     if (!waiting) return;
     let n = 0;
@@ -690,13 +950,27 @@ function PhoneVerify() {
   }, [waiting]);
 
   if (access === 'loading') return <Checking />;
-  if (access !== 'phone') return <Navigate to={routeFor(access) ?? '/'} replace />;
+  // Right after the phone step, offer the email step (it can be skipped).
+  if (access !== 'phone')
+    return (
+      <Navigate
+        to={
+          user && !user.emailVerified && SKIPPABLE.includes(access)
+            ? '/verify'
+            : (routeFor(access) ?? '/')
+        }
+        replace
+      />
+    );
   if (!status) return <Checking />;
 
   if (!status.configured) {
     return (
       <Shell>
-        <Heading title="Phone verification unavailable" subtitle="Text-message verification has not been set up on the server yet. Please try again later or contact the administrator." />
+        <Heading
+          title="Phone verification unavailable"
+          subtitle="Text-message verification has not been set up on the server yet. Please try again later or contact the administrator."
+        />
         <div className="flex flex-col gap-2">
           <Button variant="primary" onClick={() => void load()}>
             Try again
@@ -720,8 +994,18 @@ function PhoneVerify() {
   };
 
   const failed = (err: unknown) => {
-    if (err instanceof ApiError && typeof err.details.retryAfter === 'number' && (err.code === 'resend_cooldown' || err.code === 'otp_pending')) resend.start(err.details.retryAfter);
-    if (err instanceof ApiError && err.code === 'otp_pending' && typeof err.details.ussd === 'string') setHint(`No text yet? Dial ${err.details.ussd} on this phone to see your code.`);
+    if (
+      err instanceof ApiError &&
+      typeof err.details.retryAfter === 'number' &&
+      (err.code === 'resend_cooldown' || err.code === 'otp_pending')
+    )
+      resend.start(err.details.retryAfter);
+    if (
+      err instanceof ApiError &&
+      err.code === 'otp_pending' &&
+      typeof err.details.ussd === 'string'
+    )
+      setHint(`No text yet? Dial ${err.details.ussd} on this phone to see your code.`);
     setError(phoneError(err));
   };
 
@@ -769,7 +1053,8 @@ function PhoneVerify() {
     } catch (err) {
       setCodeInvalid(true);
       setCode('');
-      if (err instanceof ApiError && ['too_many_attempts', 'expired', 'no_code'].includes(err.code)) expiry.start(0);
+      if (err instanceof ApiError && ['too_many_attempts', 'expired', 'no_code'].includes(err.code))
+        expiry.start(0);
       setError(phoneError(err));
       setBusy(false);
     }
@@ -783,13 +1068,18 @@ function PhoneVerify() {
             <Smartphone className="size-6" />
           </div>
           <h1 className="text-[22px] font-semibold tracking-tight">Verify your phone</h1>
-          <p className="mt-1.5 text-sm text-muted">We’ll text you a one-time code to confirm it’s you. Standard message rates may apply.</p>
+          <p className="mt-1.5 text-sm text-muted">
+            We’ll text you a one-time code to confirm it’s you. Standard message rates may apply.
+          </p>
         </div>
         <form className="space-y-3.5" onSubmit={send} noValidate>
           <div>
             <Label htmlFor="phone">Mobile number</Label>
             <div className="flex gap-2">
-              <span className="flex h-11 items-center rounded-xl border border-border bg-surface-2 px-3 text-[15px] text-muted" aria-label="Country code Ghana">
+              <span
+                className="flex h-11 items-center rounded-xl border border-border bg-surface-2 px-3 text-[15px] text-muted"
+                aria-label="Country code Ghana"
+              >
                 GH +233
               </span>
               <Input
@@ -803,11 +1093,21 @@ function PhoneVerify() {
                 className="flex-1"
               />
             </div>
-            <p className="mt-1.5 text-xs text-subtle">Ghana mobile numbers are supported at the moment, written as 024 123 4567 or +233 24 123 4567.</p>
+            <p className="mt-1.5 text-xs text-subtle">
+              Ghana mobile numbers are supported at the moment, written as 024 123 4567 or +233 24
+              123 4567.
+            </p>
           </div>
           <ErrorText>{error}</ErrorText>
           {hint && <p className="text-xs text-muted">{hint}</p>}
-          <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy} disabled={resend.left > 0}>
+          <Button
+            type="submit"
+            variant="primary"
+            size="lg"
+            className="w-full"
+            loading={busy}
+            disabled={resend.left > 0}
+          >
             {resend.left > 0 ? `Send code in ${resend.left} s` : 'Send code'}
           </Button>
         </form>
@@ -829,7 +1129,8 @@ function PhoneVerify() {
           setError('');
           setHint('');
         }}
-        className="mb-6 inline-flex items-center gap-1.5 text-sm text-muted hover:text-fg">
+        className="mb-6 inline-flex items-center gap-1.5 text-sm text-muted hover:text-fg"
+      >
         <ArrowLeft className="size-4" /> Change number
       </button>
       <h1 className="text-[22px] font-semibold tracking-tight">Enter the code</h1>
@@ -856,11 +1157,20 @@ function PhoneVerify() {
           }}
         />
         <p className="text-xs text-subtle" aria-live="polite">
-          {expiry.left > 0 ? `The code expires in ${mmss(expiry.left)}.` : 'This code has expired or is no longer valid. Request a new one.'}
+          {expiry.left > 0
+            ? `The code expires in ${mmss(expiry.left)}.`
+            : 'This code has expired or is no longer valid. Request a new one.'}
         </p>
         <ErrorText>{error}</ErrorText>
         {hint && <p className="text-xs text-muted">{hint}</p>}
-        <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy} disabled={code.length !== codeLength}>
+        <Button
+          type="submit"
+          variant="primary"
+          size="lg"
+          className="w-full"
+          loading={busy}
+          disabled={code.length !== codeLength}
+        >
           Verify
         </Button>
       </form>
@@ -869,7 +1179,11 @@ function PhoneVerify() {
         {resend.left > 0 ? (
           <span className="tabular-nums">Resend in {mmss(resend.left)}</span>
         ) : (
-          <button className="font-medium text-accent hover:underline" onClick={() => void again()} disabled={busy}>
+          <button
+            className="font-medium text-accent hover:underline"
+            onClick={() => void again()}
+            disabled={busy}
+          >
             Resend code
           </button>
         )}
@@ -880,62 +1194,84 @@ function PhoneVerify() {
 
 /* ----------------------------- other states ----------------------------- */
 
+/**
+ * Email verification with a 6-digit code we email (Brevo). When email codes
+ * are unavailable it falls back to Firebase's verification link.
+ */
+/** Access states in which the email step may be skipped (a verified phone number exists). */
+const SKIPPABLE: AccessState[] = ['allowed', 'request', 'pending', 'consent'];
+
+/**
+ * Verify the email address with a code. Accounts without any verified
+ * contact (state "unverified") must finish this step; after sign-up, an
+ * account with a verified phone can choose "Skip for now" and verify later
+ * from the reminder or Settings › Security.
+ */
 function Verify() {
-  const { user, access, refreshAccess, signOut } = useAuth();
-  const [msg, setMsg] = useState('');
-  const [busy, setBusy] = useState(false);
-  if (access === 'loading' && !busy) return <Checking />;
-  if (access !== 'unverified' && access !== 'loading') return <Navigate to={routeFor(access) ?? '/'} replace />;
+  const { user, access, signOut } = useAuth();
+  const navigate = useNavigate();
+  const canSkip = SKIPPABLE.includes(access);
+
+  if (access === 'loading') return <Checking />;
+  if (access !== 'unverified' && (!canSkip || !user || user.emailVerified))
+    return <Navigate to={routeFor(access) ?? '/'} replace />;
+
+  const next = () => navigate(routeFor(access) ?? '/', { replace: true });
+  const skip = async () => {
+    // the dashboard reminder waits a day before asking again
+    if (user)
+      await updateDoc(doc(db, 'users', user.uid), {
+        emailReminderNextAt: Date.now() + EMAIL_FIRST_REMINDER_MS,
+      }).catch(() => undefined);
+    next();
+  };
+
   return (
     <Shell>
-      <div className="mb-7 flex flex-col items-center text-center">
+      <div className="mb-6 flex flex-col items-center text-center">
         <div className="mb-5 flex size-12 items-center justify-center rounded-2xl bg-accent-soft text-accent">
           <Mail className="size-6" />
         </div>
         <h1 className="text-[22px] font-semibold tracking-tight">Verify your email</h1>
         <p className="mt-1.5 text-sm text-muted">
-          We sent a verification link to <b className="font-medium text-fg">{user?.email}</b>. Open it, then come back here.
+          This keeps your account recoverable and lets us send you security alerts.
         </p>
       </div>
-      {msg && <p className="mb-3 text-center text-sm text-accent">{msg}</p>}
-      <div className="flex flex-col gap-2">
-        <Button
-          variant="primary"
-          size="lg"
-          loading={busy}
-          onClick={async () => {
-            setBusy(true);
-            await refreshAccess();
-            setBusy(false);
-            setMsg(auth.currentUser?.emailVerified ? '' : 'Not verified yet. Check your inbox and spam folder.');
-          }}
-        >
-          I’ve verified my email
-        </Button>
-        <Button
-          variant="ghost"
-          onClick={async () => {
-            if (!auth.currentUser) return;
-            try {
-              await sendEmailVerification(auth.currentUser, { url: window.location.origin + '/' });
-              setMsg('Verification email sent.');
-            } catch (err) {
-              setMsg(authErrorMessage(err));
-            }
-          }}
-        >
-          Resend email
-        </Button>
-        <Button variant="ghost" onClick={() => signOut()}>
-          Use a different account
-        </Button>
-      </div>
+      <EmailVerifyPanel
+        autoSend
+        onVerified={next}
+        secondary={(busy) =>
+          canSkip ? (
+            <Button variant="ghost" disabled={busy} onClick={() => void skip()}>
+              Skip for now
+            </Button>
+          ) : (
+            <Button variant="ghost" onClick={() => signOut()}>
+              Use a different account
+            </Button>
+          )
+        }
+      />
+      {canSkip && (
+        <p className="mt-4 text-center text-xs text-subtle">
+          You can verify later in Settings › Security. Some security settings stay locked until you
+          do.
+        </p>
+      )}
     </Shell>
   );
 }
 
 /** "I have read and agree…" with links that open the documents in a new tab (the form keeps its state). */
-function ConsentCheckbox({ id, checked, onChange }: { id: string; checked: boolean; onChange: (v: boolean) => void }) {
+function ConsentCheckbox({
+  id,
+  checked,
+  onChange,
+}: {
+  id: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
   return (
     <div className="flex items-start gap-2.5">
       <input
@@ -947,11 +1283,21 @@ function ConsentCheckbox({ id, checked, onChange }: { id: string; checked: boole
       />
       <label htmlFor={id} className="text-sm leading-snug text-muted">
         I have read and agree to the{' '}
-        <a href="/terms" target="_blank" rel="noopener" className="font-medium text-accent hover:underline">
+        <a
+          href="/terms"
+          target="_blank"
+          rel="noopener"
+          className="font-medium text-accent hover:underline"
+        >
           Terms of Use
         </a>{' '}
         and{' '}
-        <a href="/privacy" target="_blank" rel="noopener" className="font-medium text-accent hover:underline">
+        <a
+          href="/privacy"
+          target="_blank"
+          rel="noopener"
+          className="font-medium text-accent hover:underline"
+        >
           Privacy Policy
         </a>{' '}
         of Atlas AI.
@@ -971,7 +1317,8 @@ function Consent() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   if (access === 'loading' && !busy) return <Checking />;
-  if (access !== 'consent' && access !== 'loading') return <Navigate to={routeFor(access) ?? '/'} replace />;
+  if (access !== 'consent' && access !== 'loading')
+    return <Navigate to={routeFor(access) ?? '/'} replace />;
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -999,11 +1346,21 @@ function Consent() {
         subtitle={
           <>
             Please read the Atlas AI{' '}
-            <a href="/terms" target="_blank" rel="noopener" className="font-medium text-accent hover:underline">
+            <a
+              href="/terms"
+              target="_blank"
+              rel="noopener"
+              className="font-medium text-accent hover:underline"
+            >
               Terms of Use
             </a>{' '}
             and{' '}
-            <a href="/privacy" target="_blank" rel="noopener" className="font-medium text-accent hover:underline">
+            <a
+              href="/privacy"
+              target="_blank"
+              rel="noopener"
+              className="font-medium text-accent hover:underline"
+            >
               Privacy Policy
             </a>
             . You need to accept both to use Atlas AI.
@@ -1015,7 +1372,14 @@ function Consent() {
           <ConsentCheckbox id="consent" checked={agreed} onChange={setAgreed} />
         </div>
         <ErrorText>{error}</ErrorText>
-        <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy} disabled={!agreed}>
+        <Button
+          type="submit"
+          variant="primary"
+          size="lg"
+          className="w-full"
+          loading={busy}
+          disabled={!agreed}
+        >
           Continue
         </Button>
         <p className="text-center text-xs text-subtle">
@@ -1033,7 +1397,14 @@ function Denied() {
   const { user, access, accessError, refreshAccess, signOut } = useAuth();
   const [busy, setBusy] = useState(false);
   if (access === 'loading' && !busy) return <Checking />;
-  if (access !== 'denied' && access !== 'error' && access !== 'suspended' && access !== 'deleted' && access !== 'loading') return <Navigate to={routeFor(access) ?? '/'} replace />;
+  if (
+    access !== 'denied' &&
+    access !== 'error' &&
+    access !== 'suspended' &&
+    access !== 'deleted' &&
+    access !== 'loading'
+  )
+    return <Navigate to={routeFor(access) ?? '/'} replace />;
   const isError = access === 'error';
   if (access === 'suspended' || access === 'deleted') {
     return (
@@ -1042,7 +1413,9 @@ function Denied() {
           <div className="mb-5 flex size-12 items-center justify-center rounded-2xl bg-danger-soft text-danger">
             <ShieldAlert className="size-6" />
           </div>
-          <h1 className="text-[22px] font-semibold tracking-tight">{access === 'suspended' ? 'Account suspended' : 'Account scheduled for deletion'}</h1>
+          <h1 className="text-[22px] font-semibold tracking-tight">
+            {access === 'suspended' ? 'Account suspended' : 'Account scheduled for deletion'}
+          </h1>
           <p className="mt-1.5 text-sm text-muted">
             {access === 'suspended'
               ? 'An administrator has suspended this account, so it cannot be used right now. Your data has not been deleted. Contact the administrator if you think this is a mistake.'
@@ -1061,13 +1434,16 @@ function Denied() {
         <div className="mb-5 flex size-12 items-center justify-center rounded-2xl bg-warn-soft text-warn">
           <ShieldAlert className="size-6" />
         </div>
-        <h1 className="text-[22px] font-semibold tracking-tight">{isError ? 'Something went wrong' : 'Access not approved'}</h1>
+        <h1 className="text-[22px] font-semibold tracking-tight">
+          {isError ? 'Something went wrong' : 'Access not approved'}
+        </h1>
         <p className="mt-1.5 text-sm text-muted">
           {isError ? (
-            accessError ?? 'We could not reach the server to check your access.'
+            (accessError ?? 'We could not reach the server to check your access.')
           ) : (
             <>
-              <b className="font-medium text-fg">{user?.email}</b> is not on the approved list yet. Ask the administrator to add this email in Settings &gt; Access.
+              <b className="font-medium text-fg">{user?.email}</b> is not on the approved list yet.
+              Ask the administrator to add this email in Settings &gt; Access.
             </>
           )}
         </p>
@@ -1096,7 +1472,15 @@ function Denied() {
 /* ----------------------------- access requests ----------------------------- */
 
 const fmtDate = (ms: number | null | undefined) =>
-  ms ? new Date(ms).toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+  ms
+    ? new Date(ms).toLocaleString(undefined, {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+    : '';
 
 function Detail({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -1149,7 +1533,8 @@ function AccessRequest() {
   }, [access, check]);
 
   if (access === 'loading' && !busy && !checking) return <Checking />;
-  if (!['request', 'pending', 'rejected', 'loading'].includes(access)) return <Navigate to={routeFor(access) ?? '/'} replace />;
+  if (!['request', 'pending', 'rejected', 'loading'].includes(access))
+    return <Navigate to={routeFor(access) ?? '/'} replace />;
 
   const req = accessInfo.request;
 
@@ -1162,7 +1547,9 @@ function AccessRequest() {
           </div>
           <h1 className="text-[22px] font-semibold tracking-tight">Access not approved</h1>
           <p className="mt-1.5 text-sm text-muted">
-            The administrator reviewed the request for <b className="font-medium text-fg">{user?.email}</b> and did not approve access to Atlas AI. Contact the administrator if you think this is a mistake.
+            The administrator reviewed the request for{' '}
+            <b className="font-medium text-fg">{user?.email}</b> and did not approve access to Atlas
+            AI. Contact the administrator if you think this is a mistake.
           </p>
         </div>
         {req && (
@@ -1186,9 +1573,13 @@ function AccessRequest() {
           <div className="mb-5 flex size-12 items-center justify-center rounded-2xl bg-accent-soft text-accent">
             <CheckCircle2 className="size-6" />
           </div>
-          <h1 className="text-[22px] font-semibold tracking-tight">Your request has been submitted</h1>
+          <h1 className="text-[22px] font-semibold tracking-tight">
+            Your request has been submitted
+          </h1>
           <p className="mt-1.5 text-sm text-muted">
-            Thank you for your interest in Atlas AI. Your access request has been sent to the administrator. You will be able to use Atlas AI as soon as your account has been approved.
+            Thank you for your interest in Atlas AI. Your access request has been sent to the
+            administrator. You will be able to use Atlas AI as soon as your account has been
+            approved.
           </p>
         </div>
         <div className="mb-6 divide-y divide-border rounded-xl border border-border px-4">
@@ -1196,7 +1587,12 @@ function AccessRequest() {
           <Detail label="Email">{req.email}</Detail>
           {req.phoneMasked && (
             <Detail label="Phone">
-              {req.phoneMasked} {req.phoneVerified ? '' : <span className="font-normal text-subtle">(not verified)</span>}
+              {req.phoneMasked}{' '}
+              {req.phoneVerified ? (
+                ''
+              ) : (
+                <span className="font-normal text-subtle">(not verified)</span>
+              )}
             </Detail>
           )}
           <Detail label="Status">
@@ -1214,7 +1610,10 @@ function AccessRequest() {
             Sign out
           </Button>
         </div>
-        <p className="mt-4 text-center text-xs text-subtle">You can close the app; your request stays on file. Sign in again any time to check its status.</p>
+        <p className="mt-4 text-center text-xs text-subtle">
+          You can close the app; your request stays on file. Sign in again any time to check its
+          status.
+        </p>
       </Shell>
     );
   }
@@ -1226,17 +1625,28 @@ function AccessRequest() {
     let e164: string | undefined;
     if (!isPassword) {
       const n = toE164(countryByCode(country), phone);
-      if (!n) return setError(`Enter a valid phone number, for example ${countryByCode(country).example}.`);
+      if (!n)
+        return setError(
+          `Enter a valid phone number, for example ${countryByCode(country).example}.`,
+        );
       e164 = n;
     }
     setBusy(true);
     try {
       await api('account', {
-        json: { action: 'requestAccess', fullName: name.trim(), phone: e164, dialCode: countryByCode(country).dial, reason: reason.trim() || undefined },
+        json: {
+          action: 'requestAccess',
+          fullName: name.trim(),
+          phone: e164,
+          dialCode: countryByCode(country).dial,
+          reason: reason.trim() || undefined,
+        },
       });
       await refreshAccess();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Your request could not be sent. Please try again.');
+      setError(
+        err instanceof ApiError ? err.message : 'Your request could not be sent. Please try again.',
+      );
     } finally {
       setBusy(false);
     }
@@ -1250,31 +1660,60 @@ function AccessRequest() {
         </div>
         <h1 className="text-[22px] font-semibold tracking-tight">Request Access to Atlas AI</h1>
         <p className="mt-1.5 text-sm text-muted">
-          Atlas AI currently requires administrator approval before new users can access the application. Submit your details below to request access.
+          Atlas AI currently requires administrator approval before new users can access the
+          application. Submit your details below to request access.
         </p>
       </div>
       <form className="space-y-3.5" onSubmit={submit} noValidate>
         <div>
           <Label htmlFor="req-name">Full name</Label>
-          <Input id="req-name" autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} />
+          <Input
+            id="req-name"
+            autoComplete="name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
         </div>
         <div>
           <Label htmlFor="req-email">Email address</Label>
-          <Input id="req-email" type="email" value={user?.email ?? ''} readOnly className="bg-surface-2 text-muted" />
+          <Input
+            id="req-email"
+            type="email"
+            value={user?.email ?? ''}
+            readOnly
+            className="bg-surface-2 text-muted"
+          />
         </div>
         <div>
           <Label htmlFor="req-phone">Phone number</Label>
           {isPassword ? (
-            <Input id="req-phone" value={`${accessInfo.profile?.phoneMasked ?? ''} (verified)`} readOnly className="bg-surface-2 text-muted" />
+            <Input
+              id="req-phone"
+              value={`${accessInfo.profile?.phoneMasked ?? ''} (verified)`}
+              readOnly
+              className="bg-surface-2 text-muted"
+            />
           ) : (
-            <PhoneField id="req-phone" country={country} onCountry={setCountry} value={phone} onChange={setPhone} />
+            <PhoneField
+              id="req-phone"
+              country={country}
+              onCountry={setCountry}
+              value={phone}
+              onChange={setPhone}
+            />
           )}
         </div>
         <div>
           <Label htmlFor="req-reason" hint="Optional">
             Reason for requesting access
           </Label>
-          <Textarea id="req-reason" rows={3} maxLength={500} value={reason} onChange={(e) => setReason(e.target.value)} />
+          <Textarea
+            id="req-reason"
+            rows={3}
+            maxLength={500}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+          />
         </div>
         <ErrorText>{error}</ErrorText>
         <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy}>

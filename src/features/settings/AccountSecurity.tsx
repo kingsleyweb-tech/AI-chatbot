@@ -11,15 +11,7 @@ import { limit, orderBy, query, type Timestamp } from 'firebase/firestore';
 import { Download, KeyRound, LogOut, ShieldCheck, Smartphone } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
-import {
-  Badge,
-  Button,
-  ConfirmDialog,
-  Dialog,
-  Input,
-  Label,
-  Spinner,
-} from '@/components/ui';
+import { Badge, Button, ConfirmDialog, Dialog, Input, Label, Spinner } from '@/components/ui';
 import { AnalyticsSwitch } from '@/components/AnalyticsConsent';
 import { downloadAccountExport } from '@/lib/accountExport';
 import { analyticsAvailable } from '@/lib/analyticsConsent';
@@ -30,6 +22,8 @@ import { useQuery } from '@/lib/hooks';
 import { useAuth, useUid } from '@/state/auth';
 import { useToast } from '@/state/toast';
 import { phoneError, type DeliveryState } from '../auth/otpUi';
+import { EmailNotifications, RecognisedDevices } from './EmailNotifications';
+import { EmailAddressRow, useVerifiedEmailGuard } from './EmailVerification';
 import { PhoneVerifyFlow, type PendingCode } from './PhoneVerifyFlow';
 import { maskPhone, providerLabel, Row, Section } from './parts';
 
@@ -61,6 +55,7 @@ export function PhoneManager() {
   const { user, profile, refreshAccess } = useAuth();
   const toast = useToast();
   const passwordAccount = hasPassword(user);
+  const { guard, dialog: verifyDialog } = useVerifiedEmailGuard();
   const [status, setStatus] = useState<PhoneStatus | null>(null);
   const [pending, setPending] = useState<PendingCode | null>(null);
   const [editing, setEditing] = useState(false);
@@ -110,13 +105,20 @@ export function PhoneManager() {
 
   return (
     <Section title="Phone number">
+      {verifyDialog}
       <div className="py-3 text-sm text-muted">
-        Add your phone number to secure your account and enable SMS password recovery. This is not two-step sign-in: your password or Google
-        account still signs you in.
+        Add your phone number to secure your account and enable SMS password recovery. This is not
+        two-step sign-in: your password or Google account still signs you in.
       </div>
       <Row
         title={current ?? 'No phone number'}
-        description={verified ? 'Verified by text message' : passwordAccount ? 'Required for email and password sign-in' : 'Optional for Google sign-in'}
+        description={
+          verified
+            ? 'Verified by text message'
+            : passwordAccount
+              ? 'Required for email and password sign-in'
+              : 'Optional for Google sign-in'
+        }
       >
         <div className="flex flex-wrap items-center gap-2">
           {verified ? (
@@ -127,12 +129,27 @@ export function PhoneManager() {
             <Badge tone="warn">Not verified</Badge>
           ) : null}
           {!editing && (
-            <Button size="sm" variant="outline" icon={<Smartphone className="size-4" />} disabled={status?.configured === false} onClick={() => setEditing(true)}>
+            <Button
+              size="sm"
+              variant="outline"
+              icon={<Smartphone className="size-4" />}
+              disabled={status?.configured === false}
+              onClick={
+                verified
+                  ? guard(() => setEditing(true), 'change your phone number')
+                  : () => setEditing(true)
+              }
+            >
               {current ? 'Change' : 'Add number'}
             </Button>
           )}
           {!editing && current && !passwordAccount && (
-            <Button size="sm" variant="ghost" disabled={busy} onClick={() => setConfirmRemove(true)}>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy}
+              onClick={guard(() => setConfirmRemove(true), 'remove your phone number')}
+            >
               Remove
             </Button>
           )}
@@ -145,13 +162,18 @@ export function PhoneManager() {
       )}
       {status?.configured === false && (
         <div className="py-3 text-sm text-muted">
-          Text message verification is not configured on the server yet, so numbers cannot be added or changed right now.
+          Text message verification is not configured on the server yet, so numbers cannot be added
+          or changed right now.
         </div>
       )}
 
       {editing && (
         <div className="py-4">
-          {current && <p className="mb-3 text-xs text-muted">Your current number stays on the account until the new one is verified.</p>}
+          {current && (
+            <p className="mb-3 text-xs text-muted">
+              Your current number stays on the account until the new one is verified.
+            </p>
+          )}
           <PhoneVerifyFlow
             pending={pending}
             onVerified={() => {
@@ -160,7 +182,12 @@ export function PhoneManager() {
               setEditing(false);
             }}
             secondary={(b) => (
-              <Button type="button" variant="ghost" disabled={b} onClick={() => (setEditing(false), setPending(null))}>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={b}
+                onClick={() => (setEditing(false), setPending(null))}
+              >
                 Cancel
               </Button>
             )}
@@ -326,7 +353,9 @@ const EVENT_LABELS: Record<string, string> = {
   login_failed: 'Failed sign-in attempt',
   logout: 'Signed out',
   logout_inactivity: 'Signed out after 60 minutes of inactivity',
-  password_reset: 'Password reset by text message',
+  password_reset: 'Password reset with a code',
+  email_verified: 'Email address verified',
+  device_removed: 'Device removed from recognised devices',
   password_changed: 'Password changed',
   phone_verified: 'Phone number verified',
   phone_changed: 'Phone number changed',
@@ -409,6 +438,7 @@ export function SecuritySection() {
   const passwordAccount = hasPassword(user);
   const googleLinked = methods.includes('google.com');
   const status = profile?.accountStatus ?? 'active';
+  const { guard, dialog: verifyDialog } = useVerifiedEmailGuard();
 
   const revoke = async () => {
     setRevoking(true);
@@ -448,15 +478,14 @@ export function SecuritySection() {
 
   return (
     <>
+      {verifyDialog}
       <Section title="Sign-in">
         <Row title="Sign-in methods">
           <span className="text-sm text-muted">
             {methods.map(providerLabel).join(', ') || 'Unknown'}
           </span>
         </Row>
-        <Row title="Email" description={user?.emailVerified ? 'Verified' : 'Not verified'}>
-          <span className="break-all text-sm text-muted">{user?.email}</span>
-        </Row>
+        <EmailAddressRow google={googleLinked} />
         <Row title="Account status">
           <Badge tone={status === 'active' ? 'accent' : 'danger'}>
             {status === 'active' ? 'Active' : status[0].toUpperCase() + status.slice(1)}
@@ -468,7 +497,7 @@ export function SecuritySection() {
               size="sm"
               variant="outline"
               icon={<KeyRound className="size-4" />}
-              onClick={() => setPwDialog('change')}
+              onClick={guard(() => setPwDialog('change'), 'change your password')}
             >
               Change password
             </Button>
@@ -486,7 +515,7 @@ export function SecuritySection() {
               size="sm"
               variant="outline"
               icon={<KeyRound className="size-4" />}
-              onClick={() => setPwDialog('add')}
+              onClick={guard(() => setPwDialog('add'), 'add a password')}
             >
               Add a password
             </Button>
@@ -508,6 +537,10 @@ export function SecuritySection() {
           </Link>
         </Row>
       </Section>
+
+      <RecognisedDevices />
+
+      <EmailNotifications />
 
       <RecentActivity />
 
@@ -549,7 +582,7 @@ export function SecuritySection() {
             variant="outline"
             icon={<Download className="size-4" />}
             loading={Boolean(exporting)}
-            onClick={() => void exportData()}
+            onClick={guard(() => void exportData(), 'export your data')}
           >
             Export
           </Button>

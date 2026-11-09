@@ -264,6 +264,8 @@ export interface AccountUpdate {
   /** revoke every refresh token issued before now */
   revokeSessions?: boolean;
   password?: string;
+  /** mark the email address as verified (after an email code was confirmed) */
+  emailVerified?: boolean;
 }
 
 /** Privileged Firebase Auth operations (Identity Toolkit admin API). Replaceable in tests. */
@@ -309,6 +311,7 @@ const identityAdmin: AccountAdmin = {
     if (change.disabled !== undefined) body.disableUser = change.disabled;
     if (change.revokeSessions) body.validSince = String(Math.floor(Date.now() / 1000));
     if (change.password) body.password = change.password;
+    if (change.emailVerified !== undefined) body.emailVerified = change.emailVerified;
     await identity('accounts:update', body);
   },
   async remove(uid) {

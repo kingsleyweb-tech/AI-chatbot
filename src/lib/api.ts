@@ -21,6 +21,40 @@ async function token(): Promise<string> {
   return user.getIdToken();
 }
 
+const DEVICE_KEY = 'atlas.deviceId';
+let deviceId: string | null = null;
+/**
+ * A random id for this browser (kept in its storage), so the server can tell a
+ * known device from a new one for sign-in alerts. It identifies nothing else.
+ */
+function browserId(): string | null {
+  if (deviceId) return deviceId;
+  try {
+    deviceId = localStorage.getItem(DEVICE_KEY);
+    if (!deviceId || !/^[A-Za-z0-9-]{16,64}$/.test(deviceId)) {
+      deviceId = crypto.randomUUID();
+      localStorage.setItem(DEVICE_KEY, deviceId);
+    }
+  } catch {
+    return null;
+  }
+  return deviceId;
+}
+
+/** Device id and time zone for security emails (dates in the person's own time zone). */
+export function clientHeaders(): Record<string, string> {
+  const h: Record<string, string> = {};
+  const id = browserId();
+  if (id) h['x-atlas-device'] = id;
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (tz) h['x-atlas-tz'] = tz;
+  } catch {
+    /* unknown time zone */
+  }
+  return h;
+}
+
 /** Server codes meaning the account can no longer be used in this session. */
 export const ACCOUNT_BLOCK_CODES = new Set(['account_suspended', 'account_deleted', 'session_revoked', 'consent_required']);
 export const ACCOUNT_BLOCK_EVENT = 'atlas:account-blocked';
@@ -45,7 +79,7 @@ async function toError(res: Response): Promise<ApiError> {
 /** Signed-out endpoints (password recovery). */
 export async function publicApi<T>(path: string, json: unknown): Promise<T> {
   if (!navigator.onLine) throw new ApiError(0, 'offline', 'You are offline.');
-  const res = await fetch(`/api/${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(json) });
+  const res = await fetch(`/api/${path}`, { method: 'POST', headers: { 'content-type': 'application/json', ...clientHeaders() }, body: JSON.stringify(json) });
   if (!res.ok) throw await toError(res);
   return (await res.json()) as T;
 }
@@ -62,6 +96,7 @@ export async function api<T>(path: string, init: RequestInit & { json?: unknown 
       method: rest.method ?? (json !== undefined ? 'POST' : 'GET'),
       headers: {
         authorization: `Bearer ${await token()}`,
+        ...clientHeaders(),
         ...(json !== undefined ? { 'content-type': 'application/json' } : {}),
         ...rest.headers,
       },

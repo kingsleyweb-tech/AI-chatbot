@@ -9,7 +9,12 @@ const PROJECT = process.env.GCLOUD_PROJECT ?? 'demo-tessera';
 const BASE = `http://${HOST}/v1/projects/${PROJECT}/databases/(default)/documents`;
 
 const b64 = (o: object) => Buffer.from(JSON.stringify(o)).toString('base64url');
-function token(uid: string, email: string, verified = true, opts: { provider?: string; phoneVerified?: boolean; authTime?: number } = {}) {
+function token(
+  uid: string,
+  email: string,
+  verified = true,
+  opts: { provider?: string; phoneVerified?: boolean; authTime?: number } = {},
+) {
   const { provider = 'password', phoneVerified = true } = opts;
   const now = Math.floor(Date.now() / 1000);
   const authTime = opts.authTime ?? now;
@@ -34,23 +39,37 @@ const OWNER = 'owner';
 function enc(v: unknown): unknown {
   if (v === null) return { nullValue: null };
   if (typeof v === 'boolean') return { booleanValue: v };
-  if (typeof v === 'number') return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };
+  if (typeof v === 'number')
+    return Number.isInteger(v) ? { integerValue: String(v) } : { doubleValue: v };
   if (typeof v === 'string') return { stringValue: v };
   if (Array.isArray(v)) return { arrayValue: { values: v.map(enc) } };
-  return { mapValue: { fields: Object.fromEntries(Object.entries(v as object).map(([k, x]) => [k, enc(x)])) } };
+  return {
+    mapValue: {
+      fields: Object.fromEntries(Object.entries(v as object).map(([k, x]) => [k, enc(x)])),
+    },
+  };
 }
 
 /** Accepted current Terms/Privacy (server/shared/legal.ts); seeded profiles get it unless a test sets `consent`. */
 const CONSENT = { termsVersion: '1.4', privacyVersion: '1.4', acceptedAt: 1, method: 'google' };
 
 async function call(who: Who, method: string, path: string, data?: object): Promise<number> {
-  if (who === OWNER && method === 'PATCH' && data && /^users\/[^/?]+$/.test(path) && !('consent' in data)) data = { consent: CONSENT, ...data };
+  if (
+    who === OWNER &&
+    method === 'PATCH' &&
+    data &&
+    /^users\/[^/?]+$/.test(path) &&
+    !('consent' in data)
+  )
+    data = { consent: CONSENT, ...data };
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   if (who) headers.authorization = `Bearer ${who}`;
   const res = await fetch(`${BASE}/${path}`, {
     method,
     headers,
-    body: data ? JSON.stringify({ fields: (enc(data) as { mapValue: { fields: object } }).mapValue.fields }) : undefined,
+    body: data
+      ? JSON.stringify({ fields: (enc(data) as { mapValue: { fields: object } }).mapValue.fields })
+      : undefined,
   });
   await res.text();
   return res.status;
@@ -70,22 +89,54 @@ const denied = (s: number) => expect(s, `expected 403, got ${s}`).toBe(403);
 
 beforeAll(async () => {
   const res = await fetch(`http://${HOST}/`).catch(() => null);
-  if (!res) throw new Error(`Firestore emulator not reachable at ${HOST}. Run via "npm run test:rules".`);
+  if (!res)
+    throw new Error(`Firestore emulator not reachable at ${HOST}. Run via "npm run test:rules".`);
 });
 
 beforeEach(async () => {
-  await fetch(`http://${HOST}/emulator/v1/projects/${PROJECT}/databases/(default)/documents`, { method: 'DELETE' });
-  ok(await write(OWNER, 'config/access', { allowedEmails: ['alice@example.com', 'bob@example.com'], adminEmails: [] }));
-  for (const uid of ['alice', 'bob', 'admin-uid']) ok(await write(OWNER, `users/${uid}`, { displayName: uid }));
-  ok(await write(OWNER, 'users/alice/conversations/c1', { title: 'Hello', projectId: null, saved: false }));
-  ok(await write(OWNER, 'users/alice/memories/m1', { text: 'Likes tea', category: 'preference', active: true }));
+  await fetch(`http://${HOST}/emulator/v1/projects/${PROJECT}/databases/(default)/documents`, {
+    method: 'DELETE',
+  });
+  ok(
+    await write(OWNER, 'config/access', {
+      allowedEmails: ['alice@example.com', 'bob@example.com'],
+      adminEmails: [],
+    }),
+  );
+  for (const uid of ['alice', 'bob', 'admin-uid'])
+    ok(await write(OWNER, `users/${uid}`, { displayName: uid }));
+  ok(
+    await write(OWNER, 'users/alice/conversations/c1', {
+      title: 'Hello',
+      projectId: null,
+      saved: false,
+    }),
+  );
+  ok(
+    await write(OWNER, 'users/alice/memories/m1', {
+      text: 'Likes tea',
+      category: 'preference',
+      active: true,
+    }),
+  );
 });
 
 describe('allowlist and verification', () => {
   it('lets an allowed, verified user read and write their own data', async () => {
     ok(await read(ALLOWED, 'users/alice/conversations/c1'));
-    ok(await write(ALLOWED, 'users/alice/conversations/c2', { title: 'New', projectId: null, saved: false }));
-    ok(await write(ALLOWED, 'users/alice/conversations/c2/messages/x', { role: 'user', content: 'hi' }));
+    ok(
+      await write(ALLOWED, 'users/alice/conversations/c2', {
+        title: 'New',
+        projectId: null,
+        saved: false,
+      }),
+    );
+    ok(
+      await write(ALLOWED, 'users/alice/conversations/c2/messages/x', {
+        role: 'user',
+        content: 'hi',
+      }),
+    );
     ok(await write(ALLOWED, 'users/alice/projects/p1', { name: 'P', instructions: '' }));
   });
 
@@ -93,8 +144,50 @@ describe('allowlist and verification', () => {
     denied(await read(ALLOWED_UNVERIFIED, 'users/alice/conversations/c1'));
   });
 
+  it('lets an approved account with a verified phone in before its email is verified', async () => {
+    ok(await write(OWNER, 'users/dan', { email: 'dan@example.com', accessStatus: 'approved' }));
+    ok(
+      await write(OWNER, 'users/dan/conversations/c1', {
+        title: 'Hi',
+        projectId: null,
+        saved: false,
+      }),
+    );
+    ok(
+      await read(
+        token('dan', 'dan@example.com', false, { phoneVerified: true }),
+        'users/dan/conversations/c1',
+      ),
+    );
+    // no verified email and no verified phone: refused
+    denied(
+      await read(
+        token('dan', 'dan@example.com', false, { provider: 'google.com', phoneVerified: false }),
+        'users/dan/conversations/c1',
+      ),
+    );
+  });
+
+  it('never treats an unverified address as an administrator', async () => {
+    const fake = token('eve', 'kingsleyanaab604@gmail.com', false, { phoneVerified: true });
+    ok(
+      await write(OWNER, 'users/eve', {
+        email: 'kingsleyanaab604@gmail.com',
+        accessStatus: 'approved',
+      }),
+    );
+    denied(await write(fake, 'config/access', { allowedEmails: [], adminEmails: ['kingsleyanaab604@gmail.com'], updatedAt: 1 }));
+    denied(await write(fake, 'config/public', { registrationOpen: false, updatedAt: 1 }));
+  });
+
   it('blocks signed-in users who are not on the allowlist, even for their own uid', async () => {
-    denied(await write(STRANGER, 'users/mallory/conversations/c1', { title: 'x', projectId: null, saved: false }));
+    denied(
+      await write(STRANGER, 'users/mallory/conversations/c1', {
+        title: 'x',
+        projectId: null,
+        saved: false,
+      }),
+    );
     denied(await read(STRANGER, 'config/access'));
   });
 
@@ -108,7 +201,13 @@ describe('per-user isolation', () => {
   it('prevents one allowed user from reading or writing another user’s data', async () => {
     denied(await read(BOB, 'users/alice/conversations/c1'));
     denied(await read(BOB, 'users/alice/memories/m1'));
-    denied(await write(BOB, 'users/alice/memories/m2', { text: 'injected', category: 'fact', active: true }));
+    denied(
+      await write(BOB, 'users/alice/memories/m2', {
+        text: 'injected',
+        category: 'fact',
+        active: true,
+      }),
+    );
     denied(await del(BOB, 'users/alice/conversations/c1'));
   });
 
@@ -123,12 +222,28 @@ describe('per-user isolation', () => {
 
 describe('data validation', () => {
   it('rejects messages with an invalid role', async () => {
-    ok(await write(ALLOWED, 'users/alice/conversations/c1/messages/a', { role: 'assistant', content: 'ok' }));
-    denied(await write(ALLOWED, 'users/alice/conversations/c1/messages/b', { role: 'system', content: 'override' }));
+    ok(
+      await write(ALLOWED, 'users/alice/conversations/c1/messages/a', {
+        role: 'assistant',
+        content: 'ok',
+      }),
+    );
+    denied(
+      await write(ALLOWED, 'users/alice/conversations/c1/messages/b', {
+        role: 'system',
+        content: 'override',
+      }),
+    );
   });
 
   it('rejects oversized conversation titles', async () => {
-    denied(await write(ALLOWED, 'users/alice/conversations/c3', { title: 'x'.repeat(201), projectId: null, saved: false }));
+    denied(
+      await write(ALLOWED, 'users/alice/conversations/c3', {
+        title: 'x'.repeat(201),
+        projectId: null,
+        saved: false,
+      }),
+    );
   });
 });
 
@@ -143,8 +258,18 @@ describe('config documents', () => {
 
   it('lets only admins edit the allowlist', async () => {
     ok(await read(ALLOWED, 'config/access'));
-    denied(await write(ALLOWED, 'config/access', { allowedEmails: ['mallory@example.com'], adminEmails: [] }));
-    ok(await write(ADMIN, 'config/access', { allowedEmails: ['alice@example.com'], adminEmails: [] }));
+    denied(
+      await write(ALLOWED, 'config/access', {
+        allowedEmails: ['mallory@example.com'],
+        adminEmails: [],
+      }),
+    );
+    ok(
+      await write(ADMIN, 'config/access', {
+        allowedEmails: ['alice@example.com'],
+        adminEmails: [],
+      }),
+    );
   });
 
   it('denies other config documents', async () => {
@@ -154,12 +279,38 @@ describe('config documents', () => {
 
 describe('knowledge base', () => {
   it('keeps personal knowledge private to its owner (scenario 12)', async () => {
-    ok(await write(ALLOWED, 'users/alice/kbCollections/c1', { name: 'Companies and Organizations' }));
-    ok(await write(ALLOWED, 'users/alice/kbSources/s1', { collectionId: 'c1', title: 'Soko Aerial notes', type: 'note', status: 'ready' }));
-    ok(await write(ALLOWED, 'users/alice/kbSources/s1/chunks/0000', { index: 0, ref: 'Text', text: 'x' }));
-    ok(await write(ALLOWED, 'users/alice/kbSources/s1/index/s0', { shard: 0, start: 0, terms: ['soko'] }));
+    ok(
+      await write(ALLOWED, 'users/alice/kbCollections/c1', { name: 'Companies and Organizations' }),
+    );
+    ok(
+      await write(ALLOWED, 'users/alice/kbSources/s1', {
+        collectionId: 'c1',
+        title: 'Soko Aerial notes',
+        type: 'note',
+        status: 'ready',
+      }),
+    );
+    ok(
+      await write(ALLOWED, 'users/alice/kbSources/s1/chunks/0000', {
+        index: 0,
+        ref: 'Text',
+        text: 'x',
+      }),
+    );
+    ok(
+      await write(ALLOWED, 'users/alice/kbSources/s1/index/s0', {
+        shard: 0,
+        start: 0,
+        terms: ['soko'],
+      }),
+    );
     ok(await read(ALLOWED, 'users/alice/kbSources/s1/chunks/0000'));
-    for (const p of ['users/alice/kbCollections/c1', 'users/alice/kbSources/s1', 'users/alice/kbSources/s1/chunks/0000', 'users/alice/kbSources/s1/index/s0']) {
+    for (const p of [
+      'users/alice/kbCollections/c1',
+      'users/alice/kbSources/s1',
+      'users/alice/kbSources/s1/chunks/0000',
+      'users/alice/kbSources/s1/index/s0',
+    ]) {
       denied(await read(BOB, p));
       denied(await read(ADMIN, p));
       denied(await write(BOB, p, { title: 'hijack' }));
@@ -171,15 +322,41 @@ describe('knowledge base', () => {
 
   it('lets approved users read shared knowledge but only admins change it', async () => {
     ok(await write(ADMIN, 'kb/shared/kbCollections/g', { name: 'General Knowledge' }));
-    ok(await write(ADMIN, 'kb/shared/kbSources/s1', { collectionId: 'g', title: 'Handbook', type: 'note', status: 'ready' }));
-    ok(await write(ADMIN, 'kb/shared/kbSources/s1/chunks/0000', { index: 0, ref: 'Text', text: 'x' }));
+    ok(
+      await write(ADMIN, 'kb/shared/kbSources/s1', {
+        collectionId: 'g',
+        title: 'Handbook',
+        type: 'note',
+        status: 'ready',
+      }),
+    );
+    ok(
+      await write(ADMIN, 'kb/shared/kbSources/s1/chunks/0000', {
+        index: 0,
+        ref: 'Text',
+        text: 'x',
+      }),
+    );
     ok(await read(ALLOWED, 'kb/shared/kbSources/s1'));
     ok(await read(BOB, 'kb/shared/kbSources/s1/chunks/0000'));
     denied(await read(STRANGER, 'kb/shared/kbSources/s1'));
     denied(await read(null, 'kb/shared/kbCollections/g'));
     denied(await write(ALLOWED, 'kb/shared/kbCollections/g2', { name: 'Mine' }));
-    denied(await write(ALLOWED, 'kb/shared/kbSources/s1', { collectionId: 'g', title: 'Edited', type: 'note', status: 'ready' }));
-    denied(await write(ALLOWED, 'kb/shared/kbSources/s1/chunks/0001', { index: 1, ref: 'Text', text: 'y' }));
+    denied(
+      await write(ALLOWED, 'kb/shared/kbSources/s1', {
+        collectionId: 'g',
+        title: 'Edited',
+        type: 'note',
+        status: 'ready',
+      }),
+    );
+    denied(
+      await write(ALLOWED, 'kb/shared/kbSources/s1/chunks/0001', {
+        index: 1,
+        ref: 'Text',
+        text: 'y',
+      }),
+    );
     denied(await del(ALLOWED, 'kb/shared/kbSources/s1'));
     ok(await del(ADMIN, 'kb/shared/kbSources/s1'));
   });
@@ -202,20 +379,43 @@ describe('search limits, cache and document subcollections', () => {
     ok(await write(ADMIN, 'config/limits', { ...limits, serpapi: { daily: 5, monthly: 100 } }));
     denied(await write(ADMIN, 'config/limits', { ...limits, apiKey: 'x' }));
     denied(await write(ADMIN, 'config/limits', { ...limits, providerReserve: 'lots' }));
-    ok(await write(ADMIN, 'config/limits', { ...limits, images: { perUserDaily: 10, appDailyNeurons: 9000 } }));
+    ok(
+      await write(ADMIN, 'config/limits', {
+        ...limits,
+        images: { perUserDaily: 10, appDailyNeurons: 9000 },
+      }),
+    );
     denied(await write(ADMIN, 'config/limits', { ...limits, images: 'unlimited' }));
   });
 
   it('created images: the owner can read and delete them, nobody can create or change them from the app', async () => {
-    const meta = { uid: 'alice', conversationId: 'c1', prompt: 'a lion', model: '@cf/black-forest-labs/flux-2-klein-4b', mime: 'image/jpeg', width: 1024, height: 1024, chunks: 1, status: 'ready' };
+    const meta = {
+      uid: 'alice',
+      conversationId: 'c1',
+      prompt: 'a lion',
+      model: '@cf/black-forest-labs/flux-2-klein-4b',
+      mime: 'image/jpeg',
+      width: 1024,
+      height: 1024,
+      chunks: 1,
+      status: 'ready',
+    };
     ok(await write(OWNER, 'users/alice/generatedImages/img_m1', meta));
-    ok(await write(OWNER, 'users/alice/generatedImageData/img_m1_0', { imageId: 'img_m1', index: 0, data: 'AAAA' }));
+    ok(
+      await write(OWNER, 'users/alice/generatedImageData/img_m1_0', {
+        imageId: 'img_m1',
+        index: 0,
+        data: 'AAAA',
+      }),
+    );
     ok(await read(ALLOWED, 'users/alice/generatedImages/img_m1'));
     ok(await read(ALLOWED, 'users/alice/generatedImageData/img_m1_0'));
     denied(await read(BOB, 'users/alice/generatedImages/img_m1'));
     denied(await read(BOB, 'users/alice/generatedImageData/img_m1_0'));
     denied(await write(ALLOWED, 'users/alice/generatedImages/img_x', meta));
-    denied(await write(ALLOWED, 'users/alice/generatedImages/img_m1', { ...meta, prompt: 'changed' }));
+    denied(
+      await write(ALLOWED, 'users/alice/generatedImages/img_m1', { ...meta, prompt: 'changed' }),
+    );
     denied(await write(ALLOWED, 'users/alice/generatedImageData/img_x_0', { data: 'AAAA' }));
     denied(await del(BOB, 'users/alice/generatedImages/img_m1'));
     ok(await del(ALLOWED, 'users/alice/generatedImageData/img_m1_0'));
@@ -230,20 +430,43 @@ describe('search limits, cache and document subcollections', () => {
   });
 
   it('lets approved users read the AI routing config but only admins change it', async () => {
-    const ai = { preferredProvider: 'gemini', defaultModel: 'gemini:gemini-3.5-flash', fallback: 'any' };
+    const ai = {
+      preferredProvider: 'gemini',
+      defaultModel: 'gemini:gemini-3.5-flash',
+      fallback: 'any',
+    };
     ok(await write(ADMIN, 'config/ai', ai));
     ok(await read(ALLOWED, 'config/ai'));
     denied(await read(STRANGER, 'config/ai'));
     denied(await write(ALLOWED, 'config/ai', ai));
-    ok(await write(ADMIN, 'config/ai', { ...ai, preferredProvider: 'openrouter', fallback: 'off', defaultModel: null }));
-    ok(await write(ADMIN, 'config/ai', { ...ai, preferredProvider: 'cloudflare', defaultModel: '@cf/google/gemma-4-26b-a4b-it' }));
+    ok(
+      await write(ADMIN, 'config/ai', {
+        ...ai,
+        preferredProvider: 'openrouter',
+        fallback: 'off',
+        defaultModel: null,
+      }),
+    );
+    ok(
+      await write(ADMIN, 'config/ai', {
+        ...ai,
+        preferredProvider: 'cloudflare',
+        defaultModel: '@cf/google/gemma-4-26b-a4b-it',
+      }),
+    );
     denied(await write(ADMIN, 'config/ai', { ...ai, preferredProvider: 'other' }));
     denied(await write(ADMIN, 'config/ai', { ...ai, fallback: 'paid' }));
     denied(await write(ADMIN, 'config/ai', { ...ai, apiKey: 'x' }));
   });
 
   it('keeps the search cache private to its owner', async () => {
-    ok(await write(ALLOWED, 'users/alice/searchCache/k1', { query: 'q', provider: 'serpapi', results: [] }));
+    ok(
+      await write(ALLOWED, 'users/alice/searchCache/k1', {
+        query: 'q',
+        provider: 'serpapi',
+        results: [],
+      }),
+    );
     ok(await read(ALLOWED, 'users/alice/searchCache/k1'));
     denied(await read(BOB, 'users/alice/searchCache/k1'));
   });
@@ -251,7 +474,9 @@ describe('search limits, cache and document subcollections', () => {
   it('usage counters (search budgets) are readable by their owner but written only by the server', async () => {
     ok(await write(OWNER, 'users/alice/usage/2026-11-08', { search: { serpapi: { credits: 8 } } }));
     ok(await read(ALLOWED, 'users/alice/usage/2026-11-08'));
-    denied(await write(ALLOWED, 'users/alice/usage/2026-11-08', { search: { serpapi: { credits: 0 } } }));
+    denied(
+      await write(ALLOWED, 'users/alice/usage/2026-11-08', { search: { serpapi: { credits: 0 } } }),
+    );
     denied(await del(ALLOWED, 'users/alice/usage/2026-11-08'));
     denied(await write(ALLOWED, 'users/alice/usage/2026-11', { search: {} }));
     denied(await read(BOB, 'users/alice/usage/2026-11-08'));
@@ -268,13 +493,27 @@ describe('search limits, cache and document subcollections', () => {
 
 describe('phone verification', () => {
   const NO_PHONE = token('alice', 'alice@example.com', true, { phoneVerified: false });
-  const GOOGLE = token('alice', 'alice@example.com', true, { provider: 'google.com', phoneVerified: false });
-  const APPLE = token('alice', 'alice@example.com', true, { provider: 'apple.com', phoneVerified: false });
-  const ADMIN_NO_PHONE = token('admin-uid', 'kingsleyanaab604@gmail.com', true, { phoneVerified: false });
+  const GOOGLE = token('alice', 'alice@example.com', true, {
+    provider: 'google.com',
+    phoneVerified: false,
+  });
+  const APPLE = token('alice', 'alice@example.com', true, {
+    provider: 'apple.com',
+    phoneVerified: false,
+  });
+  const ADMIN_NO_PHONE = token('admin-uid', 'kingsleyanaab604@gmail.com', true, {
+    phoneVerified: false,
+  });
 
   it('email/password users without a verified phone are locked out, even admins', async () => {
     denied(await read(NO_PHONE, 'users/alice/conversations/c1'));
-    denied(await write(NO_PHONE, 'users/alice/conversations/c9', { title: 'x', projectId: null, saved: false }));
+    denied(
+      await write(NO_PHONE, 'users/alice/conversations/c9', {
+        title: 'x',
+        projectId: null,
+        saved: false,
+      }),
+    );
     denied(await read(NO_PHONE, 'config/access'));
     denied(await read(ADMIN_NO_PHONE, 'config/access'));
   });
@@ -286,10 +525,19 @@ describe('phone verification', () => {
 
   it('clients cannot set phone fields or account status on their profile', async () => {
     denied(await write(ALLOWED, 'users/alice', { displayName: 'Alice', phoneVerified: true }));
-    denied(await write(ALLOWED, 'users/alice', { displayName: 'Alice', phoneNumber: '+233241234567' }));
+    denied(
+      await write(ALLOWED, 'users/alice', { displayName: 'Alice', phoneNumber: '+233241234567' }),
+    );
     denied(await write(ALLOWED, 'users/alice', { displayName: 'Alice', accountStatus: 'active' }));
     // a real client update (merge, like updateDoc) of its own non-server fields is fine
-    ok(await call(ALLOWED, 'PATCH', 'users/alice?updateMask.fieldPaths=displayName&updateMask.fieldPaths=provider', { displayName: 'Alice', provider: 'password' }));
+    ok(
+      await call(
+        ALLOWED,
+        'PATCH',
+        'users/alice?updateMask.fieldPaths=displayName&updateMask.fieldPaths=provider',
+        { displayName: 'Alice', provider: 'password' },
+      ),
+    );
   });
 
   it('server-only verification records are unreadable and unwritable', async () => {
@@ -312,7 +560,13 @@ describe('account status, sessions and audit records', () => {
     ok(await write(OWNER, 'users/alice', { displayName: 'Alice', accountStatus: 'suspended' }));
     denied(await read(ALLOWED, 'users/alice'));
     denied(await read(ALLOWED, 'users/alice/conversations/c1'));
-    denied(await write(ALLOWED, 'users/alice/conversations/c5', { title: 'x', projectId: null, saved: false }));
+    denied(
+      await write(ALLOWED, 'users/alice/conversations/c5', {
+        title: 'x',
+        projectId: null,
+        saved: false,
+      }),
+    );
     ok(await write(OWNER, 'users/alice', { displayName: 'Alice', accountStatus: 'deleted' }));
     denied(await read(ALLOWED, 'users/alice/memories/m1'));
     ok(await write(OWNER, 'users/alice', { displayName: 'Alice', accountStatus: 'active' }));
@@ -320,7 +574,13 @@ describe('account status, sessions and audit records', () => {
   });
 
   it('sessions that started before a revocation are refused', async () => {
-    ok(await write(OWNER, 'users/alice', { displayName: 'Alice', accountStatus: 'active', sessionsValidAfter: NOW - 60 }));
+    ok(
+      await write(OWNER, 'users/alice', {
+        displayName: 'Alice',
+        accountStatus: 'active',
+        sessionsValidAfter: NOW - 60,
+      }),
+    );
     const OLD = token('alice', 'alice@example.com', true, { authTime: NOW - 3600 });
     const FRESH = token('alice', 'alice@example.com', true, { authTime: NOW - 10 });
     denied(await read(OLD, 'users/alice/conversations/c1'));
@@ -328,10 +588,28 @@ describe('account status, sessions and audit records', () => {
   });
 
   it('clients cannot clear their own suspension or revocation', async () => {
-    ok(await write(OWNER, 'users/alice', { displayName: 'Alice', accountStatus: 'active', sessionsValidAfter: NOW - 60 }));
-    denied(await call(ALLOWED, 'PATCH', 'users/alice?updateMask.fieldPaths=sessionsValidAfter', { sessionsValidAfter: 0 }));
-    denied(await call(ALLOWED, 'PATCH', 'users/alice?updateMask.fieldPaths=purgeAfter', { purgeAfter: 0 }));
-    denied(await call(ALLOWED, 'PATCH', 'users/alice?updateMask.fieldPaths=lastAuthTime', { lastAuthTime: 1 }));
+    ok(
+      await write(OWNER, 'users/alice', {
+        displayName: 'Alice',
+        accountStatus: 'active',
+        sessionsValidAfter: NOW - 60,
+      }),
+    );
+    denied(
+      await call(ALLOWED, 'PATCH', 'users/alice?updateMask.fieldPaths=sessionsValidAfter', {
+        sessionsValidAfter: 0,
+      }),
+    );
+    denied(
+      await call(ALLOWED, 'PATCH', 'users/alice?updateMask.fieldPaths=purgeAfter', {
+        purgeAfter: 0,
+      }),
+    );
+    denied(
+      await call(ALLOWED, 'PATCH', 'users/alice?updateMask.fieldPaths=lastAuthTime', {
+        lastAuthTime: 1,
+      }),
+    );
     denied(await del(ALLOWED, 'users/alice'));
   });
 
@@ -371,7 +649,10 @@ describe('account status, sessions and audit records', () => {
 });
 
 describe('administrator approval (accessStatus) and access requests', () => {
-  const CAROL = token('carol', 'carol@example.com', true, { provider: 'google.com', phoneVerified: false });
+  const CAROL = token('carol', 'carol@example.com', true, {
+    provider: 'google.com',
+    phoneVerified: false,
+  });
   const now = Math.floor(Date.now() / 1000);
   const SERVER = `${b64({ alg: 'none', typ: 'JWT' })}.${b64({
     iss: `https://securetoken.google.com/${PROJECT}`,
@@ -404,14 +685,38 @@ describe('administrator approval (accessStatus) and access requests', () => {
   });
 
   it('users cannot approve themselves', async () => {
-    ok(await write(OWNER, 'users/alice', { email: 'alice@example.com', accessStatus: 'pending', displayName: 'A' }));
-    denied(await call(ALLOWED, 'PATCH', 'users/alice?updateMask.fieldPaths=accessStatus', { accessStatus: 'approved' }));
-    denied(await call(ALLOWED, 'PATCH', 'users/alice?updateMask.fieldPaths=approvedBy', { approvedBy: 'me' }));
-    ok(await call(ALLOWED, 'PATCH', 'users/alice?updateMask.fieldPaths=displayName', { displayName: 'Alice' }));
+    ok(
+      await write(OWNER, 'users/alice', {
+        email: 'alice@example.com',
+        accessStatus: 'pending',
+        displayName: 'A',
+      }),
+    );
+    denied(
+      await call(ALLOWED, 'PATCH', 'users/alice?updateMask.fieldPaths=accessStatus', {
+        accessStatus: 'approved',
+      }),
+    );
+    denied(
+      await call(ALLOWED, 'PATCH', 'users/alice?updateMask.fieldPaths=approvedBy', {
+        approvedBy: 'me',
+      }),
+    );
+    ok(
+      await call(ALLOWED, 'PATCH', 'users/alice?updateMask.fieldPaths=displayName', {
+        displayName: 'Alice',
+      }),
+    );
   });
 
   it('access requests are readable by admins only and writable by no client', async () => {
-    ok(await write(OWNER, 'accessRequests/carol', { uid: 'carol', email: 'carol@example.com', status: 'pending' }));
+    ok(
+      await write(OWNER, 'accessRequests/carol', {
+        uid: 'carol',
+        email: 'carol@example.com',
+        status: 'pending',
+      }),
+    );
     ok(await read(ADMIN, 'accessRequests/carol'));
     denied(await read(CAROL, 'accessRequests/carol'));
     denied(await read(ALLOWED, 'accessRequests/carol'));
@@ -445,7 +750,12 @@ describe('administrator approval (accessStatus) and access requests', () => {
     const db = new Firestore(SERVER, PROJECT);
     db.admin = true;
     expect(await deleteTree(db, 'users/carol')).toBe(6); // 5 documents under the profile + the profile
-    for (const p of ['users/carol', 'users/carol/conversations/c1/messages/m1', 'users/carol/conversations/c2/messages/m2', 'users/carol/documents/d1/chunks/k1']) {
+    for (const p of [
+      'users/carol',
+      'users/carol/conversations/c1/messages/m1',
+      'users/carol/conversations/c2/messages/m2',
+      'users/carol/documents/d1/chunks/k1',
+    ]) {
       expect(await read(OWNER, p)).toBe(404);
     }
     ok(await read(OWNER, 'users/dave/conversations/c9'));
@@ -455,13 +765,47 @@ describe('administrator approval (accessStatus) and access requests', () => {
 describe('support reports, notifications and help articles', () => {
   const REF = 'ATL-2611-ABCDE';
   beforeEach(async () => {
-    ok(await write(OWNER, `supportReports/${REF}`, { ref: REF, uid: 'alice', title: 'Upload fails', status: 'new', priority: 'medium' }));
-    ok(await write(OWNER, `supportReports/${REF}/messages/m1`, { author: 'admin', text: 'Which browser?', at: 1 }));
-    ok(await write(OWNER, `supportReports/${REF}/attachments/f1`, { name: 's.jpg', dataUrl: 'data:image/jpeg;base64,AAAA' }));
+    ok(
+      await write(OWNER, `supportReports/${REF}`, {
+        ref: REF,
+        uid: 'alice',
+        title: 'Upload fails',
+        status: 'new',
+        priority: 'medium',
+      }),
+    );
+    ok(
+      await write(OWNER, `supportReports/${REF}/messages/m1`, {
+        author: 'admin',
+        text: 'Which browser?',
+        at: 1,
+      }),
+    );
+    ok(
+      await write(OWNER, `supportReports/${REF}/attachments/f1`, {
+        name: 's.jpg',
+        dataUrl: 'data:image/jpeg;base64,AAAA',
+      }),
+    );
     ok(await write(OWNER, `supportReports/${REF}/internal/n1`, { text: 'internal only', at: 1 }));
     ok(await write(OWNER, `supportReports/${REF}/activity/e1`, { type: 'created', at: 1 }));
-    ok(await write(OWNER, `users/alice/notifications/${REF}-reply`, { kind: 'reply', ref: REF, read: false, count: 1, at: 1 }));
-    ok(await write(OWNER, `adminNotifications/${REF}-new_report`, { kind: 'new_report', ref: REF, readBy: [], at: 1 }));
+    ok(
+      await write(OWNER, `users/alice/notifications/${REF}-reply`, {
+        kind: 'reply',
+        ref: REF,
+        read: false,
+        count: 1,
+        at: 1,
+      }),
+    );
+    ok(
+      await write(OWNER, `adminNotifications/${REF}-new_report`, {
+        kind: 'new_report',
+        ref: REF,
+        readBy: [],
+        at: 1,
+      }),
+    );
     ok(await write(OWNER, 'helpArticles/billing', { id: 'billing', title: 'Billing', body: 'x' }));
   });
 
@@ -482,9 +826,27 @@ describe('support reports, notifications and help articles', () => {
   });
 
   it('never lets a user write reports, replies, notes or statuses directly', async () => {
-    denied(await write(ALLOWED, `supportReports/${REF}`, { ref: REF, uid: 'alice', title: 'Upload fails', status: 'resolved' }));
-    denied(await write(ALLOWED, `supportReports/ATL-2611-ZZZZZ`, { ref: 'ATL-2611-ZZZZZ', uid: 'alice', status: 'new' }));
-    denied(await write(ALLOWED, `supportReports/${REF}/messages/m2`, { author: 'admin', text: 'fake admin reply' }));
+    denied(
+      await write(ALLOWED, `supportReports/${REF}`, {
+        ref: REF,
+        uid: 'alice',
+        title: 'Upload fails',
+        status: 'resolved',
+      }),
+    );
+    denied(
+      await write(ALLOWED, `supportReports/ATL-2611-ZZZZZ`, {
+        ref: 'ATL-2611-ZZZZZ',
+        uid: 'alice',
+        status: 'new',
+      }),
+    );
+    denied(
+      await write(ALLOWED, `supportReports/${REF}/messages/m2`, {
+        author: 'admin',
+        text: 'fake admin reply',
+      }),
+    );
     denied(await write(ALLOWED, `supportReports/${REF}/internal/n2`, { text: 'x' }));
     denied(await del(ALLOWED, `supportReports/${REF}`));
     denied(await write(ALLOWED, `supportSubmissions/alice_x`, { ref: REF }));
@@ -495,7 +857,9 @@ describe('support reports, notifications and help articles', () => {
     ok(await read(ADMIN, `supportReports/${REF}/internal/n1`));
     ok(await read(ADMIN, `supportReports/${REF}/activity/e1`));
     ok(await read(ADMIN, `adminNotifications/${REF}-new_report`));
-    denied(await write(ADMIN, `supportReports/${REF}`, { ref: REF, uid: 'alice', status: 'closed' }));
+    denied(
+      await write(ADMIN, `supportReports/${REF}`, { ref: REF, uid: 'alice', status: 'closed' }),
+    );
     denied(await write(ADMIN, `adminNotifications/${REF}-new_report`, { readBy: ['admin-uid'] }));
     denied(await read(ALLOWED, `adminNotifications/${REF}-new_report`));
   });
@@ -503,22 +867,48 @@ describe('support reports, notifications and help articles', () => {
   it('lets the owner only mark their notifications read', async () => {
     ok(await read(ALLOWED, `users/alice/notifications/${REF}-reply`));
     denied(await read(BOB, `users/alice/notifications/${REF}-reply`));
-    ok(await write(ALLOWED, `users/alice/notifications/${REF}-reply`, { kind: 'reply', ref: REF, read: true, count: 1, at: 1 }));
-    denied(await write(ALLOWED, `users/alice/notifications/${REF}-reply`, { kind: 'reply', ref: REF, read: true, count: 9, at: 1 }));
-    denied(await write(ALLOWED, `users/alice/notifications/new-one`, { kind: 'reply', read: false }));
+    ok(
+      await write(ALLOWED, `users/alice/notifications/${REF}-reply`, {
+        kind: 'reply',
+        ref: REF,
+        read: true,
+        count: 1,
+        at: 1,
+      }),
+    );
+    denied(
+      await write(ALLOWED, `users/alice/notifications/${REF}-reply`, {
+        kind: 'reply',
+        ref: REF,
+        read: true,
+        count: 9,
+        at: 1,
+      }),
+    );
+    denied(
+      await write(ALLOWED, `users/alice/notifications/new-one`, { kind: 'reply', read: false }),
+    );
     ok(await del(ALLOWED, `users/alice/notifications/${REF}-reply`));
   });
 
   it('lets approved users read help articles; only the server writes them', async () => {
     ok(await read(ALLOWED, 'helpArticles/billing'));
     denied(await read(null, 'helpArticles/billing'));
-    denied(await write(ADMIN, 'helpArticles/billing', { id: 'billing', title: 'Changed', body: 'y' }));
+    denied(
+      await write(ADMIN, 'helpArticles/billing', { id: 'billing', title: 'Changed', body: 'y' }),
+    );
   });
 });
 
 describe('Terms of Use and Privacy Policy consent', () => {
   it('without accepting the current versions, an approved user reaches no data', async () => {
-    ok(await write(OWNER, 'users/alice', { displayName: 'Alice', accessStatus: 'approved', consent: null }));
+    ok(
+      await write(OWNER, 'users/alice', {
+        displayName: 'Alice',
+        accessStatus: 'approved',
+        consent: null,
+      }),
+    );
     denied(await read(ALLOWED, 'users/alice/conversations/c1'));
     denied(await read(ALLOWED, 'users/alice/memories/m1'));
     denied(await write(ALLOWED, 'users/alice/projects/p1', { name: 'P', instructions: '' }));
@@ -526,29 +916,72 @@ describe('Terms of Use and Privacy Policy consent', () => {
   });
 
   it('an older accepted version is not enough after a document update', async () => {
-    ok(await write(OWNER, 'users/alice', { displayName: 'Alice', consent: { termsVersion: '0.9', privacyVersion: '1.3', acceptedAt: 1, method: 'google' } }));
+    ok(
+      await write(OWNER, 'users/alice', {
+        displayName: 'Alice',
+        consent: { termsVersion: '0.9', privacyVersion: '1.3', acceptedAt: 1, method: 'google' },
+      }),
+    );
     denied(await read(ALLOWED, 'users/alice/conversations/c1'));
     // accepted 1.2 (before Cloudflare image creation was added): must accept a newer version
-    ok(await write(OWNER, 'users/alice', { displayName: 'Alice', consent: { termsVersion: '1.2', privacyVersion: '1.2', acceptedAt: 1, method: 'google' } }));
+    ok(
+      await write(OWNER, 'users/alice', {
+        displayName: 'Alice',
+        consent: { termsVersion: '1.2', privacyVersion: '1.2', acceptedAt: 1, method: 'google' },
+      }),
+    );
     denied(await read(ALLOWED, 'users/alice/conversations/c1'));
   });
 
   it('during the change to 1.4, accounts that accepted 1.3 keep their data access (the app asks them to accept 1.4)', async () => {
-    ok(await write(OWNER, 'users/alice', { displayName: 'Alice', accessStatus: 'approved', consent: { termsVersion: '1.3', privacyVersion: '1.3', acceptedAt: 1, method: 'google' } }));
+    ok(
+      await write(OWNER, 'users/alice', {
+        displayName: 'Alice',
+        accessStatus: 'approved',
+        consent: { termsVersion: '1.3', privacyVersion: '1.3', acceptedAt: 1, method: 'google' },
+      }),
+    );
     ok(await read(ALLOWED, 'users/alice'));
-    ok(await write(OWNER, 'users/alice', { displayName: 'Alice', accessStatus: 'approved', consent: { termsVersion: '1.4', privacyVersion: '1.4', acceptedAt: 2, method: 'google' } }));
+    ok(
+      await write(OWNER, 'users/alice', {
+        displayName: 'Alice',
+        accessStatus: 'approved',
+        consent: { termsVersion: '1.4', privacyVersion: '1.4', acceptedAt: 2, method: 'google' },
+      }),
+    );
     ok(await read(ALLOWED, 'users/alice'));
-    ok(await write(OWNER, 'users/alice', { displayName: 'Alice', accessStatus: 'approved', consent: { termsVersion: '1.3', privacyVersion: '1.4', acceptedAt: 2, method: 'google' } }));
+    ok(
+      await write(OWNER, 'users/alice', {
+        displayName: 'Alice',
+        accessStatus: 'approved',
+        consent: { termsVersion: '1.3', privacyVersion: '1.4', acceptedAt: 2, method: 'google' },
+      }),
+    );
     ok(await read(ALLOWED, 'users/alice'));
   });
 
   it('users cannot grant themselves consent, and cannot write the consent history', async () => {
     ok(await write(OWNER, 'users/alice', { displayName: 'Alice', consent: null }));
-    denied(await call(ALLOWED, 'PATCH', 'users/alice?updateMask.fieldPaths=consent', { consent: { termsVersion: '1.4', privacyVersion: '1.4', acceptedAt: 1, method: 'google' } }));
+    denied(
+      await call(ALLOWED, 'PATCH', 'users/alice?updateMask.fieldPaths=consent', {
+        consent: { termsVersion: '1.4', privacyVersion: '1.4', acceptedAt: 1, method: 'google' },
+      }),
+    );
     ok(await write(OWNER, 'users/alice', { displayName: 'Alice' })); // accepted (seeded)
-    denied(await call(ALLOWED, 'PATCH', 'users/alice?updateMask.fieldPaths=consent', { consent: { termsVersion: '9.9', privacyVersion: '9.9', acceptedAt: 1, method: 'google' } }));
-    denied(await write(ALLOWED, 'users/alice/consents/x', { termsVersion: '1.3', privacyVersion: '1.3' }));
-    ok(await write(OWNER, 'users/alice/consents/x', { termsVersion: '1.3', privacyVersion: '1.3' }));
+    denied(
+      await call(ALLOWED, 'PATCH', 'users/alice?updateMask.fieldPaths=consent', {
+        consent: { termsVersion: '9.9', privacyVersion: '9.9', acceptedAt: 1, method: 'google' },
+      }),
+    );
+    denied(
+      await write(ALLOWED, 'users/alice/consents/x', {
+        termsVersion: '1.3',
+        privacyVersion: '1.3',
+      }),
+    );
+    ok(
+      await write(OWNER, 'users/alice/consents/x', { termsVersion: '1.3', privacyVersion: '1.3' }),
+    );
     ok(await read(ALLOWED, 'users/alice/consents/x'));
     denied(await read(BOB, 'users/alice/consents/x'));
   });
@@ -556,7 +989,13 @@ describe('Terms of Use and Privacy Policy consent', () => {
   it('accepting never overrides a rejection or a suspension', async () => {
     ok(await write(OWNER, 'users/alice', { email: 'alice@example.com', accessStatus: 'rejected' }));
     denied(await read(ALLOWED, 'users/alice/conversations/c1'));
-    ok(await write(OWNER, 'users/alice', { email: 'alice@example.com', accessStatus: 'approved', accountStatus: 'suspended' }));
+    ok(
+      await write(OWNER, 'users/alice', {
+        email: 'alice@example.com',
+        accessStatus: 'approved',
+        accountStatus: 'suspended',
+      }),
+    );
     denied(await read(ALLOWED, 'users/alice/conversations/c1'));
   });
 
@@ -581,7 +1020,15 @@ describe('automatic approval setting (config/approval)', () => {
   it('a user cannot approve themselves', async () => {
     ok(await write(OWNER, 'users/carol', { email: 'carol@example.com', accessStatus: 'pending' }));
     const CAROL = token('carol', 'carol@example.com');
-    denied(await call(CAROL, 'PATCH', 'users/carol?updateMask.fieldPaths=accessStatus', { accessStatus: 'approved' }));
-    denied(await call(CAROL, 'PATCH', 'users/carol?updateMask.fieldPaths=approvedBy', { approvedBy: 'auto' }));
+    denied(
+      await call(CAROL, 'PATCH', 'users/carol?updateMask.fieldPaths=accessStatus', {
+        accessStatus: 'approved',
+      }),
+    );
+    denied(
+      await call(CAROL, 'PATCH', 'users/carol?updateMask.fieldPaths=approvedBy', {
+        approvedBy: 'auto',
+      }),
+    );
   });
 });

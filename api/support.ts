@@ -1,11 +1,21 @@
+import { waitUntil } from '@vercel/functions';
 import { z } from 'zod';
 import { requireAllowedUser, type AccessConfig } from '../server/access.js';
-import { adminConfigured, adminDb } from '../server/admin.js';
+import { accountAdmin, adminConfigured, adminDb } from '../server/admin.js';
+import { emailDeps } from '../server/email/index.js';
+import { getSmsProvider } from '../server/sms/provider.js';
+import { supportUpdateNotice, type SupportNoticeKind } from '../server/support/notifyOut.js';
 import { env } from '../server/env.js';
 import type { Firestore } from '../server/firestore.js';
 import { noteUnauthorizedAccess } from '../server/account/events.js';
 import { handle, HttpError, json, readJson } from '../server/http.js';
-import { CATEGORY_IDS, STATUS_IDS, SUPPORT_LIMITS, SUPPORT_PRIORITIES } from '../server/shared/support.js';
+import {
+  CATEGORY_IDS,
+  STATUS_IDS,
+  SUPPORT_LIMITS,
+  SUPPORT_PRIORITIES,
+  type SupportStatus,
+} from '../server/shared/support.js';
 import { removeArticle, saveArticle } from '../server/support/help.js';
 import {
   addUserMessage,
@@ -28,7 +38,10 @@ import {
 } from '../server/support/reports.js';
 
 const ref = z.string().min(5).max(20);
-const attachment = z.object({ name: z.string().max(200), dataUrl: z.string().max(SUPPORT_LIMITS.attachmentChars + 100) });
+const attachment = z.object({
+  name: z.string().max(200),
+  dataUrl: z.string().max(SUPPORT_LIMITS.attachmentChars + 100),
+});
 const attachments = z.array(attachment).max(SUPPORT_LIMITS.attachments).optional();
 
 const userActions = [
@@ -42,7 +55,12 @@ const userActions = [
   }),
   z.object({ action: z.literal('mine') }),
   z.object({ action: z.literal('get'), ref }),
-  z.object({ action: z.literal('message'), ref, text: z.string().max(SUPPORT_LIMITS.message + 50), attachments }),
+  z.object({
+    action: z.literal('message'),
+    ref,
+    text: z.string().max(SUPPORT_LIMITS.message + 50),
+    attachments,
+  }),
   z.object({ action: z.literal('confirm'), ref }),
   z.object({ action: z.literal('reopen'), ref }),
   z.object({ action: z.literal('attachment'), ref, id: z.string().max(40) }),
@@ -51,13 +69,22 @@ const userActions = [
 const adminActions = [
   z.object({ action: z.literal('adminList') }),
   z.object({ action: z.literal('adminGet'), ref }),
-  z.object({ action: z.literal('adminReply'), ref, text: z.string().max(SUPPORT_LIMITS.message + 50), attachments, requestInfo: z.boolean().optional() }),
+  z.object({
+    action: z.literal('adminReply'),
+    ref,
+    text: z.string().max(SUPPORT_LIMITS.message + 50),
+    attachments,
+    requestInfo: z.boolean().optional(),
+  }),
   z.object({ action: z.literal('adminStatus'), ref, status: z.enum(STATUS_IDS) }),
   z.object({ action: z.literal('adminPriority'), ref, priority: z.enum(SUPPORT_PRIORITIES) }),
   z.object({ action: z.literal('adminAssign'), ref, assignee: z.string().max(320).nullable() }),
   z.object({ action: z.literal('adminNote'), ref, text: z.string().max(SUPPORT_LIMITS.note + 50) }),
   z.object({ action: z.literal('adminDelete'), ref, confirmRef: z.string().max(20) }),
-  z.object({ action: z.literal('adminNotificationsRead'), ids: z.array(z.string().max(60)).max(50) }),
+  z.object({
+    action: z.literal('adminNotificationsRead'),
+    ids: z.array(z.string().max(60)).max(50),
+  }),
   z.object({
     action: z.literal('helpSave'),
     id: z.string().max(60),
@@ -67,13 +94,44 @@ const adminActions = [
     body: z.string().min(10).max(20_000),
     keywords: z.array(z.string().max(40)).max(20).optional(),
   }),
-  z.object({ action: z.literal('helpRemove'), id: z.string().max(60), mode: z.enum(['remove', 'restore']) }),
+  z.object({
+    action: z.literal('helpRemove'),
+    id: z.string().max(60),
+    mode: z.enum(['remove', 'restore']),
+  }),
 ] as const;
 
 /** Bootstrap owners plus administrators listed in config/access. */
 async function adminEmails(db: Firestore): Promise<string[]> {
   const access = (await db.get<AccessConfig>('config/access'))?.data;
-  return [...new Set([...env().adminEmails, ...(access?.adminEmails ?? []).map((e) => e.toLowerCase())])];
+  return [
+    ...new Set([...env().adminEmails, ...(access?.adminEmails ?? []).map((e) => e.toLowerCase())]),
+  ];
+}
+
+/** Email (and, for key updates, SMS) to the report's owner, after the response. */
+function noticeAfter(
+  db: Firestore,
+  report: { ref: string; uid: string; title: string; status: SupportStatus },
+  kind: SupportNoticeKind,
+  reply?: string,
+) {
+  const mail = emailDeps(db);
+  waitUntil(
+    supportUpdateNotice(
+      {
+        db,
+        mail,
+        sms: getSmsProvider(),
+        accounts: accountAdmin(),
+        baseUrl: mail.baseUrl,
+        smsDailyCap: env().smsNotifyDailyCap,
+      },
+      report,
+      kind,
+      { reply: reply?.trim() || null },
+    ),
+  );
 }
 
 const schema = z.discriminatedUnion('action', [...userActions, ...adminActions]);
@@ -94,17 +152,29 @@ export const POST = handle(async (request) => {
   if (!parsed.success) throw new HttpError(400, 'bad_request', 'Invalid request.');
   const b = parsed.data;
   if (ADMIN_ONLY.has(b.action) && !ctx.admin) {
-    await noteUnauthorizedAccess(ctx.user.uid, 'Administrator support desk', request.headers.get('user-agent'));
+    await noteUnauthorizedAccess(
+      ctx.user.uid,
+      'Administrator support desk',
+      request.headers.get('user-agent'),
+    );
     throw new HttpError(403, 'not_admin', 'Administrator access is required.');
   }
-  if (!adminConfigured()) throw new HttpError(503, 'admin_unconfigured', 'Support needs FIREBASE_SERVICE_ACCOUNT on the server.');
+  if (!adminConfigured())
+    throw new HttpError(
+      503,
+      'admin_unconfigured',
+      'Support needs FIREBASE_SERVICE_ACCOUNT on the server.',
+    );
   const db = await adminDb();
 
   const profile = (await db.get<{ displayName?: string }>(`users/${ctx.user.uid}`))?.data;
   const me: Person = {
     uid: ctx.user.uid,
     email: ctx.user.email,
-    name: (profile?.displayName || ctx.user.name || ctx.user.email?.split('@')[0] || 'User').slice(0, 120),
+    name: (profile?.displayName || ctx.user.name || ctx.user.email?.split('@')[0] || 'User').slice(
+      0,
+      120,
+    ),
   };
   const actor = { uid: me.uid, email: me.email };
 
@@ -127,10 +197,18 @@ export const POST = handle(async (request) => {
       return json({ ...(await adminList(db)), admins: await adminEmails(db) });
     case 'adminGet':
       return json({ ...(await adminDetail(db, b.ref)), admins: await adminEmails(db) });
-    case 'adminReply':
-      return json(await adminReply(db, actor, b.ref, b));
-    case 'adminStatus':
-      return json(await adminSetStatus(db, actor, b.ref, b.status));
+    case 'adminReply': {
+      const detail = await adminReply(db, actor, b.ref, b);
+      noticeAfter(db, detail.report, b.requestInfo ? 'info_request' : 'reply', b.text);
+      return json(detail);
+    }
+    case 'adminStatus': {
+      const before = (await db.get<{ status?: string }>(`supportReports/${b.ref}`))?.data.status;
+      const detail = await adminSetStatus(db, actor, b.ref, b.status);
+      if (before && before !== b.status)
+        noticeAfter(db, detail.report, b.status === 'resolved' ? 'resolved' : 'status');
+      return json(detail);
+    }
     case 'adminPriority':
       return json(await adminSetPriority(db, actor, b.ref, b.priority));
     case 'adminAssign':

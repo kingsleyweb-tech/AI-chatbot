@@ -14,7 +14,7 @@ interface Row {
   id: string;
   at: number;
   updatedAt: number;
-  purpose: 'verify' | 'recovery';
+  purpose: 'verify' | 'recovery' | 'support';
   route: 'otp' | 'sms';
   phone: string | null;
   ref: string | null;
@@ -190,7 +190,7 @@ export default function SmsAdminPage() {
                     <div className="min-w-0">
                       <div className="truncate font-medium">{r.user?.name || r.user?.email || (r.uid ? 'Deleted account' : 'Unknown')}</div>
                       <div className="truncate text-xs text-muted">
-                        {r.phone ?? 'No number'} · {r.purpose === 'verify' ? 'Phone verification' : 'Password recovery'} · {r.route === 'otp' ? 'OTP service' : 'SMS'}
+                        {r.phone ?? 'No number'} · {r.purpose === 'verify' ? 'Phone verification' : r.purpose === 'support' ? 'Support update' : 'Password recovery'} · {r.route === 'otp' ? 'OTP service' : 'SMS'}
                         {r.ref && <span title="Vynfy reference"> · ref {r.ref.length > 14 ? `${r.ref.slice(0, 8)}…` : r.ref}</span>}
                       </div>
                       {(r.error || r.providerStatus) && (
