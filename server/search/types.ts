@@ -12,8 +12,11 @@ export interface SearchResult {
   snippet: string;
   /** longer page content when the provider returned it (Tavily, extract) */
   content?: string;
-  /** only when the provider reported one; never inferred */
+  /** only when the provider reported one; never inferred. ISO 8601 when the provider's wording could be
+   *  resolved at retrieval time ("3 hours ago" -> exact time), otherwise the provider's own text */
   publishedDate?: string;
+  /** the provider's original date wording, kept for transparency ("3 hours ago") */
+  dateText?: string;
 }
 
 export interface SearchResponse {
@@ -57,6 +60,12 @@ export interface SearchOptions {
   max: number;
   /** Tavily only: 'advanced' costs 2 credits, used only by Deep Research */
   depth?: 'basic' | 'advanced';
+  /** restrict results to roughly this recent period (SerpAPI tbs=qdr, Tavily time_range); dates are re-checked after */
+  freshness?: 'hour' | 'day' | 'week' | 'month' | 'year';
+  /** sort by date instead of relevance (SerpAPI news) */
+  sortByDate?: boolean;
+  /** country focus: Google country code (SerpAPI gl) and Tavily country name */
+  region?: { gl?: string; country?: string };
   signal?: AbortSignal;
 }
 

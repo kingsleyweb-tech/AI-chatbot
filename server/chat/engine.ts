@@ -602,6 +602,7 @@ export async function runChat(
             knowledge: knowledge?.text || undefined,
             webResults: web?.text || undefined,
             webSearchFailed: web?.failure ?? null,
+            news: Boolean(web?.news),
             capabilityNotes: capabilityNotes(
               task,
               models.find((m) => m.id === chain[0]),

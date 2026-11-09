@@ -27,6 +27,7 @@ const AccessRequestsPage = lazy(() => import('./features/admin/AccessRequestsPag
 const SupportAdminPage = lazy(() => import('./features/admin/SupportAdminPage'));
 const SupportReportAdminPage = lazy(() => import('./features/admin/SupportReportAdminPage'));
 const SmsAdminPage = lazy(() => import('./features/admin/SmsAdminPage'));
+const NewsAdminPage = lazy(() => import('./features/admin/NewsAdminPage'));
 const ReportIssuePage = lazy(() => import('./features/support/ReportIssuePage'));
 const MyReportsPage = lazy(() => import('./features/support/MyReportsPage'));
 const ReportThreadPage = lazy(() => import('./features/support/ReportThreadPage'));
@@ -144,6 +145,7 @@ function Routed() {
                 <Route path="admin/support" element={<AdminOnly><SupportAdminPage /></AdminOnly>} />
                 <Route path="admin/support/:ref" element={<AdminOnly><SupportReportAdminPage /></AdminOnly>} />
                 <Route path="admin/sms" element={<AdminOnly><SmsAdminPage /></AdminOnly>} />
+                <Route path="admin/news" element={<AdminOnly><NewsAdminPage /></AdminOnly>} />
                 <Route path="admin/*" element={<Navigate to="/" replace />} />
                 <Route path="support" element={<MyReportsPage />} />
                 <Route path="support/new" element={<ReportIssuePage />} />

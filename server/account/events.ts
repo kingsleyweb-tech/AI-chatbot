@@ -58,6 +58,7 @@ export const ADMIN_ACTIONS = [
   'support_deleted',
   'help_article_saved',
   'help_article_deleted',
+  'news_feeds_changed',
 ] as const;
 export type AdminAction = (typeof ADMIN_ACTIONS)[number];
 

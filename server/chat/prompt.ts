@@ -31,6 +31,8 @@ export interface PromptContext {
   knowledge?: string;
   webResults?: string;
   webSearchFailed?: string | null;
+  /** the web results are a verified current-news brief */
+  news?: boolean;
   /** honest capability statements for this request */
   capabilityNotes?: string[];
   /** structure the answer as a research report */
@@ -143,7 +145,38 @@ export function buildSystemPrompt(ctx: PromptContext): string {
       `Note: these attached documents could not be read: ${ctx.failedDocuments.join('; ')}. Tell the user if they ask about them.`,
     );
   }
-  if (ctx.webResults) {
+  if (ctx.webResults && ctx.news) {
+    const today = (ctx.now ?? new Date()).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+    parts.push(
+      `## Current news brief
+Today is ${today} (UTC). The stories below were retrieved just now from several sources and filtered by publication date: ` +
+        `every article outside the freshness window was removed, duplicates were merged, and each story lists its sources, publication time and confirmation status.
+
+` +
+        `Rules for this answer:
+` +
+        `- Present only the stories in "Current stories" as current news, most important first. Cite each with its number, like [1].
+` +
+        `- Never present anything from "Background" or from your own knowledge as current news. You may add brief background in a separate section titled **Background**, saying it is older context.
+` +
+        `- Give the publication date exactly as listed. If it says unknown, say the date could not be confirmed. Never say something happened today unless its listed date is today.
+` +
+        `- Distinguish the publication date from the date of the event itself when the summary makes them differ.
+` +
+        `- When a story is "Reported by one outlet so far" or "Developing / unconfirmed", say so plainly. Social media posts are not confirmation.
+` +
+        `- If the brief says the window was widened, tell the user. If there are only a few stories, give those few; do not pad the list.
+` +
+        `- Never invent headlines, sources, links, quotes or dates.
+
+` +
+        `Format (unless the user asked for something else): a heading with the subject and today's date, then numbered stories, each with the headline in bold and these labelled lines: ` +
+        `**What happened:**, **Why it matters:**, **Published:**, **Source:** (with other outlets that reported it), **Status:** (only when not independently confirmed), **Read more:** (the link). ` +
+        `End with one line on what was checked (from the brief's first lines).
+
+${ctx.webResults}`,
+    );
+  } else if (ctx.webResults) {
     parts.push(
       `## Web search results\nThese were retrieved just now for this message. Use them for current information and cite them inline with their number, like [1]. ` +
         `Clearly distinguish what the sources say from your own background knowledge. ` +
@@ -158,6 +191,12 @@ export function buildSystemPrompt(ctx: PromptContext): string {
           `Base findings only on the sources; mark any inference as your interpretation.`,
       );
     }
+  } else if (ctx.webSearchFailed && ctx.news) {
+    parts.push(
+      `Note: this is a request for current news, but current news could not be retrieved (${ctx.webSearchFailed}). ` +
+        `Tell the user plainly that you could not retrieve current news right now. Do not present anything from your own knowledge as current or latest news; ` +
+        `you may offer general background, clearly labelled as possibly out of date.`,
+    );
   } else if (ctx.webSearchFailed) {
     parts.push(
       `Note: web search could not be used for this message (${ctx.webSearchFailed}). If the question needs current information, say briefly that you couldn't search the web, then answer from your own knowledge with that caveat.`,

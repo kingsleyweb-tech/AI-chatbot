@@ -29,6 +29,7 @@ import {
   Users,
   X,
   type LucideIcon,
+  Newspaper,
 } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
@@ -958,6 +959,7 @@ function SettingsHome() {
         <NavRow to="/support" icon={Inbox} label="My reports" />
         {admin && <NavRow to="/admin/support" icon={LifeBuoy} label="Support & issue reports" value="Admin" />}
         {admin && <NavRow to="/admin/sms" icon={MessageSquareText} label="SMS & verification" value="Admin" />}
+        {admin && <NavRow to="/admin/news" icon={Newspaper} label="News sources" value="Admin" />}
       </Group>
 
       <Group>

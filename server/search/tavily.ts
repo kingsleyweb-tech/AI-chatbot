@@ -76,6 +76,9 @@ export class TavilySearch implements SearchProvider {
         max_results: Math.min(Math.max(opts.max, 1), 10),
         search_depth: depth,
         topic: opts.kind === 'news' ? 'news' : 'general',
+        ...(opts.freshness ? { time_range: opts.freshness === 'hour' ? 'day' : opts.freshness } : {}),
+        // country boosting is only available for the general topic
+        ...(opts.region?.country && opts.kind !== 'news' ? { country: opts.region.country } : {}),
         include_answer: false,
         include_raw_content: false,
       },

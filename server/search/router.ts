@@ -23,6 +23,7 @@ import {
   type ExtractResult,
   type SearchIntent,
   type SearchKind,
+  type SearchOptions,
   type SearchProvider,
   type SearchProviderId,
   type SearchResult,
@@ -68,6 +69,13 @@ export interface RunArgs {
   queryVector?: { vector: number[]; model: string } | null;
   /** apply the per-user rate limit (off for research sub-queries) */
   throttle?: boolean;
+  /** only these providers, in this order (news uses each provider separately) */
+  providers?: SearchProviderId[];
+  freshness?: SearchOptions['freshness'];
+  sortByDate?: boolean;
+  region?: SearchOptions['region'];
+  /** override the cache lifetime (hours), e.g. shorter for breaking news */
+  ttlHours?: number;
   signal?: AbortSignal;
 }
 
@@ -160,7 +168,11 @@ export class SearchService {
     const normalized = normalizeQuery(args.query);
     if (!normalized) return { ok: false, reason: 'The message had nothing to search for.', notices: [] };
     const kind = args.kind ?? (args.intent === 'news' ? 'news' : 'web');
-    const key = cacheKey(`search:${kind}`, normalized);
+    // freshness, region and provider restrictions change the answer, so they are part of the cache key
+    const variant = [args.freshness ? `f=${args.freshness}` : '', args.sortByDate ? 'sbd' : '', args.region?.gl ? `gl=${args.region.gl}` : '', args.providers ? `p=${args.providers.join('+')}` : '']
+      .filter(Boolean)
+      .join(',');
+    const key = cacheKey(`search:${kind}${variant ? `|${variant}` : ''}`, normalized);
 
     const cached = await args.store.getCache(key);
     if (isFresh(cached, this.now())) {
@@ -177,7 +189,7 @@ export class SearchService {
     }
 
     // Same question in other words, still fresh? Reuse it (no credit).
-    if (args.queryVector && args.store.recentCache) {
+    if (args.queryVector && args.store.recentCache && !variant) {
       const similar = findSimilar(await args.store.recentCache(40), `search:${kind}`, normalized, args.queryVector, this.now());
       if (similar) {
         await args.store.record([{ provider: similar.provider, type: 'cached', credits: 0 }]);
@@ -210,9 +222,9 @@ export class SearchService {
     const notices: string[] = [];
     const blocked: string[] = [];
     const events: UsageEvent[] = [];
-    const max = Math.min(args.max ?? 6, 8);
+    const max = Math.min(args.max ?? 6, 10);
     try {
-      for (const id of providerOrder(args.intent)) {
+      for (const id of args.providers ?? providerOrder(args.intent)) {
         const credits = id === 'tavily' && args.depth === 'advanced' ? 2 : 1;
         const reason = await this.blockReason(id, credits, usage, args.limits, args.signal, args.priority ?? 'explicit');
         if (reason) {
@@ -220,11 +232,19 @@ export class SearchService {
           continue;
         }
         try {
-          const res = await this.providers[id].search(args.query, { kind, max, depth: args.depth, signal: args.signal });
+          const res = await this.providers[id].search(args.query, {
+            kind,
+            max,
+            depth: args.depth,
+            signal: args.signal,
+            ...(args.freshness ? { freshness: args.freshness } : {}),
+            ...(args.sortByDate ? { sortByDate: true } : {}),
+            ...(args.region ? { region: args.region } : {}),
+          });
           events.push({ provider: id, type: 'request', credits: res.credits });
           this.consumeReported(id, res.credits);
           const createdAt = new Date(this.now()).toISOString();
-          const ttl = ttlHours(args.intent, args.limits);
+          const ttl = args.ttlHours ?? ttlHours(args.intent, args.limits);
           if (ttl > 0 && res.results.length) {
             await args.store.putCache(key, {
               query: normalized,

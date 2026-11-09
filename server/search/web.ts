@@ -14,6 +14,9 @@ import { searchService } from './router.js';
 import { trustedDb } from '../admin.js';
 import { FirestoreSearchStore } from './store.js';
 import type { SearchProviderId, SearchResult } from './types.js';
+import { gatherNews, newsBrief } from '../news/discover.js';
+import { detectNews } from '../news/freshness.js';
+import { loadFeeds, recordNews } from '../news/stats.js';
 
 export interface WebContext {
   sources: Source[];
@@ -24,6 +27,8 @@ export interface WebContext {
   notices: string[];
   /** set when search was wanted but could not run */
   failure: string | null;
+  /** a current-news request: the text is a verified news brief (presentation rules apply) */
+  news?: { windowLabel: string; expanded: boolean; stories: number };
 }
 
 export interface WebOptions {
@@ -111,6 +116,35 @@ export async function gatherWebContext(args: {
   const query = trigger === 'url' ? urls.join(' ') : await standaloneQuery(args.turns, args.text);
   const mode: SearchInfo['mode'] = trigger === 'research' ? 'research' : urls.length && trigger !== 'auto' ? 'extract' : 'search';
   const base: SearchInfo = { status: 'unavailable', mode, provider: null, query, cached: false, trigger, reason: decision.reason };
+
+  // Current news: several sources, strict publication dates, duplicates merged (works on publisher
+  // feeds alone when no search provider is configured).
+  const newsReq = mode === 'search' ? (detectNews(args.text) ?? (query !== args.text ? detectNews(query) : null)) : null;
+  if (newsReq) {
+    const limits = await loadLimits(args.db);
+    const store = new FirestoreSearchStore(args.db, args.uid, await trustedDb(args.db));
+    const { feeds } = await loadFeeds(args.db);
+    const n = await gatherNews({ req: newsReq, uid: args.uid, store, limits, service, feeds, explicit: decision.explicit, signal: args.signal });
+    await recordNews(args.db, n).catch((err) => console.warn('[news] stats not recorded', err instanceof Error ? err.message : err));
+    const brief = newsBrief(n);
+    const ok = n.providers.find((p) => p.id !== 'rss' && p.status === 'ok');
+    const info: SearchInfo = {
+      ...base,
+      status: n.stories.length ? 'ok' : 'unavailable',
+      provider: ok ? (ok.id as SearchProviderId) : null,
+      cached: n.providers.filter((p) => p.id !== 'rss' && p.status === 'ok').every((p) => p.cached),
+      message: `${n.stories.length} stor${n.stories.length === 1 ? 'y' : 'ies'} from ${n.windowLabel}; ${n.stats.rejectedOld} older articles rejected`,
+    };
+    return {
+      sources: n.stories.length ? brief.sources : [],
+      text: n.stories.length ? brief.text : '',
+      info,
+      steps: [],
+      notices: n.notices,
+      failure: n.failure,
+      news: { windowLabel: n.windowLabel, expanded: n.expanded, stories: n.stories.length },
+    };
+  }
 
   if (!service.configured().length) {
     // auto mode stays silent; explicit requests get told

@@ -1,4 +1,5 @@
 import { env } from '../env.js';
+import { parseDate } from '../news/dates.js';
 import {
   SearchError,
   hostOf,
@@ -32,7 +33,7 @@ interface SerpResponse {
 }
 
 /** Map a SerpAPI JSON body to normalized results. Exported for tests. */
-export function mapSerpResponse(data: SerpResponse, max: number): Omit<SearchResponse, 'credits'> {
+export function mapSerpResponse(data: SerpResponse, max: number, now = Date.now()): Omit<SearchResponse, 'credits'> {
   const rows: (SerpOrganic | SerpNews)[] = data.news_results?.length ? data.news_results : (data.organic_results ?? []);
   const results: SearchResult[] = [];
   const seen = new Set<string>();
@@ -40,12 +41,15 @@ export function mapSerpResponse(data: SerpResponse, max: number): Omit<SearchRes
     if (!r.link || !r.title || seen.has(r.link)) continue;
     seen.add(r.link);
     const source = typeof r.source === 'object' ? r.source?.name : r.source;
+    // Google reports news dates relative to the moment of the search ("3 hours ago"): resolve them
+    // now, so a cached result keeps the true publication time instead of ageing backwards.
+    const ts = r.date ? parseDate(r.date, now) : null;
     results.push({
       title: r.title,
       url: r.link,
       site: source || hostOf(r.link),
       snippet: (r.snippet ?? '').slice(0, 600),
-      ...(r.date ? { publishedDate: r.date } : {}),
+      ...(r.date ? { publishedDate: ts != null ? new Date(ts).toISOString() : r.date, dateText: r.date } : {}),
     });
     if (results.length >= max) break;
   }
@@ -73,6 +77,11 @@ export class SerpApiSearch implements SearchProvider {
       api_key: key,
     });
     if (opts.kind === 'news') params.set('tbm', 'nws');
+    const tbs: string[] = [];
+    if (opts.freshness) tbs.push(`qdr:${opts.freshness[0]}`); // qdr:h / d / w / m / y
+    if (opts.sortByDate && opts.kind === 'news') tbs.push('sbd:1');
+    if (tbs.length) params.set('tbs', tbs.join(','));
+    if (opts.region?.gl) params.set('gl', opts.region.gl);
     let res: Response;
     try {
       res = await fetch(`https://serpapi.com/search.json?${params}`, {

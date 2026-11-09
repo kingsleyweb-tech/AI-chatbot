@@ -19,10 +19,13 @@ import { env } from '../server/env.js';
 import type { Firestore } from '../server/firestore.js';
 import { noteUnauthorizedAccess, recordAdminAction } from '../server/account/events.js';
 import { handle, HttpError, json, readJson } from '../server/http.js';
+import { DEFAULT_FEEDS } from '../server/news/sources.js';
+import { loadFeeds, newsAdminView, saveFeedConfig } from '../server/news/stats.js';
 import { smsOverview } from '../server/sms/log.js';
 import { getOtpGateway, getSmsProvider, vynfyBalances } from '../server/sms/provider.js';
 
 const uid = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/);
+const feedId = z.string().regex(/^[a-z0-9_]{2,40}$/);
 const schema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('list') }),
   z.object({ action: z.literal('detail'), uid }),
@@ -39,6 +42,21 @@ const schema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('requestDelete'), uid }),
   z.object({ action: z.literal('setAutoApprove'), enabled: z.boolean() }),
   z.object({ action: z.literal('approveAllPending'), confirm: z.literal(true) }),
+  z.object({ action: z.literal('news'), days: z.number().int().min(1).max(30).optional() }),
+  z.object({ action: z.literal('newsFeedDisable'), id: feedId, reason: z.string().max(200).optional() }),
+  z.object({ action: z.literal('newsFeedEnable'), id: feedId }),
+  z.object({
+    action: z.literal('newsFeedAdd'),
+    feed: z.object({
+      id: feedId,
+      name: z.string().min(1).max(80),
+      url: z.string().url().max(500).regex(/^https:\/\//),
+      tier: z.enum(['official', 'wire', 'specialist', 'regional', 'social', 'unknown']),
+      topics: z.array(z.enum(['ai', 'tech', 'security', 'space', 'science', 'politics', 'business', 'health', 'sports', 'general'])).min(1).max(6),
+      regions: z.array(z.string().regex(/^[a-z_]{2,20}$/)).min(1).max(6),
+    }),
+  }),
+  z.object({ action: z.literal('newsFeedRemove'), id: feedId }),
 ]);
 
 interface Profile extends ProfileStatus {
@@ -309,6 +327,49 @@ export const POST = handle(async (request) => {
     }
     await recordAdminAction(db, { action: 'pending_bulk_approved', adminUid: ctx.user.uid, adminEmail: ctx.user.email, targetUid: 'accessRequests', targetEmail: null, detail: `${approved} of ${pending.length} pending requests approved` });
     return json({ ok: true, approved, total: pending.length });
+  }
+
+  if (b.action === 'news') {
+    return json({ ...(await newsAdminView(db, b.days ?? 7)), generatedAt: Date.now() });
+  }
+
+  if (b.action === 'newsFeedDisable' || b.action === 'newsFeedEnable' || b.action === 'newsFeedAdd' || b.action === 'newsFeedRemove') {
+    const { config } = await loadFeeds(db);
+    const next = { disabled: { ...config.disabled }, enabled: [...config.enabled], custom: [...config.custom] };
+    const isDefault = (id: string) => DEFAULT_FEEDS.some((f) => f.id === id);
+    let detail: string;
+    if (b.action === 'newsFeedAdd') {
+      if (isDefault(b.feed.id) || next.custom.some((c) => c.id === b.feed.id)) throw new HttpError(409, 'exists', 'A feed with this id already exists.');
+      if (next.custom.length >= 100) throw new HttpError(400, 'too_many', 'At most 100 added feeds.');
+      let domain: string;
+      try {
+        domain = new URL(b.feed.url).hostname.replace(/^(www|feeds?|rss)\./, '');
+      } catch {
+        throw new HttpError(400, 'bad_url', 'Invalid feed address.');
+      }
+      next.custom.push({ ...b.feed, domain });
+      detail = `news feed added: ${b.feed.id} (${domain})`;
+    } else {
+      const known = isDefault(b.id) || next.custom.some((c) => c.id === b.id);
+      if (!known) throw new HttpError(404, 'not_found', 'Unknown feed.');
+      if (b.action === 'newsFeedDisable') {
+        next.disabled[b.id] = b.reason?.trim() || 'Switched off by an administrator.';
+        next.enabled = next.enabled.filter((x) => x !== b.id);
+        detail = `news feed disabled: ${b.id}`;
+      } else if (b.action === 'newsFeedEnable') {
+        delete next.disabled[b.id];
+        if (isDefault(b.id) && !next.enabled.includes(b.id)) next.enabled.push(b.id);
+        detail = `news feed enabled: ${b.id}`;
+      } else {
+        if (isDefault(b.id)) throw new HttpError(400, 'built_in', 'Built-in feeds can be switched off but not removed.');
+        next.custom = next.custom.filter((c) => c.id !== b.id);
+        delete next.disabled[b.id];
+        detail = `news feed removed: ${b.id}`;
+      }
+    }
+    await saveFeedConfig(db, next, ctx.user.uid);
+    await recordAdminAction(db, { action: 'news_feeds_changed', adminUid: ctx.user.uid, adminEmail: ctx.user.email, targetUid: 'newsFeeds', targetEmail: null, detail });
+    return json({ ok: true });
   }
 
   if (b.action === 'logs') {

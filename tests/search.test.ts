@@ -71,15 +71,17 @@ describe('provider response mapping', () => {
       6,
     );
     expect(out.results).toHaveLength(2);
-    expect(out.results[0]).toMatchObject({ title: 'A', site: 'A News', publishedDate: 'Nov 5, 2026' });
+    expect(out.results[0]).toMatchObject({ title: 'A', site: 'A News', publishedDate: '2026-11-05T12:00:00.000Z', dateText: 'Nov 5, 2026' });
     expect(out.results[1]).toMatchObject({ site: 'b.org' });
     expect(out.results[1]).not.toHaveProperty('publishedDate');
     expect(out.answer).toBe('42');
   });
 
   it('prefers SerpAPI news results and reads nested source names', () => {
-    const out = mapSerpResponse({ news_results: [{ title: 'N', link: 'https://n.com', source: { name: 'Wire' }, date: '2 hours ago' }] }, 6);
-    expect(out.results[0]).toMatchObject({ site: 'Wire', publishedDate: '2 hours ago' });
+    const now = Date.UTC(2026, 10, 9, 10);
+    const out = mapSerpResponse({ news_results: [{ title: 'N', link: 'https://n.com', source: { name: 'Wire' }, date: '2 hours ago' }] }, 6, now);
+    // relative dates become absolute at retrieval time; the provider's wording is kept
+    expect(out.results[0]).toMatchObject({ site: 'Wire', publishedDate: '2026-11-09T08:00:00.000Z', dateText: '2 hours ago' });
   });
 
   it('maps Tavily results and respects the limit', () => {
