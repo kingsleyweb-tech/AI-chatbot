@@ -84,7 +84,18 @@ export class VoiceEngine {
   private reopening = false;
   private levelTick = 0;
   private turnCheck = 0;
-  private onDeviceChange = () => void this.checkDevice();
+  /** when the microphone was last opened: opening it makes the system report a device change itself */
+  private openedAt = 0;
+  private deviceTimer: ReturnType<typeof setTimeout> | null = null;
+  // iPhones report a device change whenever the audio route changes (the reply starting or stopping
+  // through the speaker, a call, Bluetooth). Wait for the burst to settle, then check what changed.
+  private onDeviceChange = () => {
+    if (this.deviceTimer) clearTimeout(this.deviceTimer);
+    this.deviceTimer = setTimeout(() => {
+      this.deviceTimer = null;
+      void this.checkDevice();
+    }, 800);
+  };
   private onVisible = () => {
     if (document.visibilityState === 'visible') void this.ctx?.resume().catch(() => undefined);
   };
@@ -113,6 +124,7 @@ export class VoiceEngine {
       return;
     }
     this.stream = stream;
+    this.openedAt = Date.now();
     const track = stream.getAudioTracks()[0];
     if (track) {
       track.enabled = !this.muted;
@@ -152,25 +164,45 @@ export class VoiceEngine {
   private async reopen() {
     if (this.stopped || this.reopening) return;
     this.reopening = true;
-    this.h.onMic?.('lost');
+    // a quick reconnect is not shown: only say "disconnected" if it takes a moment
+    let reported = false;
+    const notice = setTimeout(() => {
+      reported = true;
+      this.h.onMic?.('lost');
+    }, 1500);
     this.close();
     this.turn = null;
     for (let attempt = 0; attempt < 5 && !this.stopped; attempt++) {
       try {
         await this.open();
-        this.h.onMic?.('ok');
         break;
       } catch {
         await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
       }
     }
+    clearTimeout(notice);
+    if (reported || this.stream) this.h.onMic?.(this.stream || this.stopped ? 'ok' : 'lost');
     this.reopening = false;
   }
 
   private async checkDevice() {
+    if (this.stopped || this.reopening) return;
     const track = this.stream?.getAudioTracks()[0];
-    // follow the system's microphone when a headset is plugged in or removed (not mid-sentence)
-    if (!track || track.readyState === 'ended' || !this.vad.speaking) await this.reopen();
+    // the microphone really stopped: open it again
+    if (!track || track.readyState === 'ended') return this.reopen();
+    // the change this engine caused by opening the microphone, or the user is talking: keep it
+    if (Date.now() - this.openedAt < 3000 || this.vad.speaking) return;
+    // Otherwise switch only when the microphone in use is gone, or the system's default microphone is
+    // now a different one (a headset plugged in or removed). A route change alone keeps the microphone.
+    const devices = await navigator.mediaDevices.enumerateDevices().catch(() => null);
+    if (!devices || this.stopped || this.reopening) return;
+    const inputs = devices.filter((d) => d.kind === 'audioinput');
+    const settings = track.getSettings?.() ?? {};
+    const current = settings.deviceId;
+    const gone = Boolean(current) && inputs.length > 0 && !inputs.some((d) => d.deviceId === current);
+    const def = inputs.find((d) => d.deviceId === 'default');
+    const defaultMoved = Boolean(def?.groupId && settings.groupId && def.groupId !== settings.groupId);
+    if (gone || defaultMoved) await this.reopen();
   }
 
   setMode(mode: VadMode, holdMs = 0) {
@@ -205,6 +237,8 @@ export class VoiceEngine {
 
   stop() {
     this.stopped = true;
+    if (this.deviceTimer) clearTimeout(this.deviceTimer);
+    this.deviceTimer = null;
     navigator.mediaDevices.removeEventListener?.('devicechange', this.onDeviceChange);
     document.removeEventListener('visibilitychange', this.onVisible);
     this.close();
