@@ -33,6 +33,7 @@ import { Markdown } from '@/components/Markdown';
 import { Button, IconButton, Menu, Textarea } from '@/components/ui';
 import { pauseSpeaking, resumeSpeaking, speak, stopSpeaking, ttsSupported, usePlayback } from '@/lib/speech';
 import type { Message } from '@/lib/types';
+import { stripSourceList } from '@/lib/sourceList';
 import { naturalVoiceFrom } from '@/lib/voice';
 import { cn, copyText, domainOf, modelShortName, relativeTime } from '@/lib/utils';
 import { useSettings } from '@/state/settings';
@@ -423,7 +424,7 @@ export const AssistantMessage = memo(function AssistantMessage({
         {reasoning && <Reasoning text={reasoning} live={streaming && !content} />}
         {content && (
           <div className={cn('text-[15px] leading-[1.65]', streaming && 'caret-host')}>
-            <Markdown content={content} sources={sources} streaming={streaming} />
+            <Markdown content={webSources.length ? stripSourceList(content) : content} sources={sources} streaming={streaming} />
           </div>
         )}
         {createdImages.map((img) => (

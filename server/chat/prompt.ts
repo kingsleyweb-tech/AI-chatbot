@@ -170,7 +170,7 @@ Today is ${today} (UTC). The stories below were retrieved just now from several 
 ` +
         `Rules for this answer:
 ` +
-        `- Present only the stories in "Current stories" as current news, most important first. Cite each with its number, like [1].
+        `- Present only the stories in "Current stories" as current news, most important first. Cite each with its number, like [1]; do not end with a list of sources (the app shows them under the answer).
 ` +
         `- Never present anything from "Background" or from your own knowledge as current news. You may add brief background in a separate section titled **Background**, saying it is older context.
 ` +
@@ -200,13 +200,14 @@ ${ctx.webResults}`,
       `## Web search results\nThese were retrieved just now for this message. Use them for current information and cite them inline with their number, like [1]. ` +
         `Clearly distinguish what the sources say from your own background knowledge. ` +
         `Only cite numbers listed here; never invent sources, URLs, quotes or publication dates. Mention a date only if it is listed with the source. ` +
+        `The app shows the sources with logos and links under your answer, so do not end with a Sources, References or Further reading list, even when the user asks for source links: cite inline instead. ` +
         `If the results don't answer the question, say so.\n\n${ctx.webResults}`,
     );
     if (ctx.deepResearch) {
       parts.push(
         `## Deep research report\nWrite a structured research report from the sources above: ` +
           `1) a short **Summary**; 2) **Key findings** with inline citations; 3) **Where sources disagree or are uncertain** (say "none found" if they agree); ` +
-          `4) **Limitations** (what the sources did not cover); 5) **Sources** as a numbered list of the cited links. ` +
+          `4) **Limitations** (what the sources did not cover). No list of sources at the end: the app shows them under the report. ` +
           `Base findings only on the sources; mark any inference as your interpretation.`,
       );
     }
