@@ -2,8 +2,6 @@
 
 An invitation-only AI assistant delivered as an installable, iPhone-friendly PWA. Chat across multiple models with streaming answers, long-term memory, document and knowledge-base Q&A with citations, web search with source links, Deep Research, image generation and natural voice. Accounts are protected by phone and email verification, administrator approval and live session control.
 
-**Live:** [chatatlasai.vercel.app](https://chatatlasai.vercel.app)
-
 ## Features
 
 **Assistant**

@@ -1,8 +1,6 @@
-import { sendEmailVerification } from 'firebase/auth';
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Button } from '@/components/ui';
 import { api, ApiError } from '@/lib/api';
-import { auth } from '@/lib/firebase';
 import { useAuth } from '@/state/auth';
 import { CodeBoxes, useCountdown } from './otpUi';
 
@@ -27,8 +25,8 @@ function remember(at: number | null) {
 
 /**
  * Verify the account's email with a 6-digit code (sent through /api/account,
- * checked on the server, which then marks the address verified). Falls back
- * to Firebase's verification link when email codes are unavailable.
+ * checked on the server, which then marks the address verified). Every
+ * verification email goes through the app's own email service (Brevo).
  * Used by the sign-up screen, the dashboard reminder and Settings › Security.
  */
 export function EmailVerifyPanel({
@@ -46,7 +44,7 @@ export function EmailVerifyPanel({
 }) {
   const { user, refreshAccess } = useAuth();
   const recent = Date.now() - lastSent() < 9 * 60_000;
-  const [mode, setMode] = useState<'idle' | 'sending' | 'code' | 'link'>(
+  const [mode, setMode] = useState<'idle' | 'sending' | 'code'>(
     recent ? 'code' : autoSend ? 'sending' : 'idle',
   );
   const [code, setCode] = useState('');
@@ -56,18 +54,6 @@ export function EmailVerifyPanel({
   const [busy, setBusy] = useState(false);
   const resend = useCountdown();
   const started = useRef(false);
-
-  const sendLink = useCallback(async (quiet = false) => {
-    if (!auth.currentUser) return;
-    try {
-      await sendEmailVerification(auth.currentUser, { url: window.location.origin + '/' });
-      setMode('link');
-      if (!quiet) setMsg('Verification link sent.');
-    } catch (err) {
-      setMode('link');
-      setMsg(err instanceof Error ? 'The link could not be sent. Try again in a few minutes.' : '');
-    }
-  }, []);
 
   const sendCode = useCallback(
     async (initial = false) => {
@@ -92,14 +78,14 @@ export function EmailVerifyPanel({
         } else if (c === 'resend_cooldown') {
           setMode('code');
           resend.start(Number((err as ApiError).details.retryAfter ?? 60));
-        } else if (
-          c === 'email_unavailable' ||
-          c === 'email_failed' ||
-          c === 'admin_unconfigured' ||
-          !c
-        ) {
-          // Email codes are not available: use Firebase's verification link instead.
-          await sendLink(true);
+        } else if (initial) {
+          // Nothing was sent: stay on the start screen so "Send code" retries.
+          setMode('idle');
+          setError(
+            err instanceof ApiError && c
+              ? err.message
+              : 'The code could not be sent. Check your connection and try again.',
+          );
         } else {
           setMode('code');
           setError(err instanceof ApiError ? err.message : 'The code could not be sent.');
@@ -108,7 +94,7 @@ export function EmailVerifyPanel({
         setBusy(false);
       }
     },
-    [refreshAccess, resend, sendLink, onVerified],
+    [refreshAccess, resend, onVerified],
   );
 
   useEffect(() => {
@@ -143,12 +129,7 @@ export function EmailVerifyPanel({
   return (
     <div>
       <p className="mb-4 text-sm text-muted">
-        {mode === 'link' ? (
-          <>
-            We sent a verification link to <b className="font-medium text-fg">{user?.email}</b>.
-            Open it, then come back here.
-          </>
-        ) : mode === 'code' ? (
+        {mode === 'code' ? (
           <>
             Enter the 6-digit code we emailed to <b className="font-medium text-fg">{email}</b>.
             Check your spam folder if it is not in your inbox.
@@ -177,6 +158,11 @@ export function EmailVerifyPanel({
           </Button>
         </form>
       )}
+      {mode === 'idle' && error && (
+        <p role="alert" className="mb-3 text-sm text-danger">
+          {error}
+        </p>
+      )}
       <div className="flex flex-col gap-2">
         {mode === 'idle' && (
           <Button
@@ -189,22 +175,6 @@ export function EmailVerifyPanel({
             Send code
           </Button>
         )}
-        {mode === 'link' && (
-          <Button
-            variant="primary"
-            size="lg"
-            loading={busy}
-            onClick={async () => {
-              setBusy(true);
-              await refreshAccess();
-              setBusy(false);
-              if (auth.currentUser?.emailVerified) await onVerified();
-              else setMsg('Not verified yet. Check your inbox and spam folder.');
-            }}
-          >
-            I’ve verified my email
-          </Button>
-        )}
         {mode === 'code' && (
           <Button
             variant="ghost"
@@ -212,11 +182,6 @@ export function EmailVerifyPanel({
             onClick={() => void sendCode()}
           >
             {resend.left > 0 ? `Resend code in ${resend.left} s` : 'Resend code'}
-          </Button>
-        )}
-        {(mode === 'code' || mode === 'link') && (
-          <Button variant="ghost" disabled={busy} onClick={() => void sendLink()}>
-            {mode === 'link' ? 'Resend link' : 'Send me a link instead'}
           </Button>
         )}
         {secondary?.(busy)}

@@ -1196,10 +1196,6 @@ function PhoneVerify() {
 
 /* ----------------------------- other states ----------------------------- */
 
-/**
- * Email verification with a 6-digit code we email (Brevo). When email codes
- * are unavailable it falls back to Firebase's verification link.
- */
 /** Access states in which the email step may be skipped (a verified phone number exists). */
 const SKIPPABLE: AccessState[] = ['allowed', 'request', 'pending', 'consent'];
 
