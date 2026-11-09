@@ -345,10 +345,21 @@ export async function speak(id: string, markdown: string, opts: SpeakOptions | s
  * arrives (the first one starts playing at once), then `finish()`, which resolves when everything
  * was spoken or the speech was stopped (stopSpeaking, or another speak call).
  */
-export function speechSession(id: string, opts: SpeakOptions = {}): { add(markdown: string): void; finish(): Promise<void> } {
+export function speechSession(
+  id: string,
+  opts: Omit<SpeakOptions, 'natural' | 'voice'> & {
+    /** read for every sentence, so changing the setting during a conversation applies at once */
+    natural?: boolean | (() => boolean);
+    voice?: NaturalVoice | (() => NaturalVoice);
+  } = {},
+): { add(markdown: string): void; finish(): Promise<void> } {
   stopSpeaking();
   const my = ++token;
-  let natural = Boolean(opts.natural);
+  const wantNatural = () => Boolean(typeof opts.natural === 'function' ? opts.natural() : opts.natural);
+  const currentVoice = () => (typeof opts.voice === 'function' ? opts.voice() : opts.voice);
+  /** false after the natural voice failed in this reply (the device voice is used for the rest) */
+  let naturalOk = true;
+  let natural = wantNatural();
   let warned = false;
   let lastPiece: string | undefined;
   let chain: Promise<void> = Promise.resolve();
@@ -362,6 +373,7 @@ export function speechSession(id: string, opts: SpeakOptions = {}): { add(markdo
     }
   };
   const fallback = (err: unknown) => {
+    naturalOk = false;
     natural = false;
     if (!warned) {
       warned = true;
@@ -373,10 +385,11 @@ export function speechSession(id: string, opts: SpeakOptions = {}): { add(markdo
     add(markdown: string) {
       const text = speakableText(markdown);
       if (!text || my !== token) return;
+      natural = naturalOk && wantNatural();
       for (const piece of speechChunks(text, natural ? 400 : 1000)) {
         // the natural voice is fetched now (in parallel) and played in order
         const audioUrl = natural
-          ? naturalVoiceAudio(piece, opts.voice, {
+          ? naturalVoiceAudio(piece, currentVoice(), {
               previousText: lastPiece,
               onNotice: (m) => {
                 if (!warned) opts.onFallback?.(m);

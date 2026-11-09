@@ -21,7 +21,7 @@ import { Button, Switch } from '@/components/ui';
 import { duckSpeaking, speechSession, stopSpeaking, unlockAudio } from '@/lib/speech';
 import { cn } from '@/lib/utils';
 import { judgeTranscript, type VadMode } from '@/lib/vad';
-import { checkTurnEnd, micErrorMessage, naturalVoiceFrom, speechConfig, transcribeWithRetry } from '@/lib/voice';
+import { checkTurnEnd, micErrorMessage, naturalVoiceFrom, resetElevenPause, speechConfig, transcribeWithRetry } from '@/lib/voice';
 import { primeVoiceAudio, VoiceEngine, type Turn } from '@/lib/voiceEngine';
 import { useSettings } from '@/state/settings';
 import type { LiveReply } from './engine';
@@ -291,6 +291,20 @@ export function VoiceMode({
     engine.current?.setPatient(settings.voicePatient);
   }, [settings.voicePatient]);
 
+  // a different voice or provider chosen while Voice Mode is open: use it from the next sentence, and
+  // re-read how much of that voice is left today (the old provider's allowance no longer applies)
+  const voiceChoice = `${settings.voiceProvider}|${settings.elevenVoiceId}|${settings.elevenModel}|${settings.voiceModeNatural}`;
+  const firstChoice = useRef(true);
+  useEffect(() => {
+    if (!open) return;
+    if (firstChoice.current) {
+      firstChoice.current = false;
+      return;
+    }
+    resetElevenPause();
+    refreshAllowance();
+  }, [open, voiceChoice, refreshAllowance]);
+
   // network: wait while offline, then carry on with what was said
   useEffect(() => {
     if (!open) return;
@@ -322,13 +336,16 @@ export function VoiceMode({
     const finished = ['done', 'error', 'stopped'].includes(live.status);
 
     if (!session.current || session.current.id !== live.id) {
-      const left = voiceLeftRef.current;
-      const natural = prefs.current.voiceModeNatural && (left === null || left > 40);
+      // read for every sentence: changing the voice, provider or "Natural voice" applies at once
+      const natural = () => {
+        const left = voiceLeftRef.current;
+        return prefs.current.voiceModeNatural && (left === null || left > 40);
+      };
       session.current = {
         id: live.id,
         spoken: 0,
         said: '',
-        s: speechSession(`voice:${live.id}`, { voiceName: prefs.current.voiceName, natural, voice: naturalVoiceFrom(prefs.current), onFallback: (msg) => setNotice(msg) }),
+        s: speechSession(`voice:${live.id}`, { voiceName: prefs.current.voiceName, natural, voice: () => naturalVoiceFrom(prefs.current), onFallback: (msg) => setNotice(msg) }),
       };
     }
     const cur = session.current;

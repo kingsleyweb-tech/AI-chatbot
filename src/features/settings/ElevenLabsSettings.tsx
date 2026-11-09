@@ -89,7 +89,8 @@ export function ElevenVoiceRows({ info }: { info: ElevenConfig | undefined }) {
           value={settings.voiceProvider}
           onChange={(v) => {
             resetElevenPause();
-            void update({ voiceProvider: v });
+            // choosing a provider means "use this voice": switch the natural voice on everywhere
+            void update({ voiceProvider: v, naturalVoice: true, voiceModeNatural: true });
           }}
           options={[
             { value: 'cloudflare', label: 'Cloudflare (default)' },
