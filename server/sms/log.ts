@@ -15,7 +15,7 @@ import { randomBytes } from 'node:crypto';
 import type { Firestore } from '../firestore.js';
 import type { DeliveryReport, OtpGateway, SmsProvider } from './provider.js';
 
-export type SmsPurpose = 'verify' | 'recovery' | 'support';
+export type SmsPurpose = 'verify' | 'recovery' | 'support' | 'approval' | 'message';
 export type SmsRoute = 'otp' | 'sms';
 export type Delivery = 'pending' | 'sent' | 'delivered' | 'failed' | 'unavailable';
 export type Outcome = 'none' | 'verified' | 'wrong_code' | 'expired' | 'locked';

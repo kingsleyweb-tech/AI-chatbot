@@ -10,11 +10,19 @@ import { Page } from '../shell/Page';
 type Delivery = 'pending' | 'sent' | 'delivered' | 'failed' | 'unavailable';
 type Outcome = 'none' | 'verified' | 'wrong_code' | 'expired' | 'locked';
 
+const PURPOSE: Record<Row['purpose'], string> = {
+  verify: 'Phone verification',
+  recovery: 'Password recovery',
+  support: 'Support update',
+  approval: 'Account approved',
+  message: 'Admin message',
+};
+
 interface Row {
   id: string;
   at: number;
   updatedAt: number;
-  purpose: 'verify' | 'recovery' | 'support';
+  purpose: 'verify' | 'recovery' | 'support' | 'approval' | 'message';
   route: 'otp' | 'sms';
   phone: string | null;
   ref: string | null;
@@ -190,7 +198,7 @@ export default function SmsAdminPage() {
                     <div className="min-w-0">
                       <div className="truncate font-medium">{r.user?.name || r.user?.email || (r.uid ? 'Deleted account' : 'Unknown')}</div>
                       <div className="truncate text-xs text-muted">
-                        {r.phone ?? 'No number'} · {r.purpose === 'verify' ? 'Phone verification' : r.purpose === 'support' ? 'Support update' : 'Password recovery'} · {r.route === 'otp' ? 'OTP service' : 'SMS'}
+                        {r.phone ?? 'No number'} · {PURPOSE[r.purpose] ?? 'Text message'} · {r.route === 'otp' ? 'OTP service' : 'SMS'}
                         {r.ref && <span title="Vynfy reference"> · ref {r.ref.length > 14 ? `${r.ref.slice(0, 8)}…` : r.ref}</span>}
                       </div>
                       {(r.error || r.providerStatus) && (

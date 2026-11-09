@@ -205,7 +205,8 @@ export async function submitRequest(
   input: RequestInput,
   now = Date.now(),
 ): Promise<{ state: GateState; request: AccessRequest | null; created: boolean }> {
-  if (!user.email || !user.emailVerified)
+  // A verified email, or a verified phone number (email/password sign-ups verify the phone first).
+  if (!user.email || (!user.emailVerified && !user.phoneVerified))
     throw new HttpError(403, 'email_unverified', 'Please verify your email address first.');
   const config = await accessConfig(db, true);
   const profile = await ensureProfile(db, user, config, input.fullName);

@@ -66,6 +66,8 @@ export function env() {
     emailDailyCap: Number(e.EMAIL_DAILY_CAP ?? 250) || 250,
     /** app-wide daily limit for notification texts (support updates); verification codes have their own */
     smsNotifyDailyCap: Number(e.SMS_NOTIFY_DAILY_CAP ?? 50) || 50,
+    /** app-wide daily limit for texts an administrator sends from Admin › Messages */
+    smsMessageDailyCap: Number(e.SMS_MESSAGE_DAILY_CAP ?? 100) || 100,
     /** Public address of the app used for links and the logo in emails (must be reachable from the internet). */
     publicUrl: (e.PUBLIC_APP_URL ?? (e.APP_URL && !/localhost|127\.0\.0\.1/.test(e.APP_URL) ? e.APP_URL : 'https://chatatlasai.vercel.app')).replace(/\/+$/, ''),
   };

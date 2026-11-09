@@ -7,6 +7,7 @@ import {
   type GateProfile,
 } from '../server/access.js';
 import { securityChangeAlert } from '../server/account/alerts.js';
+import { submitRequest } from '../server/account/requests.js';
 import { clientInfo } from '../server/account/devices.js';
 import { emailDeps } from '../server/email/index.js';
 import { deviceLabel, recordSecurityEvent } from '../server/account/events.js';
@@ -217,6 +218,16 @@ export const POST = handle(async (request) => {
       req.path,
       { phoneNumber: phone, phoneNorm: phone, phoneVerified: true, updatedAt: Date.now() },
       true,
+    );
+  } else if (!req && user.provider === 'password') {
+    // A new sign-up: file the access request now (name from sign-up, verified number), so the
+    // person waits for approval without filling in another form. With automatic approval on,
+    // or for an already approved account, nothing is filed and they go straight in.
+    const name = (await d.db.get<{ displayName?: string }>(`users/${user.uid}`))?.data.displayName;
+    await submitRequest(d.db, { ...user, phoneVerified: true }, {
+      fullName: name || user.name || user.email?.split('@')[0] || 'Atlas AI user',
+    }).catch((err) =>
+      console.warn('[phone] access request not filed', err instanceof Error ? err.message : err),
     );
   }
   await recordSecurityEvent(

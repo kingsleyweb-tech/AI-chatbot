@@ -69,6 +69,9 @@ const TYPE_LABEL: Record<string, string> = {
   suspicious_login: 'Unusual sign-in alert',
   failed_logins: 'Failed sign-ins alert',
   security_change: 'Security change',
+  support_update: 'Support report update',
+  access_approved: 'Account approved',
+  admin_message: 'Message from admin',
 };
 
 const fmt = (t: number) =>

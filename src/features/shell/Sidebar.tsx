@@ -11,6 +11,7 @@ import {
   Library,
   LogOut,
   MailCheck,
+  Megaphone,
   MessageSquareText,
   MoreHorizontal,
   PanelLeftClose,
@@ -334,6 +335,9 @@ export function Sidebar({
           )}
           {admin && (
             <NavItem to="/admin/email" icon={<MailCheck className="size-[17px]" />} label="Email" />
+          )}
+          {admin && (
+            <NavItem to="/admin/messages" icon={<Megaphone className="size-[17px]" />} label="Messages" />
           )}
         </div>
 

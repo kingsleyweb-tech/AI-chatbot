@@ -103,6 +103,9 @@ const ACTION_LABELS: Record<string, string> = {
   support_deleted: 'Deleted a support report',
   help_article_saved: 'Saved a help article',
   help_article_deleted: 'Removed a help article',
+  message_sent: 'Sent a message to users',
+  message_template_saved: 'Saved a message template',
+  message_template_deleted: 'Deleted a message template',
 };
 
 function StatusBadge({ status }: { status: UserRow['status'] }) {

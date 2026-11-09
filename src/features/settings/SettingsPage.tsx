@@ -17,6 +17,7 @@ import {
   Library,
   LogOut,
   MailCheck,
+  Megaphone,
   MessageSquareText,
   Palette,
   Phone,
@@ -1356,6 +1357,9 @@ function SettingsHome() {
         )}
         {admin && (
           <NavRow to="/admin/email" icon={MailCheck} label="Email delivery" value="Admin" />
+        )}
+        {admin && (
+          <NavRow to="/admin/messages" icon={Megaphone} label="Messages to users" value="Admin" />
         )}
         {admin && <NavRow to="/admin/news" icon={Newspaper} label="News sources" value="Admin" />}
         <KnowledgeCenterLink admin={admin} />

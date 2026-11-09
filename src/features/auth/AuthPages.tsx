@@ -1500,6 +1500,8 @@ function AccessRequest() {
   const [busy, setBusy] = useState(false);
   const [checking, setChecking] = useState(false);
   const checks = useRef(0);
+  const autoFiled = useRef(false);
+  const [autoFailed, setAutoFailed] = useState(false);
 
   const check = useCallback(async () => {
     setChecking(true);
@@ -1524,7 +1526,20 @@ function AccessRequest() {
     };
   }, [access, check]);
 
+  // Email/password sign-ups already gave their name and verified their number, so the request
+  // is filed for them (the server normally does this right after the code; this covers the rest).
+  useEffect(() => {
+    if (access !== 'request' || !isPassword || autoFiled.current) return;
+    autoFiled.current = true;
+    const fullName = (accessInfo.profile?.displayName ?? user?.displayName ?? '').trim();
+    if (fullName.length < 2) return setAutoFailed(true);
+    void api('account', { json: { action: 'requestAccess', fullName } })
+      .then(() => refreshAccess())
+      .catch(() => setAutoFailed(true));
+  }, [access, isPassword, accessInfo.profile?.displayName, user?.displayName, refreshAccess]);
+
   if (access === 'loading' && !busy && !checking) return <Checking />;
+  if (access === 'request' && isPassword && !autoFailed) return <Checking />;
   if (!['request', 'pending', 'rejected', 'loading'].includes(access))
     return <Navigate to={routeFor(access) ?? '/'} replace />;
 
@@ -1559,6 +1574,7 @@ function AccessRequest() {
   }
 
   if (access === 'pending' && req) {
+    const phoneDone = req.phoneVerified || isPassword;
     return (
       <Shell>
         <div className="mb-7 flex flex-col items-center text-center">
@@ -1566,12 +1582,14 @@ function AccessRequest() {
             <CheckCircle2 className="size-6" />
           </div>
           <h1 className="text-[22px] font-semibold tracking-tight">
-            Your request has been submitted
+            {phoneDone ? 'Your phone number has been verified' : 'Your request has been submitted'}
           </h1>
           <p className="mt-1.5 text-sm text-muted">
-            Thank you for your interest in Atlas AI. Your access request has been sent to the
-            administrator. You will be able to use Atlas AI as soon as your account has been
-            approved.
+            {phoneDone
+              ? 'Your account has not been approved by the administrator yet. Please come back after some time to check.'
+              : 'Thank you for your interest in Atlas AI. Your access request has been sent to the administrator.'}{' '}
+            As soon as your account is approved, we will let you know by SMS and email, and you can
+            start using Atlas AI.
           </p>
         </div>
         <div className="mb-6 divide-y divide-border rounded-xl border border-border px-4">
@@ -1589,7 +1607,7 @@ function AccessRequest() {
           )}
           <Detail label="Status">
             <span className="inline-flex items-center gap-1.5 text-warn">
-              <Clock className="size-3.5" /> Waiting for review
+              <Clock className="size-3.5" /> Waiting for administrator approval
             </span>
           </Detail>
           <Detail label="Submitted">{fmtDate(req.submittedAt)}</Detail>
@@ -1603,8 +1621,8 @@ function AccessRequest() {
           </Button>
         </div>
         <p className="mt-4 text-center text-xs text-subtle">
-          You can close the app; your request stays on file. Sign in again any time to check its
-          status.
+          You can close the app; your request stays on file. Sign in again any time with your email
+          or phone number to check its status.
         </p>
       </Shell>
     );

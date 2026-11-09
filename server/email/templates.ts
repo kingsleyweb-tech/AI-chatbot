@@ -18,7 +18,9 @@ export type EmailType =
   | 'suspicious_login'
   | 'failed_logins'
   | 'security_change'
-  | 'support_update';
+  | 'support_update'
+  | 'access_approved'
+  | 'admin_message';
 
 export const EMAIL_TYPES: readonly EmailType[] = [
   'welcome',
@@ -32,6 +34,8 @@ export const EMAIL_TYPES: readonly EmailType[] = [
   'failed_logins',
   'security_change',
   'support_update',
+  'access_approved',
+  'admin_message',
 ];
 
 /** What signed in, for login and security emails (coarse, never the full user agent). */
@@ -74,6 +78,8 @@ export interface TemplateData {
     /** first part of the team's reply */
     reply?: string | null;
   };
+  /** admin_message: written by an administrator (plain text, escaped like everything else) */
+  message?: { subject: string; body: string };
 }
 
 export interface RenderedEmail {
@@ -481,6 +487,35 @@ export function render(type: EmailType, d: TemplateData, base: string): Rendered
       }
       footer =
         'You are receiving this email because you sent a report to Atlas Support. You can turn these emails off in Settings › Security and activity › Notifications.';
+      break;
+    }
+    case 'access_approved':
+      subject = 'Your Atlas AI account has been approved';
+      title = 'Your account is approved';
+      preheader = 'You can now sign in and start using Atlas AI.';
+      blocks = [
+        p(greeting(d.name)),
+        p('Good news: an administrator has approved your Atlas AI account. You can now sign in and start using it.'),
+        button('Open Atlas AI', base),
+        small('Sign in with the email address or phone number and password you used to create your account.'),
+      ];
+      break;
+    case 'admin_message': {
+      const m = d.message ?? { subject: 'A message from Atlas AI', body: '' };
+      subject = m.subject;
+      title = m.subject;
+      preheader = m.body.replace(/\s+/g, ' ').slice(0, 120);
+      blocks = [
+        p(greeting(d.name)),
+        ...m.body
+          .split(/\n\s*\n/)
+          .map((para) => para.trim())
+          .filter(Boolean)
+          .map((para) => p(para)),
+        button('Open Atlas AI', base),
+      ];
+      footer =
+        'You are receiving this message from the Atlas AI team. You can turn announcements off in Settings › Security and activity › Notifications.';
       break;
     }
   }

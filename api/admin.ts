@@ -3,7 +3,25 @@ import { BILLING_PATH, loadBilling, saveBilling } from '../server/billing/policy
 import { freeModelCandidates } from '../server/providers/registry.js';
 import { ProviderError } from '../server/providers/types.js';
 import { centralMaintenance } from '../server/central/manage.js';
+import { waitUntil } from '@vercel/functions';
 import { z } from 'zod';
+import {
+  deleteTemplate,
+  deliver,
+  loadTemplates,
+  MAX_RECIPIENTS,
+  recentMessages,
+  recipients,
+  saveTemplate,
+  SMS_MAX,
+  smsLeftToday,
+  startMessage,
+  validateMessage,
+  type MessageCandidate,
+  type MessageInput,
+} from '../server/account/messages.js';
+import { accessApprovedNotice } from '../server/account/notices.js';
+import { emailDeps } from '../server/email/index.js';
 import {
   CONSENT_METHOD_LABEL,
   consentCurrent,
@@ -130,6 +148,31 @@ const schema = z.discriminatedUnion('action', [
   }),
   z.object({ action: z.literal('newsFeedRemove'), id: feedId }),
   z.object({ action: z.literal('billingGet') }),
+  z.object({ action: z.literal('messages') }),
+  z.object({
+    action: z.literal('messageTemplateSave'),
+    template: z.object({
+      id: z.string().max(64).optional(),
+      name: z.string().max(80),
+      subject: z.string().max(150),
+      body: z.string().max(5000),
+      sms: z.string().max(SMS_MAX),
+    }),
+  }),
+  z.object({ action: z.literal('messageTemplateDelete'), id: z.string().min(1).max(64) }),
+  z.object({
+    action: z.literal('messageAudience'),
+    audience: z.enum(['all', 'approved', 'pending', 'selected', 'me']),
+    uids: z.array(z.string().min(1).max(128)).max(MAX_RECIPIENTS).optional(),
+  }),
+  z.object({
+    action: z.literal('messageSend'),
+    audience: z.enum(['all', 'approved', 'pending', 'selected', 'me']),
+    uids: z.array(z.string().min(1).max(128)).max(MAX_RECIPIENTS).optional(),
+    email: z.object({ subject: z.string().max(150), body: z.string().max(5000) }).nullable(),
+    sms: z.string().max(SMS_MAX + 10).nullable(),
+    confirm: z.literal(true),
+  }),
   z.object({
     action: z.literal('billingSet'),
     // null: every free model; a list can only narrow (paid ids are refused by saveBilling)
@@ -139,6 +182,7 @@ const schema = z.discriminatedUnion('action', [
 
 interface Profile extends ProfileStatus {
   displayName?: string;
+  emailPrefs?: unknown;
   photoURL?: string | null;
   phoneVerified?: boolean;
   lastLoginAt?: string;
@@ -175,6 +219,51 @@ export interface AdminUserRow {
 }
 
 const NEW_DAYS = 7;
+
+/** "Your account has been approved" by email and SMS, after the response. */
+function notifyApproved(db: Firestore, uids: string[]) {
+  if (!uids.length) return;
+  const mail = emailDeps(db);
+  const deps = {
+    db,
+    mail,
+    sms: getSmsProvider(),
+    accounts: accountAdmin(),
+    baseUrl: mail.baseUrl,
+    smsDailyCap: env().smsNotifyDailyCap,
+  };
+  waitUntil(
+    (async () => {
+      for (const uid of uids) await accessApprovedNotice(deps, uid);
+    })(),
+  );
+}
+
+/** Everyone who could receive an administrator message (verified contacts only). */
+async function messageCandidates(db: Firestore): Promise<MessageCandidate[]> {
+  const [accounts, profiles, access] = await Promise.all([
+    accountAdmin().list(),
+    db.list<Profile>('users', { limit: 2500 }),
+    db.get<AccessConfig>('config/access').then((d) => d?.data ?? null),
+  ]);
+  const byUid = new Map(profiles.map((p) => [p.id, p.data]));
+  return accounts
+    .filter((a) => a.uid !== SERVER_UID)
+    .map((a): MessageCandidate => {
+      const p = byUid.get(a.uid);
+      const r = row(a, p, access);
+      return {
+        uid: a.uid,
+        name: r.name,
+        email: a.email,
+        emailVerified: a.emailVerified,
+        phone: r.phoneVerified && p?.phoneVerified === true ? (p.phoneNumber ?? null) : null,
+        status: a.disabled && r.status === 'active' ? 'suspended' : r.status,
+        accessStatus: r.accessStatus,
+        prefs: p?.emailPrefs,
+      };
+    });
+}
 
 function lower(list?: string[]) {
   return (list ?? []).map((e) => e.toLowerCase());
@@ -491,9 +580,11 @@ export const POST = handle(async (request) => {
       (r) => r.status === 'pending' && r.accountStatus === 'active',
     );
     let approved = 0;
+    const approvedUids: string[] = [];
     for (const r of pending.slice(0, 200)) {
       try {
         await setAccess(db, actor, { uid: r.uid, email: r.email }, 'approve');
+        approvedUids.push(r.uid);
         approved++;
       } catch (err) {
         console.warn(
@@ -511,7 +602,98 @@ export const POST = handle(async (request) => {
       targetEmail: null,
       detail: `${approved} of ${pending.length} pending requests approved`,
     });
+    notifyApproved(db, approvedUids);
     return json({ ok: true, approved, total: pending.length });
+  }
+
+  if (b.action === 'messages') {
+    const [templates, history, smsLeft] = await Promise.all([
+      loadTemplates(db),
+      recentMessages(db),
+      smsLeftToday(db, env().smsMessageDailyCap),
+    ]);
+    return json({
+      templates,
+      history,
+      limits: {
+        smsLeftToday: smsLeft,
+        smsDailyCap: env().smsMessageDailyCap,
+        maxRecipients: MAX_RECIPIENTS,
+        smsMax: SMS_MAX,
+        smsConfigured: Boolean(getSmsProvider()),
+        emailConfigured: Boolean(getEmailProvider()),
+      },
+    });
+  }
+
+  if (b.action === 'messageTemplateSave') {
+    const saved = await saveTemplate(db, b.template, ctx.user.email ?? ctx.user.uid);
+    await recordAdminAction(db, {
+      action: 'message_template_saved',
+      adminUid: ctx.user.uid,
+      adminEmail: ctx.user.email,
+      targetUid: 'messageTemplates',
+      targetEmail: null,
+      detail: saved.name,
+    });
+    return json({ ok: true, template: saved });
+  }
+
+  if (b.action === 'messageTemplateDelete') {
+    await deleteTemplate(db, b.id);
+    await recordAdminAction(db, {
+      action: 'message_template_deleted',
+      adminUid: ctx.user.uid,
+      adminEmail: ctx.user.email,
+      targetUid: 'messageTemplates',
+      targetEmail: null,
+      detail: b.id,
+    });
+    return json({ ok: true });
+  }
+
+  if (b.action === 'messageAudience') {
+    const plan = recipients(await messageCandidates(db), b.audience, {
+      uids: b.uids,
+      selfUid: ctx.user.uid,
+    });
+    return json({
+      total: plan.total,
+      email: plan.emails.length,
+      sms: plan.texts.length,
+      smsLeftToday: await smsLeftToday(db, env().smsMessageDailyCap),
+    });
+  }
+
+  if (b.action === 'messageSend') {
+    const input: MessageInput = { audience: b.audience, uids: b.uids, email: b.email, sms: b.sms };
+    validateMessage(input);
+    const plan = recipients(await messageCandidates(db), b.audience, {
+      uids: b.uids,
+      selfUid: ctx.user.uid,
+    });
+    const rec = await startMessage(db, input, plan, ctx.user.email ?? ctx.user.uid);
+    const what = [b.email ? 'email' : '', b.sms ? 'SMS' : ''].filter(Boolean).join(' and ');
+    await recordAdminAction(db, {
+      action: 'message_sent',
+      adminUid: ctx.user.uid,
+      adminEmail: ctx.user.email,
+      targetUid: 'adminMessages',
+      targetEmail: null,
+      detail: `${what} to ${rec.recipients} (${b.audience})`,
+    });
+    const mail = emailDeps(db);
+    waitUntil(
+      deliver(
+        { db, mail, sms: getSmsProvider(), smsDailyCap: env().smsMessageDailyCap },
+        rec,
+        input,
+        plan,
+      ).catch((err) =>
+        console.error('[messages] delivery failed', err instanceof Error ? err.message : err),
+      ),
+    );
+    return json({ ok: true, message: rec });
   }
 
   if (b.action === 'news') {
@@ -762,6 +944,8 @@ export const POST = handle(async (request) => {
         'Remove administrator rights before rejecting this account.',
       );
     await setAccess(db, actor, { uid: b.uid, email: target.account.email }, b.decision, b.note);
+    if (b.decision === 'approve' && target.row.accessStatus !== 'approved')
+      notifyApproved(db, [b.uid]);
     return json({ ok: true });
   }
 
@@ -834,6 +1018,7 @@ export const POST = handle(async (request) => {
       { uid: b.uid, email: target.account.email },
       b.approved ? 'approve' : 'reject',
     );
+    if (b.approved && target.row.accessStatus !== 'approved') notifyApproved(db, [b.uid]);
     return json({ ok: true });
   }
 
