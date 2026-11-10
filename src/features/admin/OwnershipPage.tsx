@@ -34,6 +34,7 @@ export default function OwnershipPage() {
   const [form, setForm] = useState({ creator: '', owner: '', aliases: '', reason: '', confirmPhrase: '', confirmEmail: '' });
   const [password, setPassword] = useState('');
   const [needReauth, setNeedReauth] = useState(false);
+  const [useGoogle, setUseGoogle] = useState(false);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState('');
 
@@ -56,11 +57,14 @@ export default function OwnershipPage() {
 
   const user = auth.currentUser;
   const hasPassword = Boolean(user?.providerData.some((p) => p.providerId === 'password'));
+  const hasGoogle = Boolean(user?.providerData.some((p) => p.providerId === 'google.com'));
+  // confirm with Google when chosen, or when the account has no password
+  const viaGoogle = !hasPassword || (hasGoogle && useGoogle);
 
   const reauthenticate = async () => {
     if (!user?.email) throw new Error('This account has no email address.');
-    if (hasPassword) await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, password));
-    else await reauthenticateWithPopup(user, new GoogleAuthProvider());
+    if (viaGoogle) await reauthenticateWithPopup(user, new GoogleAuthProvider());
+    else await reauthenticateWithCredential(user, EmailAuthProvider.credential(user.email, password));
     await user.getIdToken(true);
   };
 
@@ -169,7 +173,12 @@ export default function OwnershipPage() {
                     <Input id="own-email" type="email" value={form.confirmEmail} onChange={set('confirmEmail')} autoComplete="off" required />
                   </div>
                 </div>
-                {needReauth && hasPassword && (
+                {needReauth && hasPassword && hasGoogle && (
+                  <button type="button" className="text-sm font-medium text-accent underline-offset-2 hover:underline" onClick={() => setUseGoogle((v) => !v)}>
+                    {useGoogle ? 'Use my password instead' : 'Confirm with Google instead'}
+                  </button>
+                )}
+                {needReauth && !viaGoogle && (
                   <div>
                     <Label htmlFor="own-password">Your password</Label>
                     <Input id="own-password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" required />
@@ -181,7 +190,7 @@ export default function OwnershipPage() {
                   </p>
                 )}
                 <Button type="submit" disabled={busy}>
-                  {busy ? 'Saving…' : needReauth ? (hasPassword ? 'Confirm and save' : 'Confirm with Google and save') : 'Save'}
+                  {busy ? 'Saving…' : needReauth ? (viaGoogle ? 'Confirm with Google and save' : 'Confirm and save') : 'Save'}
                 </Button>
               </form>
             )}
