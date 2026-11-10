@@ -3,11 +3,28 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* One type family across the app and the website, self-hosted (CSP allows
+   only 'self' fonts). Geist, SIL Open Font License. */
+@font-face {
+  font-family: 'Geist';
+  src: url('/fonts/Geist-Variable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('/fonts/GeistMono-Variable.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 @theme inline {
   --font-sans:
-    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI Variable Text', 'Segoe UI', 'Inter',
+    'Geist', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI Variable Text', 'Segoe UI',
     Roboto, 'Helvetica Neue', Arial, sans-serif;
-  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', 'JetBrains Mono', Menlo, Consolas, monospace;
+  --font-mono: 'Geist Mono', ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
 
   --color-bg: var(--bg);
   --color-surface: var(--surface);
@@ -29,34 +46,36 @@
 }
 
 :root {
-  --bg: #ffffff;
-  --surface: #f7f7f6;
-  --surface-2: #efefed;
-  --elevated: #ffffff;
-  --border: #e7e7e4;
-  --border-strong: #d4d4d0;
-  --fg: #1a1a1c;
-  --muted: #64646a;
-  --subtle: #9c9ca2;
+  /* Atlas palette, shared by the app and the public website: a warm light
+     canvas (light) and black (dark). Surfaces are small steps of the same hue. */
+  --bg: #f5f1e8;
+  --surface: #ede8dc;
+  --surface-2: #e4ddce;
+  --elevated: #faf7f0;
+  --border: #e2dbcc;
+  --border-strong: #cfc6b4;
+  --fg: #0d1110;
+  --muted: #5d6360;
+  --subtle: #8a8f8c;
   --danger: #c2410c;
   --danger-soft: rgba(194, 65, 12, 0.08);
   --warn: #a16207;
   --warn-soft: rgba(161, 98, 7, 0.09);
   --accent-fg: #ffffff;
-  --shadow-color: 20 20 25;
+  --shadow-color: 13 17 16;
   color-scheme: light;
 }
 
 .dark {
-  --bg: #111213;
-  --surface: #17181a;
-  --surface-2: #212225;
-  --elevated: #1b1c1f;
-  --border: #2a2b2f;
-  --border-strong: #3a3b40;
-  --fg: #ececee;
-  --muted: #a3a3aa;
-  --subtle: #6c6c73;
+  --bg: #000000;
+  --surface: #0c0d0d;
+  --surface-2: #171918;
+  --elevated: #121414;
+  --border: #232625;
+  --border-strong: #333735;
+  --fg: #ecedeb;
+  --muted: #a2a7a4;
+  --subtle: #6d726f;
   --danger: #fb923c;
   --danger-soft: rgba(251, 146, 60, 0.1);
   --warn: #facc15;
@@ -103,6 +122,27 @@ body {
   -moz-osx-font-smoothing: grayscale;
   overflow: hidden;
   overscroll-behavior: none;
+}
+
+/* Cursors: the text cursor only where you can type, a pointer on controls and
+   an arrow everywhere else (text can still be selected). In the base layer so
+   utilities such as cursor-not-allowed still win. */
+@layer base {
+  body {
+    cursor: default;
+    /* no blinking text caret on things you cannot type in (shows with caret browsing, F7) */
+    caret-color: transparent;
+  }
+  :where(a[href], button:not(:disabled), summary, label[for], select, [role='button'], [role='tab'], [role='link'], [role='menuitem'], [role='option'], [role='switch'], [role='checkbox'], [role='radio']) {
+    cursor: pointer;
+  }
+  :where(input:not([type='checkbox'], [type='radio'], [type='range'], [type='button'], [type='submit'], [type='reset'], [type='file'], [type='color']), textarea, [contenteditable]:not([contenteditable='false'])) {
+    cursor: text;
+    caret-color: auto;
+  }
+  :where(input:disabled, textarea:disabled, button:disabled) {
+    cursor: not-allowed;
+  }
 }
 
 /* App frame follows the *visual* viewport so the iOS keyboard never hides the composer. */

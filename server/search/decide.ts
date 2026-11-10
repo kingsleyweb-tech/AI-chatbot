@@ -8,6 +8,7 @@
  * talk, arithmetic, writing tasks, questions about earlier chats or the attached
  * documents) never search, not even with the Search toggle on.
  */
+import { isAboutAtlas } from '../shared/identity.js';
 import { extractUrls } from './heuristics.js';
 import type { SearchIntent, SearchKind } from './types.js';
 
@@ -28,6 +29,8 @@ export type DecisionReason =
   | 'model_knowledge'
   | 'mode_manual'
   | 'knowledge_base'
+  // a question about Atlas AI itself: answered from its verified identity record
+  | 'atlas_identity'
   // search
   | 'toggle'
   | 'explicit_request'
@@ -167,6 +170,8 @@ export function decideSearch(text: string, input: DecisionInput = {}): SearchDec
   if (input.webSearch) return search('toggle', true);
   if (explicitPhrase) return search('explicit_request', true);
   if (mode === 'manual') return none('mode_manual');
+  // "Who built Atlas AI?": the verified record answers it; a web search would find other organisations with the same name
+  if (isAboutAtlas(t)) return none('atlas_identity');
 
   const codey = CODEY.test(t);
   const years = (t.match(/\b(20\d{2})\b/g) ?? []).map(Number);

@@ -1,6 +1,7 @@
 import type { ChatTurn } from '../shared/types.js';
 import { estimateTokens } from '../docs/chunk.js';
 import type { ContentPart, ProviderMessage } from '../providers/types.js';
+import { ATLAS_IDENTITY } from '../shared/identity.js';
 
 export interface UserSettings {
   displayName?: string;
@@ -29,6 +30,8 @@ export interface PromptContext {
   failedDocuments?: string[];
   /** knowledge base excerpts ([K1] ...) */
   knowledge?: string;
+  /** verified record of who built and owns Atlas AI and what it runs on (identity questions only) */
+  atlasIdentity?: string;
   /** Atlas verified knowledge (platform-wide, administrator-approved records), continuing [K n] */
   centralKnowledge?: string;
   webResults?: string;
@@ -64,7 +67,7 @@ export function buildSystemPrompt(ctx: PromptContext): string {
   const s = ctx.settings;
   const now = ctx.now ?? new Date();
   const parts: string[] = [
-    `You are Atlas AI, a capable and trustworthy personal AI assistant.`,
+    `You are Atlas AI, a capable and trustworthy personal AI assistant. Atlas AI is an independent application created, developed and owned by ${ATLAS_IDENTITY.creator}; say so when asked who built, owns or is behind you, and don't bring it up otherwise.`,
     `Current date: ${now.toISOString().slice(0, 10)}.`,
     [
       'Be accurate, helpful and natural. Reason carefully through hard problems.',
@@ -81,6 +84,7 @@ export function buildSystemPrompt(ctx: PromptContext): string {
     ].join(' '),
   ];
   if (ctx.capabilityNotes?.length) parts.push(ctx.capabilityNotes.join(' '));
+  if (ctx.atlasIdentity) parts.push(ctx.atlasIdentity);
   const prefs = [
     STYLE[s.responseStyle ?? 'balanced'],
     s.tone ? TONE[s.tone] : '',

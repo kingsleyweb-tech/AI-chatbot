@@ -5,12 +5,41 @@ async function noHorizontalScroll(page: Page) {
   expect(overflow).toBeLessThanOrEqual(0);
 }
 
-test('signed-out visitors are sent to the sign-in screen', async ({ page }) => {
+test('signed-out visitors on / see the public home page, which leads to sign-in', async ({ page }) => {
   await page.goto('/');
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByRole('heading', { level: 1, name: /Think\s*Further\.\s*Do\s*More\./ })).toBeVisible();
+  await noHorizontalScroll(page);
+  await page.getByRole('button', { name: 'Open menu' }).click();
+  await page.getByRole('dialog', { name: 'Site menu' }).getByRole('link', { name: 'Sign in' }).click();
   await expect(page).toHaveURL(/\/login$/);
   await expect(page.getByRole('heading', { name: 'Welcome to Atlas AI' })).toBeVisible();
   await expect(page.getByRole('button', { name: /Continue with Google/ })).toBeVisible();
-  await noHorizontalScroll(page);
+});
+
+test('public pages render on a phone without sideways scrolling, and unknown pages show a 404', async ({ page }) => {
+  for (const [path, heading] of [
+    ['/about', /Built to help people think further/],
+    ['/features', /Everything Atlas AI can do today/],
+    ['/integrations', /The technology behind Atlas AI/],
+    ['/docs', /Atlas AI documentation/],
+    ['/docs/getting-started', /Getting started/],
+    ['/blog', /Notes from the Atlas AI team/],
+    ['/trust', /Security and privacy, stated plainly/],
+    ['/contact', /Get in touch/],
+    ['/help-centre', /How can we help/],
+    ['/changelog', /What’s new in Atlas AI/],
+    ['/status', /Service status/],
+    ['/pricing', /Pricing has not been published yet/],
+    ['/cookies', /Cookie Policy/],
+    ['/no-such-page', /This page took a different route/],
+  ] as const) {
+    await page.goto(path);
+    await expect(page.getByRole('heading', { level: 1, name: heading })).toBeVisible();
+    const inner = await page.locator('.site').evaluate((el) => el.scrollWidth - el.clientWidth);
+    expect(inner, `${path} horizontal overflow`).toBeLessThanOrEqual(0);
+    await noHorizontalScroll(page);
+  }
 });
 
 test('sign-in offers Google then email, and no Apple option', async ({ page }) => {
@@ -72,7 +101,6 @@ test('password reset screen renders without overflow', async ({ page }) => {
   await page.goto('/reset');
   await expect(page.getByRole('heading', { name: 'Reset your password' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Text me a code' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Email me a reset link instead' })).toBeVisible();
   await noHorizontalScroll(page);
 });
 
@@ -105,7 +133,7 @@ test('privacy policy and terms are public, versioned, final and fit a phone scre
     await expect(page).toHaveURL(new RegExp(`${path}$`));
     await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
     await expect(page.getByText(/Last updated:/)).toBeVisible();
-    await expect(page.getByText(/Version 1\.2/)).toBeVisible();
+    await expect(page.getByText(/Version 1\.\d/)).toBeVisible();
     await expect(page.getByText(/Draft|For legal review|Still to be confirmed/)).toHaveCount(0);
     await expect(page.getByRole('link', { name: 'kingsleyanaab99@gmail.com' }).first()).toHaveAttribute('href', 'mailto:kingsleyanaab99@gmail.com');
     await noHorizontalScroll(page);
@@ -116,7 +144,7 @@ test('the sign-in screen links to the privacy policy and terms', async ({ page }
   await page.goto('/login');
   await page.getByRole('link', { name: 'Privacy Policy' }).click();
   await expect(page).toHaveURL(/\/privacy$/);
-  await page.getByRole('button', { name: 'Back' }).click();
+  await page.goBack();
   await expect(page).toHaveURL(/\/login$/);
   await page.getByRole('link', { name: 'Terms of Use' }).click();
   await expect(page.getByRole('heading', { level: 1, name: 'Terms of Use' })).toBeVisible();

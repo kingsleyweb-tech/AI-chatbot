@@ -21,7 +21,7 @@ async function withCsp(page: Page) {
   return violations;
 }
 
-for (const path of ['/login', '/register', '/reset', '/privacy', '/terms']) {
+for (const path of ['/', '/about', '/docs/getting-started', '/blog', '/login', '/register', '/reset', '/privacy', '/terms']) {
   test(`${path} renders under the production CSP with no violations`, async ({ page }) => {
     const violations = await withCsp(page);
     await page.goto(path);

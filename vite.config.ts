@@ -4,6 +4,7 @@ import tailwindcss from '@tailwindcss/vite';
 import { defineConfig, loadEnv } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 import { apiDevPlugin } from './dev/api-plugin.js';
+import { sitePrerender } from './dev/site-prerender.js';
 import pkg from './package.json' with { type: 'json' };
 
 export default defineConfig(({ mode }) => {
@@ -17,6 +18,7 @@ export default defineConfig(({ mode }) => {
       react(),
       tailwindcss(),
       apiDevPlugin(),
+      sitePrerender(),
       VitePWA({
         registerType: 'autoUpdate',
         injectRegister: false,
@@ -26,7 +28,7 @@ export default defineConfig(({ mode }) => {
           short_name: 'Atlas AI',
           description: 'Think further. Do more. Your intelligent assistant for thinking, creating and discovering.',
           theme_color: '#0f766e',
-          background_color: '#ffffff',
+          background_color: '#f5f1e8',
           display: 'standalone',
           orientation: 'any',
           categories: ['productivity', 'utilities'],

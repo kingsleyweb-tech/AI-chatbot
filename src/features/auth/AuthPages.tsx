@@ -74,8 +74,16 @@ function routeFor(access: AccessState): string | null {
 }
 
 function Shell({ children, footer = TAGLINE }: { children: ReactNode; footer?: ReactNode }) {
+  const { access } = useAuth();
   return (
     <div className="scroll-thin touch-scroll flex h-full flex-col overflow-y-auto bg-bg pt-safe pb-safe">
+      {access === 'signed-out' && (
+        <div className="px-3 pt-3 sm:px-5">
+          <Link to="/" className="inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-sm text-muted hover:bg-surface-2 hover:text-fg">
+            <ArrowLeft className="size-4" aria-hidden="true" /> Atlas AI home
+          </Link>
+        </div>
+      )}
       <div className="flex flex-1 flex-col items-center justify-center px-5 py-10">
         <div className="w-full max-w-[380px]">{children}</div>
       </div>

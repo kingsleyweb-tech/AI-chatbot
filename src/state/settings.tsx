@@ -35,7 +35,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     root.dataset.accent = settings.accent;
     document
       .querySelectorAll('meta[name="theme-color"]')
-      .forEach((m) => m.setAttribute('content', isDark ? '#111213' : '#ffffff'));
+      .forEach((m) => m.setAttribute('content', isDark ? '#000000' : '#f5f1e8'));
     try {
       localStorage.setItem('tessera.appearance', JSON.stringify({ theme: settings.theme, accent: settings.accent }));
     } catch {

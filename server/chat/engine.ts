@@ -51,6 +51,8 @@ import type {
   UsageInfo,
 } from '../shared/types.js';
 import { buildSystemPrompt, toProviderMessages, type UserSettings } from './prompt.js';
+import { atlasIdentityBrief } from './identity.js';
+import { isAboutAtlas } from '../shared/identity.js';
 
 const attachmentSchema = z.discriminatedUnion('kind', [
   z.object({
@@ -674,6 +676,7 @@ export async function runChat(
             failedDocuments: docs?.failed,
             knowledge: knowledge?.text || undefined,
             centralKnowledge: central?.text || undefined,
+            atlasIdentity: isAboutAtlas(queryText) ? atlasIdentityBrief() : undefined,
             webResults: web?.text || undefined,
             webSearchFailed: web?.failure ?? null,
             news: Boolean(web?.news),

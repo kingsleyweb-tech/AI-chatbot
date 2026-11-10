@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useSyncExternalStore, type ReactNode } from 'react';
 import { AnalyticsConsentBanner } from './components/AnalyticsConsent';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { SessionGuard } from './features/shell/SessionGuard';
 import { LogoMark } from './components/Logo';
@@ -38,6 +38,28 @@ const NotificationsPage = lazy(() => import('./features/notifications/Notificati
 const HelpPage = lazy(() => import('./features/help/HelpPage'));
 const LegalPage = lazy(() => import('./features/legal/LegalPage'));
 
+// Public website (signed-out home page and public pages): separate chunks, not loaded by the app.
+const SiteLayout = lazy(() => import('./features/site/layout/SiteLayout'));
+const SiteHome = lazy(() => import('./features/site/home/HomePage'));
+const info = () => import('./features/site/pages/InfoPages');
+const docs = () => import('./features/site/pages/DocsPages');
+const blog = () => import('./features/site/pages/BlogPages');
+const AboutPage = lazy(() => info().then((m) => ({ default: m.AboutPage })));
+const FeaturesPage = lazy(() => info().then((m) => ({ default: m.FeaturesPage })));
+const IntegrationsPage = lazy(() => info().then((m) => ({ default: m.IntegrationsPage })));
+const TrustPage = lazy(() => info().then((m) => ({ default: m.TrustPage })));
+const ContactPage = lazy(() => info().then((m) => ({ default: m.ContactPage })));
+const StatusPage = lazy(() => info().then((m) => ({ default: m.StatusPage })));
+const PricingPage = lazy(() => info().then((m) => ({ default: m.PricingPage })));
+const ChangelogPage = lazy(() => info().then((m) => ({ default: m.ChangelogPage })));
+const HelpCentrePage = lazy(() => info().then((m) => ({ default: m.HelpCentrePage })));
+const PolicyPage = lazy(() => info().then((m) => ({ default: m.PolicyPage })));
+const NotFoundPage = lazy(() => info().then((m) => ({ default: m.NotFoundPage })));
+const DocsIndexPage = lazy(() => docs().then((m) => ({ default: m.DocsIndexPage })));
+const DocArticlePage = lazy(() => docs().then((m) => ({ default: m.DocArticlePage })));
+const BlogIndexPage = lazy(() => blog().then((m) => ({ default: m.BlogIndexPage })));
+const BlogPostPage = lazy(() => blog().then((m) => ({ default: m.BlogPostPage })));
+
 export function Splash() {
   return (
     <div className="flex h-full items-center justify-center">
@@ -70,6 +92,40 @@ function AdminOnly({ children }: { children: ReactNode }) {
   if (access === 'loading') return <Splash />;
   if (access !== 'allowed' || !admin) return <Navigate to="/" replace />;
   return <>{children}</>;
+}
+
+/**
+ * "/" and the app pages: signed-out visitors on "/" get the public home page;
+ * everyone else goes through Protected exactly as before (signed-out visitors
+ * on any other app page are still sent to /login).
+ */
+function AppGate() {
+  const { access } = useAuth();
+  const { pathname } = useLocation();
+  if (access === 'signed-out' && pathname === '/') {
+    return (
+      <SiteLayout>
+        <SiteHome />
+      </SiteLayout>
+    );
+  }
+  return (
+    <Protected>
+      <AppShell />
+    </Protected>
+  );
+}
+
+/** Unknown addresses: a 404 page for visitors, the app home for signed-in users. */
+function CatchAll() {
+  const { access } = useAuth();
+  if (access === 'loading') return <Splash />;
+  if (access !== 'signed-out') return <Navigate to="/" replace />;
+  return (
+    <SiteLayout>
+      <NotFoundPage />
+    </SiteLayout>
+  );
 }
 
 /** Inactivity timeout and cross-tab sign-out, for anyone signed in. */
@@ -124,15 +180,29 @@ function Routed() {
               <Route path="/denied" element={<AuthPages mode="denied" />} />
               <Route path="/request-access" element={<AuthPages mode="request" />} />
               <Route path="/consent" element={<AuthPages mode="consent" />} />
-              <Route path="/privacy" element={<LegalPage doc="privacy" />} />
-              <Route path="/terms" element={<LegalPage doc="terms" />} />
-              <Route
-                element={
-                  <Protected>
-                    <AppShell />
-                  </Protected>
-                }
-              >
+              <Route element={<SiteLayout />}>
+                <Route path="/about" element={<AboutPage />} />
+                <Route path="/features" element={<FeaturesPage />} />
+                <Route path="/integrations" element={<IntegrationsPage />} />
+                <Route path="/docs" element={<DocsIndexPage />} />
+                <Route path="/docs/:slug" element={<DocArticlePage />} />
+                <Route path="/blog" element={<BlogIndexPage />} />
+                <Route path="/blog/:slug" element={<BlogPostPage />} />
+                <Route path="/trust" element={<TrustPage />} />
+                <Route path="/security" element={<Navigate to="/trust#security" replace />} />
+                <Route path="/accessibility" element={<PolicyPage slug="accessibility" />} />
+                <Route path="/cookies" element={<PolicyPage slug="cookies" />} />
+                <Route path="/acceptable-use" element={<PolicyPage slug="acceptable-use" />} />
+                <Route path="/ai-transparency" element={<PolicyPage slug="ai-transparency" />} />
+                <Route path="/privacy" element={<LegalPage doc="privacy" />} />
+                <Route path="/terms" element={<LegalPage doc="terms" />} />
+                <Route path="/contact" element={<ContactPage />} />
+                <Route path="/help-centre" element={<HelpCentrePage />} />
+                <Route path="/changelog" element={<ChangelogPage />} />
+                <Route path="/status" element={<StatusPage />} />
+                <Route path="/pricing" element={<PricingPage />} />
+              </Route>
+              <Route element={<AppGate />}>
                 <Route index element={<ChatPage />} />
                 <Route path="c/:conversationId" element={<ChatPage />} />
                 <Route path="memory" element={<MemoryPage />} />
@@ -161,7 +231,7 @@ function Routed() {
                 <Route path="help" element={<HelpPage />} />
                 <Route path="help/:id" element={<HelpPage />} />
               </Route>
-              <Route path="*" element={<Navigate to="/" replace />} />
+              <Route path="*" element={<CatchAll />} />
             </Routes>
             <Session />
           </Suspense>
