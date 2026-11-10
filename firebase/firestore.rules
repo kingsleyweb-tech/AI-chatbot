@@ -88,9 +88,10 @@ service cloud.firestore {
     function accessDoc() {
       return get(accessPath()).data;
     }
-    // Keep in sync with ADMIN_EMAILS on the server.
+    // Super Admin: a custom claim only the server can set (from its ADMIN_EMAILS variable),
+    // so the owner's email address is not written here.
     function isBootstrapAdmin() {
-      return verified() && email() in ['kingsleyanaab604@gmail.com'];
+      return verified() && request.auth.token.get('superAdmin', false) == true;
     }
     function isAdmin() {
       return consentOk() && (isBootstrapAdmin()

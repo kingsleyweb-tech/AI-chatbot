@@ -34,7 +34,7 @@ Copy `.env.example` to `.env.local`. It is gitignored, so never commit it.
 | `CLOUDFLARE_IMAGE_MODEL` | server | no | Optional. Image model id; default `@cf/black-forest-labs/flux-2-klein-4b`. |
 | `APP_URL` | server | no | Public app URL, sent to OpenRouter as the referer. |
 | `FIREBASE_PROJECT_ID` | server | no | Used to verify ID tokens and call Firestore. |
-| `ADMIN_EMAILS` | server | no | Optional, comma separated. Defaults to the owner email. Keep in sync with `firebase/firestore.rules`. |
+| `ADMIN_EMAILS` | server | **yes** | Super Admin email(s), comma separated. No default: when missing or invalid nobody is Super Admin (fails closed). Never put it in a `VITE_` variable. |
 | `DEFAULT_MODEL`, `FALLBACK_MODELS`, `UTILITY_MODELS`, `EMBEDDING_MODELS` | server | no | Optional overrides, comma-separated model IDs. Defaults are in `server/config/models.ts`. |
 | `FIREBASE_SERVICE_ACCOUNT` | server | **yes** | Required for phone verification, SMS password recovery, account security events, the admin **Users** page (suspend, delete, restore) and signing out all sessions. Service account JSON (raw or base64) from Firebase **Project settings > Service accounts > Generate new private key**. Never commit the file; paste it into `.env.local` / Vercel and delete the download. Without it these features report that they are not configured; chat keeps working. |
 | `CRON_SECRET` | server | **yes** | 16+ random characters. Vercel Cron sends it to `/api/admin?job=purge` daily to permanently delete accounts whose 30-day recovery period has ended. |
@@ -65,7 +65,7 @@ Index builds can take a few minutes. Until they finish, the Project page and the
 
 Atlas AI is private. A user can use it only if their **email is verified** and it is either:
 
-- a bootstrap admin, hard-coded in `firestore.rules` (`isBootstrapAdmin`), in `src/state/auth.tsx` (`BOOTSTRAP_ADMINS`), and in the `ADMIN_EMAILS` default; or
+- the Super Admin: an email listed in the server variable `ADMIN_EMAILS`. There is no default; when it is missing, nobody is Super Admin. At sign-in the server gives that account a `superAdmin` custom claim, which `firestore.rules` (`isBootstrapAdmin`) checks, so the address is never in the app or the rules; or
 - listed in the Firestore document `config/access` (`allowedEmails` or `adminEmails`).
 
 An admin manages the lists in **Settings > Access**. That screen can also turn the registration page on (`config/public.registrationOpen`). New accounts still need to be allow-listed before they can do anything.

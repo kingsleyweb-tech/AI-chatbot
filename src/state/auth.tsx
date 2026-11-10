@@ -9,7 +9,6 @@ import { endSession } from '@/lib/session';
 import { DEFAULT_SETTINGS, type UserProfile } from '@/lib/types';
 
 /** Keep in sync with firestore.rules isBootstrapAdmin() and ADMIN_EMAILS. */
-export const BOOTSTRAP_ADMINS = ['kingsleyanaab604@gmail.com'];
 
 /**
  * loading     auth state or access still being determined (never redirect)
@@ -142,6 +141,8 @@ interface ServerAccess {
   configured: boolean;
   state?: 'phone' | 'unverified' | 'consent' | 'suspended' | 'deleted' | 'approved' | 'rejected' | 'pending' | 'request' | 'revoked';
   admin?: boolean;
+  /** the server updated this account's Super Admin claim: refresh the ID token */
+  refreshToken?: boolean;
   needsSettings?: boolean;
   request?: OwnAccessRequest | null;
   profile?: AccessInfo['profile'];
@@ -170,6 +171,8 @@ function decisionFrom(r: ServerAccess, provider: string | null): Decision | null
 async function serverAccess(provider: string | null): Promise<Decision | null> {
   try {
     const r = await api<ServerAccess>('account', { json: { action: 'access', name: auth.currentUser?.displayName ?? undefined } });
+    // new claim (Super Admin): Firestore uses the refreshed token from here on
+    if (r.refreshToken) await auth.currentUser?.getIdToken(true).catch(() => undefined);
     return decisionFrom(r, provider);
   } catch {
     return null;
@@ -188,10 +191,12 @@ async function checkAccess(user: User, forceToken: boolean): Promise<Decision> {
   const email = user.email?.toLowerCase() ?? '';
   let provider: string | null = null;
   let phoneVerified = false;
+  let superAdmin = false;
   try {
     const t = await user.getIdTokenResult(forceToken);
     provider = t.signInProvider ?? null;
     phoneVerified = t.claims.phoneVerified === true;
+    superAdmin = t.claims.superAdmin === true;
     // Email/password accounts must verify a phone number (enforced again by the rules and APIs).
     if (provider === 'password' && t.claims.phoneVerified !== true) {
       // still store the new account, so administrators can see it
@@ -214,10 +219,11 @@ async function checkAccess(user: User, forceToken: boolean): Promise<Decision> {
   try {
     const snap = await getDoc(doc(db, 'config', 'access'));
     const data = snap.exists() ? (snap.data() as { allowedEmails?: string[]; adminEmails?: string[] }) : {};
-    const admins = [...BOOTSTRAP_ADMINS, ...(data.adminEmails ?? [])].map((e) => e.toLowerCase());
+    // the Super Admin is recognised by the server-set claim; the owner's email is never in the app
+    const admins = (data.adminEmails ?? []).map((e) => e.toLowerCase());
     const allowed = (data.allowedEmails ?? []).map((e) => e.toLowerCase());
     // These lists match only a verified address (as on the server).
-    const admin = user.emailVerified && admins.includes(email);
+    const admin = user.emailVerified && (superAdmin || admins.includes(email));
     const listed = user.emailVerified && allowed.includes(email);
     return { state: admin || listed ? 'allowed' : 'denied', admin, provider };
   } catch (err) {

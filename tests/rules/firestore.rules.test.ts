@@ -13,7 +13,7 @@ function token(
   uid: string,
   email: string,
   verified = true,
-  opts: { provider?: string; phoneVerified?: boolean; authTime?: number } = {},
+  opts: { provider?: string; phoneVerified?: boolean; authTime?: number; superAdmin?: boolean } = {},
 ) {
   const { provider = 'password', phoneVerified = true } = opts;
   const now = Math.floor(Date.now() / 1000);
@@ -30,6 +30,7 @@ function token(
     auth_time: authTime,
     firebase: { sign_in_provider: provider },
     ...(phoneVerified ? { phoneVerified: true } : {}),
+    ...(opts.superAdmin ? { superAdmin: true } : {}),
   })}.`;
 }
 
@@ -78,7 +79,8 @@ const read = (who: Who, path: string) => call(who, 'GET', path);
 const write = (who: Who, path: string, data: object) => call(who, 'PATCH', path, data);
 const del = (who: Who, path: string) => call(who, 'DELETE', path);
 
-const ADMIN = token('admin-uid', 'kingsleyanaab604@gmail.com');
+// the Super Admin is recognised by the server-set claim, not by an email address
+const ADMIN = token('admin-uid', 'owner@example.com', true, { superAdmin: true });
 const ALLOWED = token('alice', 'alice@example.com');
 const ALLOWED_UNVERIFIED = token('alice', 'alice@example.com', false);
 const STRANGER = token('mallory', 'mallory@example.com');
@@ -168,15 +170,25 @@ describe('allowlist and verification', () => {
     );
   });
 
+  it('only the server-set claim makes a Super Admin, never the email address alone', async () => {
+    // same address as the Super Admin, but without the claim
+    const sameEmail = token('mallory2', 'owner@example.com', true, { phoneVerified: true });
+    denied(await write(sameEmail, 'config/access', { allowedEmails: [], adminEmails: ['mallory@example.com'], updatedAt: 1 }));
+    denied(await write(sameEmail, 'config/public', { registrationOpen: true, updatedAt: 1 }));
+    // the claim with an unverified email is not enough either
+    const unverifiedClaim = token('mallory3', 'mallory@example.com', false, { phoneVerified: true, superAdmin: true });
+    denied(await write(unverifiedClaim, 'config/public', { registrationOpen: true, updatedAt: 1 }));
+  });
+
   it('never treats an unverified address as an administrator', async () => {
-    const fake = token('eve', 'kingsleyanaab604@gmail.com', false, { phoneVerified: true });
+    const fake = token('eve', 'owner@example.com', false, { phoneVerified: true });
     ok(
       await write(OWNER, 'users/eve', {
-        email: 'kingsleyanaab604@gmail.com',
+        email: 'owner@example.com',
         accessStatus: 'approved',
       }),
     );
-    denied(await write(fake, 'config/access', { allowedEmails: [], adminEmails: ['kingsleyanaab604@gmail.com'], updatedAt: 1 }));
+    denied(await write(fake, 'config/access', { allowedEmails: [], adminEmails: ['owner@example.com'], updatedAt: 1 }));
     denied(await write(fake, 'config/public', { registrationOpen: false, updatedAt: 1 }));
   });
 
@@ -501,8 +513,9 @@ describe('phone verification', () => {
     provider: 'apple.com',
     phoneVerified: false,
   });
-  const ADMIN_NO_PHONE = token('admin-uid', 'kingsleyanaab604@gmail.com', true, {
+  const ADMIN_NO_PHONE = token('admin-uid', 'owner@example.com', true, {
     phoneVerified: false,
+    superAdmin: true,
   });
 
   it('email/password users without a verified phone are locked out, even admins', async () => {

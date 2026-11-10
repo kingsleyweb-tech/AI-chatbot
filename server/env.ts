@@ -1,4 +1,23 @@
-const DEFAULT_ADMIN = 'kingsleyanaab604@gmail.com';
+const EMAIL = /^[^@\s]{1,64}@[^@\s]{1,255}$/;
+
+/**
+ * Super Admin (owner) emails, only from the ADMIN_EMAILS server variable. There is no
+ * built-in fallback: when it is missing or holds no valid address, nobody is Super Admin
+ * (fails closed). Administrators listed in config/access keep their access.
+ */
+export function ownerEmails(value: string | undefined): string[] {
+  return (list(value) ?? []).map((s) => s.toLowerCase()).filter((s) => EMAIL.test(s));
+}
+
+let warned = false;
+function checkedOwners(value: string | undefined): string[] {
+  const owners = ownerEmails(value);
+  if (!owners.length && !warned) {
+    warned = true;
+    console.warn('[env] ADMIN_EMAILS is missing or invalid: no account has Super Admin access.');
+  }
+  return owners;
+}
 
 function list(value: string | undefined): string[] | undefined {
   if (!value) return undefined;
@@ -25,7 +44,8 @@ export function env() {
     projectId: e.FIREBASE_PROJECT_ID ?? e.VITE_FIREBASE_PROJECT_ID ?? '',
     /** Firebase web API key (public); the server uses it to sign in as its own identity. */
     firebaseApiKey: e.FIREBASE_WEB_API_KEY ?? e.VITE_FIREBASE_API_KEY ?? '',
-    adminEmails: (list(e.ADMIN_EMAILS) ?? [DEFAULT_ADMIN]).map((s) => s.toLowerCase()),
+    /** Super Admin emails (server-only, never sent to the browser); empty when not configured */
+    adminEmails: checkedOwners(e.ADMIN_EMAILS),
     defaultModel: e.DEFAULT_MODEL,
     fallbackModels: list(e.FALLBACK_MODELS),
     utilityModels: list(e.UTILITY_MODELS),

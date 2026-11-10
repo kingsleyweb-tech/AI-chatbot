@@ -83,8 +83,8 @@ describe('firstName', () => {
     for (const v of [undefined, null, '', '   ', 'undefined', 'null', 'someone@example.com', 'You', 'User']) expect(firstName(v)).toBe('');
   });
   it('ignores a display name that is only the email’s local part (stored when no name was given)', () => {
-    expect(firstName('kingsleyanaab604', 'kingsleyanaab604@gmail.com')).toBe('');
-    expect(firstName('Kesh', 'kingsleyanaab604@gmail.com')).toBe('Kesh');
+    expect(firstName('kofimensah604', 'kofimensah604@example.com')).toBe('');
+    expect(firstName('Kesh', 'kofimensah604@example.com')).toBe('Kesh');
   });
 });
 

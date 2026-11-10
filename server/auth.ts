@@ -14,6 +14,8 @@ export interface AuthUser {
   provider: string;
   /** set by the server (custom claim) once the account's phone number is verified */
   phoneVerified: boolean;
+  /** custom claim set by the server for the Super Admin (used by the Firestore rules) */
+  superAdminClaim?: boolean;
   /** when this sign-in session started (seconds since epoch) */
   authTime: number;
   /** raw Firebase ID token; forwarded to Firestore REST so security rules apply */
@@ -68,6 +70,7 @@ export async function requireUser(request: Request): Promise<AuthUser> {
     emailVerified: payload.email_verified === true,
     provider: String((payload.firebase as { sign_in_provider?: string } | undefined)?.sign_in_provider ?? ''),
     phoneVerified: payload.phoneVerified === true,
+    superAdminClaim: payload.superAdmin === true,
     authTime: typeof payload.auth_time === 'number' ? payload.auth_time : Number(payload.iat ?? 0),
     token: match[1],
     name: typeof payload.name === 'string' ? payload.name.slice(0, 100) : null,

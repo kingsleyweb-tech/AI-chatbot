@@ -26,7 +26,8 @@ import {
   type AccessRequest,
   type ProfileForAccess,
 } from '../server/account/requests.js';
-import { accountAdmin, adminConfigured, adminDb } from '../server/admin.js';
+import { accountAdmin, adminConfigured, adminDb, mergeCustomClaims } from '../server/admin.js';
+import { isSuperAdmin } from '../server/chat/ownership.js';
 import { maskPhone } from '../server/auth/phone.js';
 import { env } from '../server/env.js';
 import { requireUser } from '../server/auth.js';
@@ -244,11 +245,26 @@ export const POST = handle(async (request) => {
         );
       }
     }
+    // The Super Admin is recognised by a custom claim the server sets from ADMIN_EMAILS, so
+    // the Firestore rules and the browser never need the owner's email address. Removed again
+    // when the address leaves ADMIN_EMAILS. The browser refreshes its token when told to.
+    const superAdmin = isSuperAdmin(user, env().adminEmails);
+    let refreshToken = false;
+    if (superAdmin !== Boolean(user.superAdminClaim)) {
+      try {
+        await mergeCustomClaims(user.uid, { superAdmin: superAdmin ? true : null });
+        refreshToken = true;
+      } catch (err) {
+        console.error('[access] super admin claim update failed', err instanceof Error ? err.message : 'unknown');
+      }
+    }
     return json({
       ok: true,
       configured: true,
       state: block?.code === 'session_revoked' ? 'revoked' : gate.state,
       admin: gate.admin,
+      superAdmin,
+      refreshToken,
       accessStatus: profile.accessStatus ?? 'pending',
       autoApproved: Boolean((profile as { autoApproved?: boolean }).autoApproved),
       needsSettings,

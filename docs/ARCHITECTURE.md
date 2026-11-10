@@ -336,7 +336,7 @@ CSP (scripts: self, the inline theme script by SHA-256 hash, Google sign-in and 
 
 - **One record:** `ATLAS_IDENTITY` holds the default facts. Atlas AI was created and developed by Kingsley Anaab (also written Anaab Kingsley), who owns it. It also holds the tagline, the third-party providers and their roles, and what Atlas AI is not: it is unrelated to the similarly named Stanford-linked public benefit corporation, and it has no investors or partners.
 - **Ownership changes (Super Admin only):** `config/identity` can replace the creator, owner and alternative names. Firestore rules deny every client read and write of it, so only the server touches it.
-  - Changes go through `api/admin` `identitySet`. The caller must be an owner email from `ADMIN_EMAILS`, with a verified email (`isSuperAdmin`).
+  - Changes go through `api/admin` `identitySet`. The caller must be an owner email from the server variable `ADMIN_EMAILS`, with a verified email (`isSuperAdmin`). There is no built-in fallback: without `ADMIN_EMAILS` nobody is Super Admin. The owner address is never in the app bundle, the Firestore rules or API responses: at sign-in `api/account` (`access`) gives that account a `superAdmin` custom claim (removed when the address leaves `ADMIN_EMAILS`), which the rules check, and the browser refreshes its token.
   - The caller must also have signed in within the last 10 minutes (the token's `auth_time`). The admin page re-authenticates with a password or Google.
   - The caller must type `CHANGE OWNERSHIP`, their own email address and a reason of at least 10 characters.
   - Names are letters and simple punctuation only, so the record can't carry instructions.

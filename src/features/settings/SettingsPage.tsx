@@ -55,7 +55,7 @@ import { speechConfig, type SpeechConfig } from '@/lib/voice';
 import type { Accent, Theme, UsageDay, UserSettings } from '@/lib/types';
 import type { AiConfig } from '@shared/types';
 import { cn, formatTokens, isIOS, isStandalone, modelShortName } from '@/lib/utils';
-import { BOOTSTRAP_ADMINS, useAuth, useUid } from '@/state/auth';
+import { useAuth, useUid } from '@/state/auth';
 import { useCatalog } from '@/state/catalog';
 import { useSettings } from '@/state/settings';
 import { useToast } from '@/state/toast';
@@ -1157,12 +1157,10 @@ function AccessSection() {
           />
           <EmailList
             title="Administrators"
-            description="Can manage these lists. Administrators cannot read other users' chats."
-            emails={[...BOOTSTRAP_ADMINS, ...admins.filter((e) => !BOOTSTRAP_ADMINS.includes(e))]}
-            locked={BOOTSTRAP_ADMINS}
-            onChange={(next) =>
-              write({ adminEmails: next.filter((e) => !BOOTSTRAP_ADMINS.includes(e)) })
-            }
+            description="Can manage these lists. Administrators cannot read other users' chats. The Super Admin is set on the server and is not listed here."
+            emails={admins}
+            locked={[]}
+            onChange={(next) => write({ adminEmails: next })}
           />
         </>
       )}
