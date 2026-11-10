@@ -32,6 +32,7 @@ import {
   X,
   type LucideIcon,
   Newspaper,
+  BadgeCheck,
 } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
@@ -1362,6 +1363,7 @@ function SettingsHome() {
           <NavRow to="/admin/messages" icon={Megaphone} label="Messages to users" value="Admin" />
         )}
         {admin && <NavRow to="/admin/news" icon={Newspaper} label="News sources" value="Admin" />}
+        {admin && <NavRow to="/admin/ownership" icon={BadgeCheck} label="Ownership record" value="Admin" />}
         <KnowledgeCenterLink admin={admin} />
       </Group>
 

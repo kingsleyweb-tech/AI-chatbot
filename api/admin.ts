@@ -3,6 +3,14 @@ import { BILLING_PATH, loadBilling, saveBilling } from '../server/billing/policy
 import { freeModelCandidates } from '../server/providers/registry.js';
 import { ProviderError } from '../server/providers/types.js';
 import { centralMaintenance } from '../server/central/manage.js';
+import {
+  changeOwnership,
+  IDENTITY_PATH,
+  isSuperAdmin,
+  loadOwnership,
+  OWNERSHIP_CONFIRM,
+  ownershipAudit,
+} from '../server/chat/ownership.js';
 import { waitUntil } from '@vercel/functions';
 import { z } from 'zod';
 import {
@@ -148,6 +156,16 @@ const schema = z.discriminatedUnion('action', [
   }),
   z.object({ action: z.literal('newsFeedRemove'), id: feedId }),
   z.object({ action: z.literal('billingGet') }),
+  z.object({ action: z.literal('identityGet') }),
+  z.object({
+    action: z.literal('identitySet'),
+    creator: z.string().max(80),
+    owner: z.string().max(80),
+    aliases: z.array(z.string().max(80)).max(5).optional(),
+    reason: z.string().max(500),
+    confirmPhrase: z.string().max(40),
+    confirmEmail: z.string().max(320),
+  }),
   z.object({ action: z.literal('messages') }),
   z.object({
     action: z.literal('messageTemplateSave'),
@@ -760,6 +778,36 @@ export const POST = handle(async (request) => {
       detail,
     });
     return json({ ok: true });
+  }
+
+  // Ownership record (server/chat/ownership.ts). Administrators can view it; only the
+  // Super Admin can change it, with a recent sign-in, typed confirmation and a reason.
+  if (b.action === 'identityGet' || b.action === 'identitySet') {
+    const owners = env().adminEmails;
+    const superAdmin = isSuperAdmin(ctx.user, owners);
+    if (b.action === 'identitySet') {
+      let saved;
+      try {
+        saved = await changeOwnership(db, ctx.user, owners, b, { userAgent: request.headers.get('user-agent') });
+      } catch (err) {
+        if (err instanceof HttpError && err.code === 'not_super_admin')
+          await noteUnauthorizedAccess(ctx.user.uid, 'Ownership record change', request.headers.get('user-agent'));
+        throw err;
+      }
+      await recordAdminAction(db, {
+        action: 'ownership_changed',
+        adminUid: ctx.user.uid,
+        adminEmail: ctx.user.email,
+        targetUid: IDENTITY_PATH,
+        targetEmail: null,
+        detail: `Creator ${saved.creator}, owner ${saved.owner} (version ${saved.version})`,
+      });
+    }
+    const [record, history] = await Promise.all([
+      loadOwnership(db, true),
+      superAdmin ? ownershipAudit(db) : Promise.resolve(null),
+    ]);
+    return json({ record, superAdmin, history, confirmPhrase: OWNERSHIP_CONFIRM });
   }
 
   if (b.action === 'billingGet' || b.action === 'billingSet') {

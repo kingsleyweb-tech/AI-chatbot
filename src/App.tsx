@@ -31,6 +31,7 @@ const EmailAdminPage = lazy(() => import('./features/admin/EmailAdminPage'));
 const MessagesPage = lazy(() => import('./features/admin/MessagesPage'));
 const NewsAdminPage = lazy(() => import('./features/admin/NewsAdminPage'));
 const KnowledgeCenterPage = lazy(() => import('./features/admin/KnowledgeCenterPage'));
+const OwnershipPage = lazy(() => import('./features/admin/OwnershipPage'));
 const ReportIssuePage = lazy(() => import('./features/support/ReportIssuePage'));
 const MyReportsPage = lazy(() => import('./features/support/MyReportsPage'));
 const ReportThreadPage = lazy(() => import('./features/support/ReportThreadPage'));
@@ -221,6 +222,7 @@ function Routed() {
                 <Route path="admin/email" element={<AdminOnly><EmailAdminPage /></AdminOnly>} />
                 <Route path="admin/messages" element={<AdminOnly><MessagesPage /></AdminOnly>} />
                 <Route path="admin/news" element={<AdminOnly><NewsAdminPage /></AdminOnly>} />
+                <Route path="admin/ownership" element={<AdminOnly><OwnershipPage /></AdminOnly>} />
                 {/* roles are checked by the server: platform admins and knowledge administrators */}
                 <Route path="admin/knowledge-center" element={<KnowledgeCenterPage />} />
                 <Route path="admin/*" element={<Navigate to="/" replace />} />

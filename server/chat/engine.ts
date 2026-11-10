@@ -53,6 +53,8 @@ import type {
 import { buildSystemPrompt, toProviderMessages, type UserSettings } from './prompt.js';
 import { atlasIdentityBrief } from './identity.js';
 import { isAboutAtlas } from '../shared/identity.js';
+import { loadOwnership } from './ownership.js';
+import { createRedactor } from './redact.js';
 
 const attachmentSchema = z.discriminatedUnion('kind', [
   z.object({
@@ -663,8 +665,10 @@ export async function runChat(
             knowledge: (knowledge?.sources.length ?? 0) + (central?.sources.length ?? 0),
           });
 
+          const ownership = await loadOwnership(db);
           const system = buildSystemPrompt({
             settings,
+            ownership,
             projectName: project?.data.name,
             projectInstructions: project?.data.instructions,
             memories: memories.length ? formatMemories(memories) : undefined,
@@ -676,7 +680,7 @@ export async function runChat(
             failedDocuments: docs?.failed,
             knowledge: knowledge?.text || undefined,
             centralKnowledge: central?.text || undefined,
-            atlasIdentity: isAboutAtlas(queryText) ? atlasIdentityBrief() : undefined,
+            atlasIdentity: isAboutAtlas(queryText) ? atlasIdentityBrief(ownership) : undefined,
             webResults: web?.text || undefined,
             webSearchFailed: web?.failure ?? null,
             news: Boolean(web?.news),
@@ -709,6 +713,16 @@ export async function runChat(
               }
               send({ type: 'start', model: modelId });
               usedModel = modelId;
+              // credentials never reach the browser or the saved message (server/chat/redact.ts)
+              const answerFilter = createRedactor();
+              const reasoningFilter = createRedactor();
+              const emit = (kind: 'delta' | 'reasoning', text: string) => {
+                if (!text) return;
+                if (kind === 'delta') content += text;
+                else reasoning += text;
+                send({ type: kind, text });
+              };
+              try {
               for await (const chunk of providerFor(modelId).stream({
                 model: modelId,
                 messages,
@@ -718,11 +732,9 @@ export async function runChat(
                 ...(i < chain.length - 1 ? { firstByteTimeoutMs: 15_000 } : {}),
               })) {
                 if (chunk.type === 'delta') {
-                  content += chunk.text;
-                  send({ type: 'delta', text: chunk.text });
+                  emit('delta', answerFilter.push(chunk.text));
                 } else if (chunk.type === 'reasoning') {
-                  reasoning += chunk.text;
-                  send({ type: 'reasoning', text: chunk.text });
+                  emit('reasoning', reasoningFilter.push(chunk.text));
                 } else if (chunk.type === 'usage') {
                   usage = chunk.usage;
                   send({ type: 'usage', usage: chunk.usage });
@@ -730,6 +742,11 @@ export async function runChat(
                   finishReason = chunk.reason;
                   usedModel = modelId;
                 }
+              }
+              } finally {
+                // the text held back at the end of the stream
+                emit('reasoning', reasoningFilter.flush());
+                emit('delta', answerFilter.flush());
               }
               // Reasoning models can spend the whole budget thinking and return no
               // answer; treat that like any other recoverable failure and fall back.

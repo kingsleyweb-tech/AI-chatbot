@@ -59,10 +59,10 @@ describe('isAboutAtlas', () => {
 describe('identity brief', () => {
   const brief = atlasIdentityBrief();
 
-  it('names Anaab Kingsley as creator, developer and owner', () => {
-    expect(ATLAS_IDENTITY.creator).toBe('Anaab Kingsley');
-    expect(ATLAS_IDENTITY.owner).toBe('Anaab Kingsley');
-    expect(brief).toContain('Creator and developer: Anaab Kingsley. Owner: Anaab Kingsley.');
+  it('names Kingsley Anaab as creator, developer and owner', () => {
+    expect(ATLAS_IDENTITY.creator).toBe('Kingsley Anaab');
+    expect(ATLAS_IDENTITY.owner).toBe('Kingsley Anaab');
+    expect(brief).toContain('Creator and developer: Kingsley Anaab (also written Anaab Kingsley). Owner: Kingsley Anaab.');
     expect(brief).toContain('Think Further. Do More.');
   });
 
@@ -102,7 +102,7 @@ describe('system prompt', () => {
 
   it('always knows its owner, adds the full record only for identity questions', () => {
     const plain = buildSystemPrompt({ settings });
-    expect(plain).toContain('created, developed and owned by Anaab Kingsley');
+    expect(plain).toContain('created, developed and owned by Kingsley Anaab');
     expect(plain).not.toContain('About Atlas AI (verified');
     const withBrief = buildSystemPrompt({ settings, atlasIdentity: atlasIdentityBrief() });
     expect(withBrief).toContain('About Atlas AI (verified');

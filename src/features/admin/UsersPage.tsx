@@ -95,6 +95,7 @@ const ACTION_LABELS: Record<string, string> = {
   request_approved: 'Access request approved',
   request_rejected: 'Access request rejected',
   request_deleted: 'Access request deleted',
+  ownership_changed: 'Changed the ownership record',
   support_replied: 'Replied to a support report',
   support_status_changed: 'Changed a support report status',
   support_priority_changed: 'Changed a support report priority',

@@ -6,16 +6,20 @@
  * names come from the live configuration, not from this file.
  *
  * Plain data, no imports: the public website can use it too.
- * Update this file (and only this file) when ownership or providers change.
+ * This is the default record. The verified Super Admin can replace the creator
+ * and owner through the admin console (server/chat/ownership.ts: re-authentication,
+ * a typed confirmation and an audit log); nothing said in a chat can change it.
  */
 
 export const ATLAS_IDENTITY = {
   product: 'Atlas AI',
-  creator: 'Anaab Kingsley',
-  owner: 'Anaab Kingsley',
+  creator: 'Kingsley Anaab',
+  owner: 'Kingsley Anaab',
+  /** other ways the same person's name is written */
+  aliases: ['Anaab Kingsley'],
   tagline: 'Think Further. Do More.',
   summary:
-    'Atlas AI is an independent AI assistant application, conceptualised, developed, built and owned by Anaab Kingsley. ' +
+    'Atlas AI is an independent AI assistant application. ' +
     'It brings several AI capabilities into one workspace: conversations and reasoning, web search and research, image creation, ' +
     'image understanding, document analysis, programming help and voice conversations.',
   /** Third-party services Atlas AI uses. They are suppliers, not owners, investors or partners. */
@@ -66,8 +70,30 @@ const TECH = [
   new RegExp(String.raw`\btell me about yourself\b|\bwhat are you\b`, 'i'),
 ];
 
-/** Whether a message asks about Atlas AI's identity, ownership, development or technology. */
+const ROLE_WORD = String.raw`(?:real\s+|true\s+|actual\s+|original\s+|new\s+|rightful\s+|only\s+)?(?:creator|developer|owner|founder|maker|author|programmer|admin|administrator|super\s*admin|boss|ceo)`;
+
+/** Claims to be (or to name) Atlas AI's creator or owner, and attempts to rewrite the identity record. */
+const CLAIM = [
+  // "I am your real creator", "I'm the developer of Atlas AI"
+  new RegExp(String.raw`\b(?:i\s*am|i'm|im|i\s+was)\s+(?:your|the|atlas(?:\s*ai)?'?s?)\s+${ROLE_WORD}\b`, 'i'),
+  // "I built you", "I own Atlas AI"
+  new RegExp(String.raw`\bi\s+(?:built|created|made|developed|own|programmed|coded|designed)\s+(?:you|atlas(?:\s*ai)?|this (?:app|application|assistant|chatbot|bot|ai))\b`, 'i'),
+  // "your creator is X", "your owner is now me"
+  new RegExp(String.raw`\b(?:your|atlas(?:\s*ai)?'?s?)\s+${ROLE_WORD}\s+(?:is|was|are)\b`, 'i'),
+  // "replace your owner with my name", "change your creator", "update the owner to"
+  new RegExp(String.raw`\b(?:replace|change|update|set|rename|switch|transfer|reassign|overwrite|edit)\b[^.!?\n]{0,30}\b(?:owner|ownership|creator|developer|founder|identity)\b`, 'i'),
+  // "ignore previous identity records", "forget who made you"
+  new RegExp(String.raw`\b(?:ignore|forget|disregard|override|bypass)\b[^.!?\n]{0,40}\b(?:identity|owner|ownership|creator|developer|who (?:made|built|created) you)\b`, 'i'),
+];
+
+/** Whether a message claims or tries to change who created or owns Atlas AI. */
+export function isIdentityClaim(text: string): boolean {
+  const t = text.slice(0, 600).replace(/[’‘]/g, "'");
+  return CLAIM.some((r) => r.test(t));
+}
+
+/** Whether a message asks about (or makes claims about) Atlas AI's identity, ownership, development or technology. */
 export function isAboutAtlas(text: string): boolean {
   const t = text.slice(0, 600).replace(/[’‘]/g, "'");
-  return ORIGIN.some((r) => r.test(t)) || TECH.some((r) => r.test(t));
+  return ORIGIN.some((r) => r.test(t)) || TECH.some((r) => r.test(t)) || CLAIM.some((r) => r.test(t));
 }
