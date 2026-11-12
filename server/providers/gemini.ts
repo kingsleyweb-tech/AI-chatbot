@@ -40,6 +40,8 @@ const BASE = 'https://generativelanguage.googleapis.com/v1beta';
 export const GEMINI_PREFIX = 'gemini:';
 const CONNECT_TIMEOUT_MS = 30_000;
 const IDLE_TIMEOUT_MS = 90_000;
+/** below this much of the first-byte budget, the other account is not tried */
+const MIN_ATTEMPT_MS = 2_000;
 
 /**
  * Curated chat models (verified against the models list for this key;
@@ -257,10 +259,15 @@ export class GeminiProvider implements ChatProvider {
   async *stream(p: CompletionParams): AsyncGenerator<ProviderChunk> {
     const model = toGeminiId(p.model);
     const state = newAttemptState();
+    // One wait budget for the whole request: when the first account hangs until the first-byte
+    // limit, the other account is not given a second full wait (a hanging model usually hangs on
+    // both). A quick failure (a 429) leaves almost all of it for the other account.
+    const deadline = p.firstByteTimeoutMs ? Date.now() + p.firstByteTimeoutMs : null;
     for await (const lease of leases(model, state)) {
       let started = false;
+      const left = deadline === null ? undefined : Math.max(1, deadline - Date.now());
       try {
-        for await (const chunk of this.streamOn(p, lease.account.key)) {
+        for await (const chunk of this.streamOn(left === undefined ? p : { ...p, firstByteTimeoutMs: left }, lease.account.key)) {
           if (chunk.type === 'delta' || chunk.type === 'reasoning') started = true;
           yield chunk;
         }
@@ -269,6 +276,7 @@ export class GeminiProvider implements ChatProvider {
       } catch (err) {
         const next = lease.fail(err);
         if (started || next === 'stop') throw err;
+        if (deadline !== null && deadline - Date.now() < MIN_ATTEMPT_MS) throw err;
         state.errors.push(err);
       } finally {
         lease.end();
@@ -296,14 +304,24 @@ export class GeminiProvider implements ChatProvider {
       if (connect.signal.aborted) throw new ProviderError('timeout', 'Gemini took too long to start responding.', 504);
       throw new ProviderError('provider_error', 'Could not reach Gemini.', 502);
     }
-    clearTimeout(timer);
-    if (!res.ok || !res.body) throw mapGeminiError(res.status, await res.text());
+    // With a fallback waiting (firstByteTimeoutMs), the limit runs until the first data arrives:
+    // Google can send the response headers and then stay silent. Without one, only the
+    // connection is timed and the idle limit below applies.
+    const firstData = p.firstByteTimeoutMs !== undefined;
+    if (!firstData) clearTimeout(timer);
+    if (!res.ok || !res.body) {
+      clearTimeout(timer);
+      throw mapGeminiError(res.status, await res.text());
+    }
 
     let finish: string | null = null;
     let usage: GChunk['usageMetadata'] | undefined;
-    let idle = setTimeout(() => connect.abort(), IDLE_TIMEOUT_MS);
+    let gotData = false;
+    let idle = firstData ? undefined : setTimeout(() => connect.abort(), IDLE_TIMEOUT_MS);
     try {
       for await (const data of parseSSE(res.body, signal)) {
+        gotData = true;
+        clearTimeout(timer);
         clearTimeout(idle);
         idle = setTimeout(() => connect.abort(), IDLE_TIMEOUT_MS);
         let chunk: GChunk;
@@ -325,11 +343,16 @@ export class GeminiProvider implements ChatProvider {
     } catch (err) {
       if (p.signal?.aborted) throw err;
       if (err instanceof ProviderError) throw err;
-      if (connect.signal.aborted) throw new ProviderError('timeout', 'Gemini stopped responding.', 504);
+      if (connect.signal.aborted)
+        throw new ProviderError('timeout', gotData ? 'Gemini stopped responding.' : 'Gemini took too long to start responding.', 504);
       throw new ProviderError('provider_error', 'The Gemini stream was interrupted.', 502);
     } finally {
+      clearTimeout(timer);
       clearTimeout(idle);
     }
+    // the reader can also end quietly when the time limit fires between two reads
+    if (connect.signal.aborted && !p.signal?.aborted)
+      throw new ProviderError('timeout', gotData ? 'Gemini stopped responding.' : 'Gemini took too long to start responding.', 504);
     if (usage) {
       const completion = (usage.candidatesTokenCount ?? 0) + (usage.thoughtsTokenCount ?? 0);
       yield {

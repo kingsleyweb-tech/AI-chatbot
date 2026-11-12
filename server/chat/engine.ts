@@ -26,6 +26,8 @@ import {
 import { formatHistory, indexExchange, loadIndex, searchHistory, tagConversationProject, type IndexEntry } from '../memory/history.js';
 import { detectFocus, formatProject, loadProjects, projectSlug, updateProjectMemory, type LoadedProject } from '../memory/projects.js';
 import { markFailed, markHealthy, preferHealthy } from '../providers/health.js';
+import { geminiModelResting } from '../providers/geminiAccounts.js';
+import { syncShared } from '../providers/accountHealth.js';
 import { getCatalog, providerFor } from '../providers/registry.js';
 import { loadAiConfig } from '../config/ai.js';
 import { routeModel, nextInChain } from '../router/route.js';
@@ -510,7 +512,14 @@ export async function runChat(
             throw APPROVAL_STOP;
           }
           // models that just failed (quota, hang) go last so the user doesn't wait for them again
-          const chain = preferHealthy(route.chain);
+          // (Gemini's account cooldowns are shared by every instance; refreshed at most every 15 s)
+          if (route.chain.some((m) => m.startsWith('gemini:'))) await syncShared('gemini').catch(() => undefined);
+          const chain = preferHealthy(route.chain, Date.now(), geminiModelResting);
+          // the selected model is kept; while it rests the reply says which model answered instead
+          if (chain[0] !== route.chain[0]) {
+            console.info(`[chat] ${route.chain[0]} is resting after recent failures; trying ${chain[0]} first`);
+            notice(`${nameOf(route.chain[0])} is temporarily unavailable (recent timeouts or limits). Used ${nameOf(chain[0])} instead.`);
+          }
           if (route.switched) {
             routeInfo = {
               ...route.switched,

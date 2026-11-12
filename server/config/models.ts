@@ -38,18 +38,18 @@ export const TASK_PREFERENCES: Record<'vision' | 'code' | 'longContext' | 'gener
   // ranks the preferred provider (config/ai) first, so these lists only order
   // models within a provider.
   vision: [
-    'gemini:gemini-3.8-flash',
     'gemini:gemini-3.6-flash',
+    'gemini:gemini-3.8-flash',
     'gemini:gemini-3.5-flash-lite',
     'nvidia/nemotron-3.5-super-vl:free',
     'google/gemma-4-31b-it:free',
     'google/gemma-4-26b-a4b-it:free',
   ],
-  code: ['gemini:gemini-3.8-flash', 'gemini:gemini-3.6-flash', 'cohere/north-mini-code:free', 'nvidia/nemotron-3-ultra-550b-a55b:free'],
-  longContext: ['gemini:gemini-3.8-flash', 'gemini:gemini-3.6-flash', 'nvidia/nemotron-3-ultra-550b-a55b:free', 'nvidia/nemotron-3.5-super-vl:free'],
+  code: ['gemini:gemini-3.6-flash', 'gemini:gemini-3.8-flash', 'cohere/north-mini-code:free', 'nvidia/nemotron-3-ultra-550b-a55b:free'],
+  longContext: ['gemini:gemini-3.6-flash', 'gemini:gemini-3.8-flash', 'nvidia/nemotron-3-ultra-550b-a55b:free', 'nvidia/nemotron-3.5-super-vl:free'],
   general: [
-    'gemini:gemini-3.8-flash',
     'gemini:gemini-3.6-flash',
+    'gemini:gemini-3.8-flash',
     'gemini:gemini-3.5-flash-lite',
     'nvidia/nemotron-3-ultra-550b-a55b:free',
     'google/gemma-4-31b-it:free',
@@ -60,12 +60,18 @@ export const TASK_PREFERENCES: Record<'vision' | 'code' | 'longContext' | 'gener
 export function modelConfig() {
   const e = env();
   return {
-    // Gemini when its key is set; otherwise the best free OpenRouter model.
-    defaultModel: e.defaultModel ?? (e.geminiKey ? 'gemini:gemini-3.8-flash' : 'nvidia/nemotron-3-ultra-550b-a55b:free'),
+    // Gemini when its key is set; otherwise the best free OpenRouter model. Gemini 3.6 Flash is the
+    // default: in testing (12 Nov 2026) it answered reliably while 3.8 Flash often did not respond.
+    // 3.8 Flash stays available (model picker, and later in the chain); providers/health.ts keeps a
+    // model that keeps failing out of the way so it does not delay replies.
+    defaultModel: e.defaultModel ?? (e.geminiKey ? 'gemini:gemini-3.6-flash' : 'nvidia/nemotron-3-ultra-550b-a55b:free'),
+    // Flash-Lite before 3.8 Flash: when 3.6 Flash hangs, the next model should be the one that has
+    // stayed responsive (12 Nov 2026: 3.6 and 3.8 Flash both had periods of 15-60 s without a
+    // first byte; Flash-Lite answered in about 2 s), so a reply waits for at most one hanging model.
     fallbackModels: e.fallbackModels ?? [
-      'gemini:gemini-3.8-flash',
       'gemini:gemini-3.6-flash',
       'gemini:gemini-3.5-flash-lite',
+      'gemini:gemini-3.8-flash',
       'nvidia/nemotron-3-ultra-550b-a55b:free',
       'nvidia/nemotron-3.5-super-vl:free',
       'google/gemma-4-26b-a4b-it:free',

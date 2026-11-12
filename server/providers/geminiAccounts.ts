@@ -91,6 +91,18 @@ function score(account: GeminiAccountId, model: string, now: number): number {
   return Math.max(minute, day) + active * 0.05;
 }
 
+/**
+ * True when every Gemini account is resting for this model (a timeout, outage, rate limit or used-up
+ * daily quota, on this instance or reported by another one through the shared cooldowns). The chat
+ * engine then tries the next model first instead of waiting for this one.
+ */
+export function geminiModelResting(modelId: string, now = Date.now()): boolean {
+  if (!modelId.startsWith('gemini:')) return false;
+  const model = modelId.slice('gemini:'.length);
+  const accounts = geminiAccounts();
+  return accounts.length > 0 && accounts.every((a) => H.cooldownOf('gemini', a.id, model, now) !== null);
+}
+
 /** Usable accounts for this model, least loaded first (ties alternate). */
 export function orderAccounts(model: string, now = Date.now()): GeminiAccount[] {
   const list = geminiAccounts().filter((a) => {
@@ -204,7 +216,17 @@ function onFailure(account: GeminiAccountId, model: string, err: unknown, now = 
     case 'timeout':
     case 'provider_error':
       H.noteFailure('gemini', account, model, err.code, now);
-      H.startCooldown('gemini', account, model, H.backoffMs(streak(), 30_000, 5 * MIN), 'outage', { model, error: err.code }, now);
+      // a model that hangs tends to keep hanging: rest it longer (2, 4, 8 ... up to 30 min), shared
+      // with every instance, so users don't each wait for it; one success ends the streak
+      H.startCooldown(
+        'gemini',
+        account,
+        model,
+        err.code === 'timeout' ? H.backoffMs(streak(), 2 * MIN, 30 * MIN) : H.backoffMs(streak(), 30_000, 5 * MIN),
+        'outage',
+        { model, error: err.code },
+        now,
+      );
       record(account, model, 'failed', { error: err.code });
       return 'next';
     case 'not_configured':
@@ -265,6 +287,9 @@ export function exhaustedError(model: string, state: AttemptState): ProviderErro
       return new ProviderError('daily_limit', 'The Gemini free-tier daily quota for this model is used up. It resets at midnight Pacific time.', 429);
     if (!errors.length && !state.paced && reasons.every((r) => r === 'auth'))
       return new ProviderError('invalid_key', 'Google rejected the Gemini API key.', 401);
+    // every account is resting after timeouts or errors: not a quota problem, say so
+    if (!errors.length && !state.paced && reasons.every((r) => r === 'outage' || r === 'unavailable'))
+      return new ProviderError('timeout', 'This Gemini model is not responding at the moment.', 504);
     return new ProviderError('rate_limited', 'The Gemini free-tier quota for this model is used up for now.', 429);
   }
   return errors[errors.length - 1];
