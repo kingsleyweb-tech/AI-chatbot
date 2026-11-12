@@ -5,7 +5,9 @@ import { defineConfig, devices } from '@playwright/test';
 // need a real Firebase test account and are documented as manual checks.
 export default defineConfig({
   testDir: 'e2e',
-  timeout: 30_000,
+  // signed-out pages wait for Firebase Auth over the network (seconds on a slow connection); several pages are checked per test
+  timeout: 90_000,
+  expect: { timeout: 20_000 },
   retries: 0,
   reporter: 'list',
   use: { baseURL: 'http://127.0.0.1:4173', trace: 'retain-on-failure' },

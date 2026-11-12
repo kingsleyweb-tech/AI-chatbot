@@ -1,6 +1,6 @@
-import { Download, ImageOff, RefreshCw, X } from 'lucide-react';
+import { Download, Image as ImageIcon, ImageOff, Maximize2, RefreshCw, Sparkles, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import type { GeneratedImageInfo } from '@shared/types';
+import type { GeneratedImageInfo, ImageStage } from '@shared/types';
 import { Button, IconButton } from '@/components/ui';
 import { cn } from '@/lib/utils';
 import { useUid } from '@/state/auth';
@@ -108,8 +108,36 @@ function Lightbox({ url, alt, onClose }: { url: string; alt: string; onClose: ()
   );
 }
 
+const STAGE_TEXT: Record<ImageStage, string> = {
+  checking: 'Checking your request',
+  generating: 'Creating your image',
+  saving: 'Saving your image',
+};
+
+/**
+ * Shown from the moment a picture is requested until it arrives: the shape of the picture being
+ * made (square until the server reports the size), a dotted canvas with a soft animation, and the
+ * real stage the server is in. No percentage or time estimate is shown, because none is known.
+ */
+export function ImagePlaceholder({ stage, size }: { stage?: ImageStage; size?: { width: number; height: number } }) {
+  const ratio = size ? `${size.width} / ${size.height}` : '1 / 1';
+  return (
+    <figure className="my-2 w-full max-w-md" data-image-placeholder={stage ?? 'starting'}>
+      <div
+        className="image-pending relative flex w-full items-end overflow-hidden rounded-xl border border-border transition-[aspect-ratio] duration-300"
+        style={{ aspectRatio: ratio }}
+      >
+        <div role="status" aria-live="polite" className="relative z-[1] m-3 inline-flex items-center gap-2 rounded-full bg-bg/85 px-3 py-1.5 text-[12.5px] text-muted backdrop-blur-sm">
+          <ImageIcon className="size-3.5 text-accent" aria-hidden="true" />
+          {stage ? STAGE_TEXT[stage] : 'Starting'}…
+        </div>
+      </div>
+    </figure>
+  );
+}
+
 /** A created picture inside a chat reply: correct shape while loading, Download under it. */
-export function GeneratedImage({ info }: { info: GeneratedImageInfo }) {
+export function GeneratedImage({ info, onGenerateAnother, busy = false }: { info: GeneratedImageInfo; onGenerateAnother?: (prompt: string) => void; busy?: boolean }) {
   const { ref, state, retry } = useImageBlob(info);
   const [open, setOpen] = useState(false);
   const ratio = info.width && info.height ? `${info.width} / ${info.height}` : '1 / 1';
@@ -122,7 +150,7 @@ export function GeneratedImage({ info }: { info: GeneratedImageInfo }) {
       >
         {state.status === 'ready' && (
           <button type="button" className="block size-full cursor-zoom-in" onClick={() => setOpen(true)} aria-label="View full size">
-            <img src={state.url} alt={info.prompt} width={info.width} height={info.height} className="size-full object-contain" />
+            <img src={state.url} alt={info.prompt} width={info.width} height={info.height} className="image-reveal size-full object-contain" />
           </button>
         )}
         {(state.status === 'gone' || state.status === 'error') && (
@@ -138,8 +166,16 @@ export function GeneratedImage({ info }: { info: GeneratedImageInfo }) {
         )}
       </div>
       {state.status !== 'gone' && (
-        <figcaption className="mt-2 flex items-center gap-2">
+        <figcaption className="mt-2 flex flex-wrap items-center gap-2">
           <DownloadImageButton info={info} blob={state.status === 'ready' ? state.blob : null} />
+          <Button size="sm" variant="ghost" icon={<Maximize2 className="size-3.5" />} disabled={state.status !== 'ready'} onClick={() => setOpen(true)}>
+            View larger
+          </Button>
+          {onGenerateAnother && info.kind === 'generate' && (
+            <Button size="sm" variant="ghost" icon={<Sparkles className="size-3.5" />} disabled={busy} onClick={() => onGenerateAnother(info.prompt)}>
+              Generate another
+            </Button>
+          )}
           <span className="truncate text-[11px] text-subtle">
             {info.width}×{info.height} · {info.mime === 'image/png' ? 'PNG' : info.mime === 'image/webp' ? 'WebP' : 'JPEG'}
           </span>

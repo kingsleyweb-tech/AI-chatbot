@@ -2,6 +2,9 @@
  * Types shared between the browser client and the serverless backend.
  * Keep this file free of runtime imports so both sides can use it.
  */
+import type { FeatureView } from '../usage/policy.js';
+
+export type { FeatureView };
 
 export type Modality = 'text' | 'image' | 'file' | 'audio' | 'video';
 
@@ -227,10 +230,13 @@ export type StreamEvent =
   | { type: 'context'; memories: number; documents: number; conversations: number; knowledge?: number }
   | { type: 'reasoning'; text: string }
   | { type: 'delta'; text: string }
-  | { type: 'image_progress'; stage: ImageStage }
+  /** a real stage of creating a picture; width and height are the size being made, once known */
+  | { type: 'image_progress'; stage: ImageStage; width?: number; height?: number }
   /** the created picture, with its data so it can be shown and downloaded at once */
   | { type: 'image'; image: GeneratedImageInfo & { dataUrl: string } }
   | { type: 'usage'; usage: UsageInfo }
+  /** the AI allowance this reply counts against, right after it was reserved (usage indicator) */
+  | { type: 'allowance'; feature: FeatureView }
   | { type: 'error'; code: string; message: string; retryable: boolean; suggestion?: string }
   | { type: 'done'; finishReason: string | null; model: string }
   /** sent last: whether the reply was stored in Firestore (the client stores it itself when not) */

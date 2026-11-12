@@ -7,12 +7,10 @@ import {
   FileText,
   FolderClosed,
   ImageIcon,
+  LayoutDashboard,
   LifeBuoy,
   Library,
   LogOut,
-  MailCheck,
-  Megaphone,
-  MessageSquareText,
   MoreHorizontal,
   PanelLeftClose,
   Pencil,
@@ -20,8 +18,6 @@ import {
   Settings,
   SquarePen,
   Trash2,
-  UserPlus,
-  Users,
   X,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
@@ -39,22 +35,26 @@ import { useNotifications } from '../notifications/useNotifications';
 
 const PAGE = 40;
 
-function NavItem({
+export function NavItem({
   to,
   icon,
   label,
   onClick,
   count,
+  end,
 }: {
   to: string;
   icon: React.ReactNode;
   label: string;
   onClick?: () => void;
   count?: number;
+  /** active only on this exact path */
+  end?: boolean;
 }) {
   return (
     <NavLink
       to={to}
+      end={end}
       onClick={onClick}
       className={({ isActive }) =>
         cn(
@@ -85,7 +85,7 @@ function NavItem({
  * comes back into view, not on a timer.
  */
 /** New (unanswered) support reports, for the administrator's sidebar badge. */
-function useNewReports(enabled: boolean): number {
+export function useNewReports(enabled: boolean): number {
   const [n, setN] = useState(0);
   useEffect(() => {
     if (!enabled) return;
@@ -107,7 +107,7 @@ function useNewReports(enabled: boolean): number {
   return n;
 }
 
-function usePendingRequests(enabled: boolean): number {
+export function usePendingRequests(enabled: boolean): number {
   const [n, setN] = useState(0);
   useEffect(() => {
     if (!enabled) return;
@@ -307,37 +307,14 @@ export function Sidebar({
             label="Notifications"
             count={unread}
           />
-          {admin && (
-            <NavItem to="/admin/users" icon={<Users className="size-[17px]" />} label="Users" />
-          )}
+          {/* administrators: one way into the separate Admin Dashboard (its own layout and menu) */}
           {admin && (
             <NavItem
-              to="/admin/requests"
-              icon={<UserPlus className="size-[17px]" />}
-              label="Access requests"
-              count={pendingRequests}
+              to="/admin"
+              icon={<LayoutDashboard className="size-[17px]" />}
+              label="Admin Dashboard"
+              count={pendingRequests + newReports}
             />
-          )}
-          {admin && (
-            <NavItem
-              to="/admin/support"
-              icon={<LifeBuoy className="size-[17px]" />}
-              label="Support"
-              count={newReports}
-            />
-          )}
-          {admin && (
-            <NavItem
-              to="/admin/sms"
-              icon={<MessageSquareText className="size-[17px]" />}
-              label="SMS"
-            />
-          )}
-          {admin && (
-            <NavItem to="/admin/email" icon={<MailCheck className="size-[17px]" />} label="Email" />
-          )}
-          {admin && (
-            <NavItem to="/admin/messages" icon={<Megaphone className="size-[17px]" />} label="Messages" />
           )}
         </div>
 

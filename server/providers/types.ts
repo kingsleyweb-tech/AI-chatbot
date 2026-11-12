@@ -19,6 +19,8 @@ export interface CompletionParams {
   json?: boolean;
   /** give up (and let the caller fall back) if no response starts within this time */
   firstByteTimeoutMs?: number;
+  /** provider account to use (Cloudflare: the account the Neuron reservation was made on) */
+  account?: string;
 }
 
 export type ProviderChunk =
@@ -46,6 +48,10 @@ export type ProviderErrorCode =
   | 'free_limit';
 
 export class ProviderError extends Error {
+  /** how long the provider asked us to wait before retrying (ms), when it said */
+  retryAfterMs?: number;
+  /** the quota a 429 refers to, when the provider named it (e.g. Gemini's per-day request quota) */
+  quota?: { id: string; value: number | null; perDay: boolean };
   constructor(
     public code: ProviderErrorCode,
     message: string,

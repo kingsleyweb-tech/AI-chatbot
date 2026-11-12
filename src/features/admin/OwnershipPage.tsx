@@ -96,7 +96,7 @@ export default function OwnershipPage() {
   const set = (k: keyof typeof form) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
   return (
-    <Page title="Ownership record" back="/settings">
+    <Page title="Ownership record">
       <div className="mx-auto w-full max-w-2xl">
         <h1 className="mb-1 hidden text-xl font-semibold tracking-tight lg:block">Ownership record</h1>
         <p className="mb-6 text-sm text-muted">

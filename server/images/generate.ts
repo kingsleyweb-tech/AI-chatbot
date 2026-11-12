@@ -13,7 +13,7 @@ import { claimUserSlot, recordUsage, reserveNeurons } from '../cloudflare/budget
 import type { Firestore } from '../firestore.js';
 import { ProviderError } from '../providers/types.js';
 import type { ImageIntent } from './intent.js';
-import { checkImagePrompt } from './safety.js';
+import { checkImagePrompt, defaultGuard } from './safety.js';
 import { loadImage, saveImage, type GeneratedImageMeta } from './store.js';
 
 export type ImageStage = 'checking' | 'generating' | 'saving';
@@ -80,7 +80,10 @@ export async function runImageTurn(args: {
   /** the conversation's last generated image, for a follow-up edit */
   previousImageId?: string | null;
   signal: AbortSignal;
-  onStage: (stage: ImageStage) => void;
+  /** each real stage; the size being made is passed once it is known */
+  onStage: (stage: ImageStage, size?: { width: number; height: number }) => void;
+  /** the request was already counted against the user's image allowance (server/usage) */
+  allowanceChecked?: boolean;
 }): Promise<ImageTurnResult> {
   const { db, uid, intent, signal } = args;
   const imageId = imageIdFor(args.messageId);
@@ -91,7 +94,7 @@ export async function runImageTurn(args: {
     return { meta: existing.meta, stored: true, bytes: existing.bytes, neurons: 0, reused: true };
   }
 
-  const slot = await claimUserSlot(db, uid);
+  const slot = await claimUserSlot(db, uid, Date.now(), { allowanceChecked: args.allowanceChecked });
   if (!slot.ok) throw new ImageError(slot.reason === 'user_daily' ? 'image_daily_limit' : 'image_busy', slot.message, slot.reason !== 'user_daily');
   try {
     const isEdit = intent.kind === 'edit';
@@ -128,13 +131,14 @@ export async function runImageTurn(args: {
     }
 
     // ---- safety ----
-    args.onStage('checking');
+    args.onStage('checking', size);
     let safetyNeurons = 0;
     try {
-      const safety = await checkImagePrompt(intent.prompt, { signal });
+      // the safety check runs on the reserved Cloudflare account (and moves with it)
+      const safety = await checkImagePrompt(intent.prompt, { signal, guard: (p, s) => reservation.run(() => defaultGuard(p, s)) });
       safetyNeurons = safety.neurons;
       if (safetyNeurons) {
-        await recordUsage(db, safetyNeurons, { uid, model: SAFETY_MODEL, type: 'safety', ok: true }).catch(() => undefined);
+        await recordUsage(db, safetyNeurons, { uid, model: SAFETY_MODEL, type: 'safety', ok: true, account: reservation.account }).catch(() => undefined);
       }
       if (!safety.ok) {
         await reservation.settle(0, { uid, model: model.id, type: isEdit ? 'image_edit' : 'image_generate', ok: false, error: `blocked_${safety.category}` }).catch(() => undefined);
@@ -147,12 +151,12 @@ export async function runImageTurn(args: {
     }
 
     // ---- generation ----
-    args.onStage('generating');
+    args.onStage('generating', size);
     const kind = isEdit ? 'image_edit' : 'image_generate';
     let result: Awaited<ReturnType<typeof runImageModel>>;
     let usedModel = model;
     try {
-      result = await runImageModel(model.id, buildRequest(model, intent.prompt, size, input), signal);
+      result = await reservation.run(() => runImageModel(model.id, buildRequest(model, intent.prompt, size, input), signal));
     } catch (err) {
       const code = err instanceof ProviderError ? err.code : signal.aborted ? 'aborted' : 'internal';
       const flagged = providerFlagged(err);
@@ -165,7 +169,7 @@ export async function runImageTurn(args: {
       const second = await reserveNeurons(db, backup.estNeurons);
       if (!second.ok) throw err;
       try {
-        result = await runImageModel(backup.id, buildRequest(backup, intent.prompt, size), signal);
+        result = await second.run(() => runImageModel(backup.id, buildRequest(backup, intent.prompt, size), signal));
       } catch (err2) {
         const flagged2 = providerFlagged(err2);
         const code2 = err2 instanceof ProviderError ? err2.code : signal.aborted ? 'aborted' : 'internal';

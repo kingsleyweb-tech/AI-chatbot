@@ -15,6 +15,8 @@ export const REDACTED = '[redacted]';
 const SHAPES: RegExp[] = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g,
   /\bAIza[0-9A-Za-z_-]{35}\b/g, // Google API keys
+  /\bAQ\.[0-9A-Za-z_-]{40,}/g, // Google auth keys (newer AI Studio format)
+  /\bcfut_[0-9A-Za-z]{30,}\b/g, // Cloudflare user API tokens
   /\bsk-or-v1-[0-9a-f]{32,}\b/g, // OpenRouter
   /\bsk-(?:proj-|ant-)?[A-Za-z0-9_-]{32,}\b/g, // OpenAI-style and Anthropic keys
   /\btvly-(?:dev-|prod-)?[A-Za-z0-9_-]{20,}\b/g, // Tavily

@@ -27,10 +27,12 @@ Copy `.env.example` to `.env.local`. It is gitignored, so never commit it.
 | --- | --- | --- | --- |
 | `OPENROUTER_API_KEY` | server | **yes** | Required. Free-tier keys work with `:free` models only. |
 | `GEMINI_API_KEY` | server | **yes** | Recommended. Google AI Studio key. Gemini is the primary provider: it becomes the default model (`gemini:gemini-3.5-flash`), with Gemini embeddings and Flash-Lite for background tasks. Without it, Atlas AI runs on OpenRouter alone. Each Gemini model has its own free-tier quota, separate from OpenRouter's. |
+| `GEMINI_API_KEY_SECONDARY` | server | **yes** | Optional. A key from a **second Google project** (a second key in the same project shares its quota and adds nothing). Requests are spread over both projects and move to the other one when a project reaches a rate limit or daily quota (see ARCHITECTURE, "Provider accounts"). Billing must stay disabled on both projects. |
 | `GEMINI_BILLING` | server | no | Optional. `paid` if the Google project has billing; then no Gemini model is used (free models only). Default: Free Tier models only. |
 | `SERPAPI_API_KEY` | server | **yes** | Optional. Google results via SerpAPI: general and news searches. |
 | `TAVILY_API_KEY` | server | **yes** | Optional. Research searches, page reading, Deep Research. |
 | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` | server | **yes** | Optional. Cloudflare Workers AI: image creation and editing, and the Cloudflare chat models. The token needs only the **Workers AI** permission. Never use a `VITE_` prefix. Without them, image requests are answered as unavailable. |
+| `CLOUDFLARE_ACCOUNT_ID_SECONDARY`, `CLOUDFLARE_API_TOKEN_SECONDARY` | server | **yes** | Optional. A second Cloudflare account (Workers Free plan), with its own free daily allowance and the same Atlas cap. Calls move to it when the first account is used up, rejects its token or is rate-limited. |
 | `CLOUDFLARE_IMAGE_MODEL` | server | no | Optional. Image model id; default `@cf/black-forest-labs/flux-2-klein-4b`. |
 | `APP_URL` | server | no | Public app URL, sent to OpenRouter as the referer. |
 | `FIREBASE_PROJECT_ID` | server | no | Used to verify ID tokens and call Firestore. |

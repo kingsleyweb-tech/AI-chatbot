@@ -284,6 +284,26 @@ body {
 }
 @keyframes blink { to { visibility: hidden; } }
 
+/* picture being created: dotted canvas with a soft light sweep (no progress is implied) */
+.image-pending {
+  background-color: var(--surface-2);
+  background-image: radial-gradient(color-mix(in srgb, var(--fg) 16%, transparent) 1px, transparent 1.6px);
+  background-size: 14px 14px;
+}
+.image-pending::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 25%, color-mix(in srgb, var(--bg) 60%, transparent) 50%, transparent 75%);
+  transform: translateX(-100%);
+  animation: image-sweep 2.2s ease-in-out infinite;
+}
+@keyframes image-sweep { to { transform: translateX(100%); } }
+@media (prefers-reduced-motion: reduce) { .image-pending::after { display: none; } }
+/* a finished picture fades in over its placeholder */
+.image-reveal { animation: image-reveal 0.45s ease-out both; }
+@keyframes image-reveal { from { opacity: 0; filter: blur(6px); } to { opacity: 1; filter: blur(0); } }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
 }

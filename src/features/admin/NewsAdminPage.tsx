@@ -147,7 +147,7 @@ export default function NewsAdminPage() {
   const urlOk = /^https:\/\/\S+$/.test(form.url);
 
   return (
-    <Page title="News sources" back="/settings" wide actions={refresh}>
+    <Page title="News sources" wide actions={refresh}>
       <div className="mx-auto w-full max-w-5xl">
         <div className="mb-5 hidden items-center justify-between lg:flex">
           <h1 className="text-xl font-semibold tracking-tight">News sources</h1>

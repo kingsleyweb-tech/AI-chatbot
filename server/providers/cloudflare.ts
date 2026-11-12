@@ -14,6 +14,8 @@ import type { ModelInfo } from '../shared/types.js';
 import {
   aiBase,
   authHeader,
+  cloudflareAccountIds,
+  currentCloudflareAccount,
   cloudflareConfigured,
   cloudflareDailyLimitActive,
   cloudflareDailyLimitError,
@@ -113,12 +115,24 @@ export class CloudflareProvider implements ChatProvider {
   async listModels(): Promise<ModelInfo[]> {
     if (!this.isConfigured()) return [];
     if (modelCache && Date.now() - modelCache.at < MODEL_TTL) return modelCache.models;
-    const res = await fetch(`${aiBase()}/models/search?per_page=100&task=Text%20Generation`, {
-      headers: authHeader(),
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!res.ok) throw mapCloudflareError(res.status, await res.text());
-    const { result } = (await res.json()) as { result?: CfModelListing[] };
+    // the catalogue is the same on every account: the first one that answers is enough
+    let result: CfModelListing[] | undefined;
+    let lastErr: unknown = null;
+    for (const account of cloudflareAccountIds()) {
+      try {
+        const res = await fetch(`${aiBase(account)}/models/search?per_page=100&task=Text%20Generation`, {
+          headers: authHeader(account),
+          signal: AbortSignal.timeout(15_000),
+        });
+        if (!res.ok) throw mapCloudflareError(res.status, await res.text(), account);
+        result = ((await res.json()) as { result?: CfModelListing[] }).result;
+        lastErr = null;
+        break;
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    if (lastErr) throw lastErr;
     const models = CLOUDFLARE_CHAT_MODELS.map((cfg) => mapCloudflareModel(cfg, result?.find((r) => r.name === cfg.id))).filter(
       (m): m is ModelInfo => m !== null,
     );
@@ -139,14 +153,16 @@ export class CloudflareProvider implements ChatProvider {
   }
 
   async *stream(p: CompletionParams): AsyncGenerator<ProviderChunk> {
-    const headers = { ...authHeader(), 'content-type': 'application/json' }; // throws not_configured first
-    if (cloudflareDailyLimitActive()) throw cloudflareDailyLimitError();
+    // the account the engine's Neuron reservation was made on (else the first configured one)
+    const account = p.account ?? currentCloudflareAccount();
+    const headers = { ...authHeader(account), 'content-type': 'application/json' }; // throws not_configured first
+    if (cloudflareDailyLimitActive(Date.now(), account)) throw cloudflareDailyLimitError();
     const connect = new AbortController();
     const timer = setTimeout(() => connect.abort(), p.firstByteTimeoutMs ?? CONNECT_TIMEOUT_MS);
     const signal = AbortSignal.any([connect.signal, p.signal].filter(Boolean) as AbortSignal[]);
     let res: Response;
     try {
-      res = await fetch(`${aiBase()}/v1/chat/completions`, { method: 'POST', headers, body: this.body(p, true), signal });
+      res = await fetch(`${aiBase(account)}/v1/chat/completions`, { method: 'POST', headers, body: this.body(p, true), signal });
     } catch (err) {
       clearTimeout(timer);
       if (p.signal?.aborted) throw err;
@@ -155,19 +171,20 @@ export class CloudflareProvider implements ChatProvider {
     }
     if (!res.ok || !res.body) {
       clearTimeout(timer);
-      throw mapCloudflareError(res.status, await res.text());
+      throw mapCloudflareError(res.status, await res.text(), account, res.headers.get('retry-after'));
     }
     clearTimeout(timer);
     yield* readStream(res, p, connect, signal);
   }
 
   async complete(p: CompletionParams): Promise<string> {
-    if (cloudflareDailyLimitActive()) throw cloudflareDailyLimitError();
+    const account = p.account ?? currentCloudflareAccount();
+    if (cloudflareDailyLimitActive(Date.now(), account)) throw cloudflareDailyLimitError();
     let res: Response;
     try {
-      res = await fetch(`${aiBase()}/v1/chat/completions`, {
+      res = await fetch(`${aiBase(account)}/v1/chat/completions`, {
         method: 'POST',
-        headers: { ...authHeader(), 'content-type': 'application/json' },
+        headers: { ...authHeader(account), 'content-type': 'application/json' },
         body: this.body(p, false),
         signal: AbortSignal.any([AbortSignal.timeout(CONNECT_TIMEOUT_MS), p.signal].filter(Boolean) as AbortSignal[]),
       });
@@ -175,7 +192,7 @@ export class CloudflareProvider implements ChatProvider {
       if (err instanceof ProviderError) throw err;
       throw new ProviderError('timeout', 'The model did not respond in time.', 504);
     }
-    if (!res.ok) throw mapCloudflareError(res.status, await res.text());
+    if (!res.ok) throw mapCloudflareError(res.status, await res.text(), account, res.headers.get('retry-after'));
     const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
     return data.choices?.[0]?.message?.content ?? '';
   }

@@ -1,5 +1,6 @@
 import { cleanupPurgedRecords } from '../server/account/retention.js';
 import { BILLING_PATH, loadBilling, saveBilling } from '../server/billing/policy.js';
+import { providerOverview } from '../server/providers/overview.js';
 import { freeModelCandidates } from '../server/providers/registry.js';
 import { ProviderError } from '../server/providers/types.js';
 import { centralMaintenance } from '../server/central/manage.js';
@@ -78,6 +79,7 @@ import { emailOverview } from '../server/email/log.js';
 import { EmailError, getEmailProvider } from '../server/email/provider.js';
 import { optionalLimit } from '../server/email/service.js';
 import { smsOverview } from '../server/sms/log.js';
+import { usageAdmin, usageOpSchema } from '../server/usage/admin.js';
 import { getOtpGateway, getSmsProvider, vynfyBalances } from '../server/sms/provider.js';
 
 const uid = z
@@ -101,6 +103,9 @@ const schema = z.discriminatedUnion('action', [
   }),
   z.object({ action: z.literal('approve'), uid, approved: z.boolean() }),
   z.object({ action: z.literal('logs') }),
+  z.object({ action: z.literal('providers') }),
+  // AI usage allowances: profiles, limits, unlimited access, resets, analytics (server/usage)
+  z.object({ action: z.literal('usage'), op: usageOpSchema }),
   z.object({ action: z.literal('sms') }),
   z.object({ action: z.literal('email') }),
   z.object({ action: z.literal('requests') }),
@@ -832,6 +837,30 @@ export const POST = handle(async (request) => {
     }
     const [settings, candidates] = await Promise.all([loadBilling(true), freeModelCandidates()]);
     return json({ billing: settings, candidates });
+  }
+
+  // AI provider accounts: health, usage, cooldowns, switches (labels only; never keys or account ids)
+  if (b.action === 'providers') {
+    return json(await providerOverview(db), { headers: { 'cache-control': 'no-store' } });
+  }
+
+  if (b.action === 'usage') {
+    const access = await db.get<AccessConfig>('config/access').then((d) => d?.data ?? null);
+    const admins = new Set([...lower(env().adminEmails), ...lower(access?.adminEmails)]);
+    let accounts: { uid: string; email: string | null; name: string }[] | null = null;
+    const result = await usageAdmin(
+      {
+        db,
+        actor,
+        accounts: async () =>
+          (accounts ??= (await accountAdmin().list())
+            .filter((a) => a.uid !== SERVER_UID)
+            .map((a) => ({ uid: a.uid, email: a.email ?? null, name: a.displayName ?? a.email ?? a.uid }))),
+        isAdminEmail: (email) => Boolean(email && admins.has(email.toLowerCase())),
+      },
+      b.op,
+    );
+    return json(result, { headers: { 'cache-control': 'no-store' } });
   }
 
   if (b.action === 'logs') {

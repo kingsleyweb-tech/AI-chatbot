@@ -83,6 +83,15 @@ Signed-in persistence is tested end to end against the Firebase emulators with a
   - Requests go to the OpenAI-compatible endpoint `.../accounts/{id}/ai/v1/chat/completions` with the token in the `Authorization` header only.
   - Errors are mapped by `mapCloudflareError`. The free daily allocation (code 4006) is remembered until 00:00 UTC and marks the models unavailable.
 
+## Provider accounts (`server/providers/geminiAccounts.ts`, `server/providers/accountHealth.ts`, `server/cloudflare/budget.ts`)
+
+Gemini and Cloudflare can each run on two free accounts (A = the original variables, B = `*_SECONDARY`). Both stay on free tiers; nothing here can start paid usage.
+
+- **Health** (`accountHealth.ts`): per account (and per model for Gemini) on each instance: requests started in the last minute, requests running, and cooldowns with exponential backoff that honour the provider's retry hint. Cooldowns are also written to `providerHealth/{provider}` and read back at most every 15 s, so every instance learns about a limit. An expired cooldown simply ends; the next real request is the test (accounts are never probed).
+- **Gemini routing** (`geminiAccounts.ts`): for each request the usable projects are ordered by load (per-minute use against 80% of the published RPM, today's requests against the daily quota), ties alternating. Known daily quotas (3.8 and 3.6 Flash: 20 per project) are counted atomically in `geminiUsage/{Pacific day}` before the call; a count past the limit is undone and the project rests until midnight Pacific time. On a 429 the project rests for that model (per-minute: backoff from 60 s; per-day: until midnight Pacific) and the same request goes to the other project; a rejected key rests the whole project for 10 minutes and logs an alert without the key; an outage rests it for 30 s upwards. Streaming switches only before the first text, so a request never produces two answers. When both projects are unavailable, the limit error reaches the engine, which continues with the next approved free model. Limits Google reports in a 429 replace the defaults for that project (`server/config/providerLimits.ts`).
+- **Cloudflare routing** (`budget.ts`): each account has its own cap (`images.appDailyNeurons`) against its own 10,000 free Neurons. A reservation is an atomic increment of `accounts.{A,B}.claimed` in `cloudflareUsage/{day}` on the least-used account; a claim that lands past the cap is undone and the other account is tried. `Reservation.run` binds the calls to that account and moves them (with the claim) to the other account on a used-up allowance, rejected token, rate limit, missing model or outage, but only if no Neurons were spent. Usage recorded before accounts were tracked counts toward A.
+- **Dashboard**: Settings › AI provider accounts (`/admin/providers`, admin action `providers`): status, models, today's requests and remaining daily quota, per-minute use, rate-limit errors, last success and failure, Neurons, cooldowns and recent switches (`providerEvents`). Labels only, never keys, tokens or account ids.
+
 ## Images (`server/images`, `src/features/images`)
 
 1. **Intent** (`intent.ts`): `detectImageIntent` runs on every message when Cloudflare is configured.
@@ -193,7 +202,9 @@ All user data is under `users/{uid}`:
 | `.../generatedImages/{id}` | created image metadata: `uid`, `conversationId`, `messageId`, `prompt`, `model`, `kind` (generate/edit), `sourceImageId`, `mime`, `width`, `height`, `bytes`, `chunks`, `storage`, `status`, `createdAt` (server-written; owner read/delete) |
 | `.../generatedImageData/{id}_{n}` | image bytes, at most 900,000 per document (server-written; owner read/delete) |
 | `config/limits` | search budgets, Deep Research budget, cache lifetimes, `images.perUserDaily` / `images.appDailyNeurons` (approved read, admin-write) |
-| `cloudflareUsage/{yyyy-mm-dd}` | app-wide Workers AI Neurons and requests per type, model and error (server only) |
+| `cloudflareUsage/{yyyy-mm-dd}` | app-wide Workers AI Neurons and requests per type, model and error; per account `accounts.{A,B}.neurons/requests/failed/claimed` (server only) |
+| `geminiUsage/{yyyy-mm-dd Pacific}` | Gemini requests per project and model (`{A,B}.{model}.requests/ok/failed/rateLimited`), last success/failure (server only) |
+| `providerHealth/{gemini,cloudflare}`, `providerEvents/{id}` | shared cooldowns, learned limits, recent cooldowns, switches and rejected credentials (server only) |
 | `adminLogs/{id}` | administrator actions (server-written, admin read-only) |
 | `recovery/{id}`, `otpRecovery/{uid}`, `rateLimits/{key}` | password-recovery state and counters (server only, no client access) |
 
@@ -305,16 +316,22 @@ The daily cron (`/api/admin?job=purge`) first purges accounts whose 30-day recov
 - Suspension is enforced three times: Firebase Auth (disabled account, revoked refresh tokens), these rules, and `assertAccountActive` in every API.
 - Covered by `tests/rules/` (22 rules cases plus 4 end-to-end phone-verification cases, run in the Firestore and Auth emulators).
 
-Secrets: `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `SERPAPI_API_KEY`, `TAVILY_API_KEY`, `VYNFY_API_KEY`, `OTP_HMAC_SECRET` and `FIREBASE_SERVICE_ACCOUNT` are read only in `server/env.ts`. They are never logged and never sent to the browser.
+Secrets: `OPENROUTER_API_KEY`, `GEMINI_API_KEY` (and `GEMINI_API_KEY_SECONDARY`), the Cloudflare account ids and tokens (both accounts), `SERPAPI_API_KEY`, `TAVILY_API_KEY`, `VYNFY_API_KEY`, `OTP_HMAC_SECRET` and `FIREBASE_SERVICE_ACCOUNT` are read only in `server/env.ts`. They are never logged and never sent to the browser.
 
 ## Sessions (`src/lib/session.ts`, `src/lib/idle.ts`, `src/features/shell/SessionGuard.tsx`)
 
-- **Sign-out** (button, inactivity, another tab, revoked session) always goes through `endSession`: it logs the event on the server (`/api/account` `signedOut`; best effort, 2.5 s cap), tells the other tabs (BroadcastChannel, with a storage-event fallback), signs out of Firebase, clears session storage and the per-session keys, clears the offline Firestore cache (IndexedDB), then does a full page load of `/login`. Stored data (conversations, projects, memory, files, preferences) is not touched.
+- **Sign-out** (button, inactivity, another tab, revoked session) always goes through `endSession`: it logs the event on the server (`/api/account` `signedOut`; best effort, 2.5 s cap), tells the other tabs (BroadcastChannel, with a storage-event fallback), signs out of Firebase, clears session storage and the per-session keys, clears the offline Firestore cache (IndexedDB), then does a full page load of the public home page (`/?signedOut=<reason>`, which shows a one-time notice and removes the reason from the address) on the website, or of `/login` in the installed app (`signOutDestination` in `idle.ts`). A revoked or expired session (`auth/user-token-expired`) takes the same path. Stored data (conversations, projects, memory, files, preferences) is not touched.
 - **Sign-in always opens New Chat.** Route guards never remember the page that was open (no `from` state), and the full reload at sign-out drops all in-memory state.
 - **Route guards** (`src/App.tsx`): public pages (login, register, reset, privacy, terms); `Protected` for signed-in pages (shows the loading screen while auth and the server access check run, then routes pending, rejected, suspended, phone and email states to their pages); `AdminOnly` for `/admin/*` (only `access === 'allowed'` and the server's admin decision). The server re-checks everything: `requireAllowedUser` on every API, the admin decision for admin APIs (non-admin calls are logged as `unauthorized_access`), and the Firestore rules.
 - **Website inactivity:** 60 minutes without real input (pointer, keys, touch, wheel, scroll; network activity never counts) signs out; a warning with a countdown and "Stay signed in" appears at 55 minutes. All tabs share one timestamp in localStorage, so there is one deadline. Coming back after the deadline (sleep, closed browser) signs out at once.
-- **Installed app (PWA):** no inactivity sign-out. Detected with `display-mode: standalone` / `window-controls-overlay` or `navigator.standalone`, never the user agent. Account checks (suspension, revocation, approval) and explicit sign-out apply as usual. On desktop Chrome/Edge the installed app and the browser share one Firebase session, so while an installed-app window is open (heartbeat every 30 s, stale after 90 s) website tabs on that device do not sign out for inactivity either; otherwise they would sign the app out too.
+- **Installed app (PWA):** no inactivity sign-out. Detected with `display-mode: standalone` / `window-controls-overlay` or `navigator.standalone`, never the user agent. Account checks (suspension, revocation, approval) and explicit sign-out apply as usual. On desktop Chrome/Edge the installed app and the browser share one Firebase session, so while an installed-app window is open (heartbeat every 30 s, stale after 90 s) website tabs on that device do not sign out for inactivity either; otherwise they would sign the app out too. The installed app has no public website: signed-out users on `/`, public pages or unknown addresses get the sign-in form, signed-in users get the app; only the legal pages (privacy, terms, cookies, acceptable use, AI transparency) stay readable, and the auth pages hide the "Atlas AI home" link.
 - Firebase limitation: client sign-out does not revoke the ID token already issued (valid for up to an hour). "Sign out of all devices" (`revokeSessions`) revokes server-side: the server and rules reject tokens issued before `sessionsValidAfter`.
+
+## Chat attachments, activity and pictures (`src/features/chat`)
+
+- **Attachments** (`attachments.ts`): documents added in the composer wait there (Uploading, Processing, Ready, Failed with Retry) and are attached to the conversation at once, so it can search them. Sending is held while a document is still uploading or being read. A message references every ready document; once the server has stored the message (the batch commit resolves), those documents leave the composer and show in the sent message with a Sending/Sent mark. Failed documents stay behind. If storing fails, the text, images and documents go back into the composer. Documents the conversation was given earlier are listed under the document button in the composer, where they can be removed.
+- **Activity panel** (`activity.ts`, `ActivityPanel.tsx`): a compact line above a reply that expands into the steps behind it. Steps come only from stream events and stored message fields (research steps, the web search result, retrieved document/knowledge/memory/chat counts, image stages); nothing is invented or timed, and nothing internal is shown.
+- **Pictures**: the server sends the size being made with the `checking` and `generating` stages, so the placeholder (`ImagePlaceholder`) has the right shape from the start and names the real stage (no percentage). The finished picture fades in; View larger, Download and Generate another (new pictures only; it sends the same description as a new message).
 
 ## Security headers (`vercel.json`)
 
@@ -372,6 +389,51 @@ CSP (scripts: self, the inline theme script by SHA-256 hash, Google sign-in and 
     - policy placement before user-controlled text
     - no secrets in prompts or provider request bodies for Gemini, OpenRouter and Cloudflare
     - redaction, including end to end through the chat engine
+
+## AI usage allowances (`server/usage`, `src/features/usage`)
+
+Per-account daily and weekly allowances for each AI feature: chat, reasoning, research, documents, images, voice input, voice output and translation.
+
+**Configuration and profiles**
+- Configuration lives in `config/usage` (server only). Resets follow a configurable time zone (default `Africa/Accra`), daily time, weekly day and weekly time. Periods are computed with `Intl`, so daylight-saving changes are handled.
+- Profiles: Standard, Premium (×2), Restricted (×0.25), Unlimited, Custom, plus any profiles an admin creates.
+- An account (`usageAccounts/{uid}`) can have custom limits, a temporary override with an end time, and an unlimited grant (permanent or until a time).
+- Administrators are unlimited automatically. An expired grant is cleared, and audited, in the same commit as the next reservation.
+- Unlimited never bypasses provider safeguards (free quotas, cooldowns, the Cloudflare and ElevenLabs caps).
+
+**Cost (allowance units)**
+- 1 per request.
+- A Deep Research report costs 3.
+- Voice output costs 1 per 1,000 characters; translation costs 1 per 2,000 characters.
+
+**Reserve → settle** (`allowance.ts`)
+- Before a model is called, `reserveUsage` checks the limit and increments the counters in one Firestore commit with an `updateTime` precondition, retrying on conflict. Concurrent requests cannot overspend.
+- The same commit writes `reservations/{feature-requestId}`, so a retry of the same request is never counted twice.
+- A request is refused only when the allowance is already used up (429 `usage_limit`, with the reset time). A reply that has started is never interrupted.
+- When a reply fails without producing anything, the reservation is released; otherwise it is settled with the actual cost.
+- Chat (`server/chat/engine.ts`) streams an `allowance` event so the indicator above the composer updates without an extra request. `api/speech.ts` wraps transcription, speech and translation the same way.
+
+**Where to see it**
+- Users: `GET /api/chat?usage` → the `/usage` page and the composer indicator.
+- Warnings at 75, 90, 99 (one request left) and 100% are shown once per feature and period, remembered in localStorage.
+- Admins: `POST /api/admin {action:'usage', op}` (`server/usage/admin.ts`). Every change is written to `adminLogs` with `changes: {before, after}`.
+- `usageStats/{day}` holds daily totals for Usage Analytics. Clients can read `usageAccounts` (owner and admins) and `usageStats` (admins), and cannot write to either.
+
+## Admin Dashboard (`src/features/admin`, route `/admin`)
+
+A separate layout (`AppShell variant="admin"` with `AdminSidebar`) from the AI workspace. The workspace sidebar shows a single "Admin Dashboard" link.
+
+**Sidebar groups**
+- Overview
+- Access: User Management, Access Requests, Access & Registration (`/admin/access`, the same settings as `/settings/access`), Ownership Record
+- AI Usage: AI Usage & Limits, Unlimited Access, Usage Analytics
+- Content: News Sources, Knowledge Management
+- Communication: Support & Reports, Messages to Users, SMS & Verification, Email Delivery
+- System: Provider Monitoring (Gemini and Cloudflare accounts, OpenRouter, Tavily, SerpAPI and ElevenLabs; "Reported by provider" figures are kept separate from Atlas counters), System Health, Audit Logs
+
+**Access**
+- Every page except Knowledge management is wrapped in `AdminOnly`. Knowledge management stays role-checked by the server for knowledge reviewers.
+- Every request is checked again in `api/admin.ts`.
 
 ## Known limitations
 

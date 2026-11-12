@@ -76,6 +76,13 @@ export class FakeDb {
       }
     }
   }
+  async incrementAndGet(path: string, increments: Record<string, number>, data: object = {}) {
+    // read the values this write produced (like Firestore's transform results), not later ones
+    const done = this.commit([{ op: 'increment', path, increments, data }]);
+    const d = { ...(this.docs.get(path) ?? {}) };
+    await done;
+    return Object.fromEntries(Object.keys(increments).map((k) => [k, Number(d[k] ?? 0)]));
+  }
   async count(coll: string, where: [string, string, unknown][] = []) {
     return (await this.list(coll, { where })).length;
   }

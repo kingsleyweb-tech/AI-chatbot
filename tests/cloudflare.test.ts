@@ -281,8 +281,17 @@ describe('image turns', () => {
   it('checks safety, generates, stores and counts usage', async () => {
     const { db, calls } = setup();
     const stages: string[] = [];
-    const r = await turn(db, { onStage: (s) => stages.push(s), intent: { kind: 'generate', prompt: 'Design a landscape wallpaper' } });
+    const sizes: (string | null)[] = [];
+    const r = await turn(db, {
+      onStage: (s, size) => {
+        stages.push(s);
+        sizes.push(size ? `${size.width}x${size.height}` : null);
+      },
+      intent: { kind: 'generate', prompt: 'Design a landscape wallpaper' },
+    });
     expect(stages).toEqual(['checking', 'generating', 'saving']);
+    // the placeholder gets the real size being made with the first stages
+    expect(sizes).toEqual(['1344x768', '1344x768', null]);
     expect(calls).toMatchObject({ image: 1, chat: 1 });
     expect(calls.lastForm?.get('width')).toBe('1344');
     expect(calls.lastForm?.get('height')).toBe('768');

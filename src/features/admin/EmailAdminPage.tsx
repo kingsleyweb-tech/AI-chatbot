@@ -219,7 +219,7 @@ export default function EmailAdminPage() {
 
   const c = data?.connection;
   return (
-    <Page title="Email" back="/settings" wide actions={refresh}>
+    <Page title="Email" wide actions={refresh}>
       <div className="mx-auto w-full max-w-5xl">
         <div className="mb-5 hidden items-center justify-between lg:flex">
           <h1 className="text-xl font-semibold tracking-tight">Email</h1>

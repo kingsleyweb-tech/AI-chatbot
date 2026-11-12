@@ -32,12 +32,18 @@ export function env() {
   const e = process.env;
   return {
     openRouterKey: e.OPENROUTER_API_KEY ?? '',
-    geminiKey: e.GEMINI_API_KEY ?? '',
+    /** Gemini account A (existing project). GEMINI_API_KEY_PRIMARY is accepted as another name. */
+    geminiKey: (e.GEMINI_API_KEY ?? e.GEMINI_API_KEY_PRIMARY ?? '').trim(),
+    /** Gemini account B: a key from a separate Google project (its own free-tier quota). */
+    geminiKeySecondary: (e.GEMINI_API_KEY_SECONDARY ?? '').trim(),
     tavilyKey: e.TAVILY_API_KEY ?? '',
     serpApiKey: e.SERPAPI_API_KEY ?? '',
     /** Cloudflare Workers AI (server-only; never sent to the browser). */
-    cloudflareAccountId: (e.CLOUDFLARE_ACCOUNT_ID ?? '').trim(),
-    cloudflareApiToken: (e.CLOUDFLARE_API_TOKEN ?? '').trim(),
+    cloudflareAccountId: (e.CLOUDFLARE_ACCOUNT_ID ?? e.CLOUDFLARE_ACCOUNT_ID_PRIMARY ?? '').trim(),
+    cloudflareApiToken: (e.CLOUDFLARE_API_TOKEN ?? e.CLOUDFLARE_API_TOKEN_PRIMARY ?? '').trim(),
+    /** Cloudflare account B: a separate account with its own free daily Neuron allowance. */
+    cloudflareAccountIdSecondary: (e.CLOUDFLARE_ACCOUNT_ID_SECONDARY ?? '').trim(),
+    cloudflareApiTokenSecondary: (e.CLOUDFLARE_API_TOKEN_SECONDARY ?? '').trim(),
     /** optional override of the default image model (must be listed in server/config/images.ts) */
     cloudflareImageModel: (e.CLOUDFLARE_IMAGE_MODEL ?? '').trim(),
     appUrl: e.APP_URL ?? 'http://localhost:5173',

@@ -7,6 +7,7 @@ import { cn, formatTokens, modelShortName } from '@/lib/utils';
 import { useAuth } from '@/state/auth';
 import { useToast } from '@/state/toast';
 import { Page } from '../shell/Page';
+import { ACTION_LABELS, fmt, type LogEntry } from './auditLog';
 
 /** Mirrors AdminUserRow in api/admin.ts (no secrets, masked phone only). */
 interface UserRow {
@@ -46,15 +47,6 @@ interface Stats {
   rejected: number;
 }
 
-interface LogEntry {
-  id: string;
-  action: string;
-  adminEmail?: string | null;
-  targetEmail?: string | null;
-  detail?: string | null;
-  at?: unknown;
-}
-
 interface Detail {
   user: UserRow;
   account: { suspendedAt: unknown; deletionScheduledAt: unknown; authDisabled: boolean };
@@ -66,48 +58,7 @@ interface Detail {
 
 type Action = { kind: 'suspend' | 'reactivate' | 'delete' | 'restore' | 'purge'; user: UserRow };
 
-/** Firestore REST values arrive as ISO strings, numbers or {seconds}. */
-function toDate(v: unknown): Date | null {
-  if (v == null) return null;
-  if (typeof v === 'number') return new Date(v);
-  if (typeof v === 'string') {
-    const d = new Date(v);
-    return Number.isNaN(d.getTime()) ? null : d;
-  }
-  if (typeof v === 'object' && 'seconds' in v) return new Date(Number((v as { seconds: number }).seconds) * 1000);
-  return null;
-}
-const fmt = (v: unknown, withTime = false) => {
-  const d = toDate(v);
-  return d ? d.toLocaleString(undefined, withTime ? { dateStyle: 'medium', timeStyle: 'short' } : { dateStyle: 'medium' }) : 'Never';
-};
 const providerName = (p: string) => (p === 'google.com' ? 'Google' : p === 'password' ? 'Email' : p === 'apple.com' ? 'Apple' : p);
-
-const ACTION_LABELS: Record<string, string> = {
-  user_suspended: 'Suspended',
-  user_reactivated: 'Reactivated',
-  user_deletion_scheduled: 'Scheduled deletion',
-  user_restored: 'Restored',
-  user_purged: 'Permanently deleted',
-  retention_cleanup: 'Old records deleted (30-day retention)',
-  user_approved: 'Approved',
-  user_unapproved: 'Access removed',
-  request_approved: 'Access request approved',
-  request_rejected: 'Access request rejected',
-  request_deleted: 'Access request deleted',
-  ownership_changed: 'Changed the ownership record',
-  support_replied: 'Replied to a support report',
-  support_status_changed: 'Changed a support report status',
-  support_priority_changed: 'Changed a support report priority',
-  support_assigned: 'Assigned a support report',
-  support_note_added: 'Added an internal note',
-  support_deleted: 'Deleted a support report',
-  help_article_saved: 'Saved a help article',
-  help_article_deleted: 'Removed a help article',
-  message_sent: 'Sent a message to users',
-  message_template_saved: 'Saved a message template',
-  message_template_deleted: 'Deleted a message template',
-};
 
 function StatusBadge({ status }: { status: UserRow['status'] }) {
   if (status === 'active') return <Badge tone="accent">Active</Badge>;
@@ -206,7 +157,6 @@ export default function UsersPage() {
   return (
     <Page
       title="Users"
-      back="/settings"
       wide
       actions={
         <Button size="sm" variant="ghost" icon={<RefreshCw className={cn('size-4', loading && 'animate-spin')} />} onClick={() => void load()} disabled={loading}>

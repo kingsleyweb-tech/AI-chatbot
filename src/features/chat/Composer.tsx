@@ -1,4 +1,4 @@
-import { ArrowUp, AudioLines, FileAudio, FileText, Globe, ImagePlus, Library, Loader2, Mic, Paperclip, Square, Telescope, Info, X } from 'lucide-react';
+import { ArrowUp, AudioLines, FileAudio, FileText, Globe, ImagePlus, Library, Loader2, Mic, Paperclip, RotateCw, Square, Telescope, Info, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react';
 import type { ImageAttachment, ModelInfo } from '@shared/types';
 import { IconButton, Menu } from '@/components/ui';
@@ -9,6 +9,7 @@ import { AUDIO_ACCEPT, micErrorMessage, Recorder, recordingSupported, speechConf
 import type { DocumentMeta } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/state/toast';
+import { documentStage, planSend, type AttachmentStage, type PendingUpload } from './attachments';
 
 export interface ComposerProps {
   onSend: (text: string, images: ImageAttachment[]) => void;
@@ -34,12 +35,66 @@ export interface ComposerProps {
   initialText?: string;
   /** opens Voice Mode (talk with Atlas AI hands-free) */
   onStartVoice?: () => void;
+  /** images put back after a message could not be sent */
+  initialImages?: ImageAttachment[];
+  /** a message is being stored */
+  sending?: boolean;
+  /** files still uploading, or whose upload failed */
+  uploads?: PendingUpload[];
+  onRetryUpload?: (uploadId: string) => void;
+  onDismissUpload?: (uploadId: string) => void;
+  /** upload a document that could not be read again (only when the file is still at hand) */
+  onRetryDocument?: (id: string) => void;
+  canRetryDocument?: (id: string) => boolean;
+  /** documents this conversation already searches (sent earlier), which can be removed */
+  chatDocuments?: DocumentMeta[];
+  onDetachChatDocument?: (id: string) => void;
+}
+
+function DocChip({
+  name,
+  stage,
+  detail,
+  onRetry,
+  onRemove,
+}: {
+  name: string;
+  stage: AttachmentStage;
+  detail: string;
+  onRetry?: () => void;
+  onRemove?: () => void;
+}) {
+  const failed = stage === 'failed';
+  const busy = stage === 'uploading' || stage === 'processing';
+  return (
+    <div className="flex h-16 w-56 shrink-0 items-center gap-2.5 rounded-xl border border-border bg-surface px-2.5" title={`${name}: ${detail}`}>
+      <div className={cn('flex size-9 shrink-0 items-center justify-center rounded-lg', failed ? 'bg-danger-soft text-danger' : 'bg-accent-soft text-accent')}>
+        {busy ? <Loader2 className="size-4 animate-spin" /> : <FileText className="size-4" />}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[13px] font-medium">{name}</div>
+        <div className={cn('flex items-center gap-1.5 truncate text-[11px]', failed ? 'text-danger' : 'text-muted')} aria-live="polite">
+          <span className="truncate">{detail}</span>
+          {onRetry && (
+            <button onClick={onRetry} className="inline-flex shrink-0 items-center gap-0.5 font-medium text-accent hover:underline">
+              <RotateCw className="size-3" aria-hidden="true" /> Retry
+            </button>
+          )}
+        </div>
+      </div>
+      {onRemove && (
+        <button onClick={onRemove} className="rounded p-0.5 text-subtle hover:text-fg" aria-label={`Remove ${name}`}>
+          <X className="size-3.5" />
+        </button>
+      )}
+    </div>
+  );
 }
 
 export function Composer(props: ComposerProps) {
   const toast = useToast();
   const [text, setText] = useState(props.initialText ?? '');
-  const [images, setImages] = useState<ImageAttachment[]>([]);
+  const [images, setImages] = useState<ImageAttachment[]>(props.initialImages ?? []);
   const [processing, setProcessing] = useState(0);
   const [dragging, setDragging] = useState(false);
   const ta = useRef<HTMLTextAreaElement>(null);
@@ -171,7 +226,12 @@ export function Composer(props: ComposerProps) {
     [images.length, props, toast, whisper, runTranscription],
   );
 
-  const canSend = (text.trim().length > 0 || images.length > 0) && processing === 0 && !props.generating && !rec;
+  // While a message is being stored, the documents it carries are shown in that message
+  // (as Sending), not here; they come back here only if storing it fails.
+  const shownDocs = props.sending ? props.documents.filter((d) => documentStage(d) !== 'ready') : props.documents;
+  // a document still uploading or being read would be left out of the message
+  const waiting = planSend(props.documents, props.uploads ?? []).waiting;
+  const canSend = (text.trim().length > 0 || images.length > 0) && processing === 0 && !waiting && !props.sending && !props.generating && !rec;
 
   const send = () => {
     if (!canSend) return;
@@ -239,7 +299,7 @@ export function Composer(props: ComposerProps) {
           dragging ? 'border-accent bg-accent-soft' : 'border-border',
         )}
       >
-        {(images.length > 0 || props.documents.length > 0 || processing > 0) && (
+        {(images.length > 0 || shownDocs.length > 0 || processing > 0 || (props.uploads?.length ?? 0) > 0) && (
           <div className="flex gap-2 overflow-x-auto px-3 pt-3 scroll-thin">
             {images.map((img, i) => (
               <div key={i} className="group relative size-16 shrink-0 overflow-hidden rounded-xl border border-border">
@@ -258,31 +318,35 @@ export function Composer(props: ComposerProps) {
                 <Loader2 className="size-4 animate-spin text-muted" />
               </div>
             )}
-            {props.documents.map((d) => (
-              <div
-                key={d.id}
-                className="flex h-16 w-52 shrink-0 items-center gap-2.5 rounded-xl border border-border bg-surface px-2.5"
-                title={d.error ?? d.name}
-              >
-                <div
-                  className={cn(
-                    'flex size-9 shrink-0 items-center justify-center rounded-lg',
-                    d.status === 'failed' ? 'bg-danger-soft text-danger' : 'bg-accent-soft text-accent',
-                  )}
-                >
-                  {d.status === 'processing' ? <Loader2 className="size-4 animate-spin" /> : <FileText className="size-4" />}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-[13px] font-medium">{d.name}</div>
-                  <div className={cn('truncate text-[11px]', d.status === 'failed' ? 'text-danger' : 'text-muted')}>
-                    {d.status === 'processing' ? 'Reading…' : d.status === 'failed' ? d.error ?? 'Failed' : `${d.chunkCount ?? 0} sections indexed`}
-                  </div>
-                </div>
-                <button onClick={() => props.onRemoveDocument(d.id)} className="rounded p-0.5 text-subtle hover:text-fg" aria-label={`Detach ${d.name}`}>
-                  <X className="size-3.5" />
-                </button>
-              </div>
+            {(props.uploads ?? []).map((u) => (
+              <DocChip
+                key={u.id}
+                name={u.name}
+                stage={u.status === 'failed' ? 'failed' : 'uploading'}
+                detail={u.status === 'failed' ? u.error ?? 'Upload failed' : 'Uploading…'}
+                onRetry={u.status === 'failed' && props.onRetryUpload ? () => props.onRetryUpload!(u.id) : undefined}
+                onRemove={u.status === 'failed' && props.onDismissUpload ? () => props.onDismissUpload!(u.id) : undefined}
+              />
             ))}
+            {shownDocs.map((d) => {
+              const stage = documentStage(d);
+              return (
+                <DocChip
+                  key={d.id}
+                  name={d.name}
+                  stage={stage}
+                  detail={
+                    stage === 'processing'
+                        ? 'Processing…'
+                        : stage === 'failed'
+                          ? d.error ?? 'Could not be read'
+                          : `Ready · ${d.chunkCount ?? 0} sections`
+                  }
+                  onRetry={stage === 'failed' && props.onRetryDocument && props.canRetryDocument?.(d.id) ? () => props.onRetryDocument!(d.id) : undefined}
+                  onRemove={props.sending ? undefined : () => props.onRemoveDocument(d.id)}
+                />
+              );
+            })}
           </div>
         )}
         {(rec || lastAudio) && (
@@ -393,6 +457,29 @@ export function Composer(props: ComposerProps) {
             <Telescope className="size-4" />
             <span className="hidden min-[400px]:inline">Research</span>
           </button>
+          {(props.chatDocuments?.length ?? 0) > 0 && props.onDetachChatDocument && (
+            <Menu
+              side="top"
+              align="start"
+              trigger={(p) => (
+                <button
+                  {...p}
+                  className="inline-flex h-9 items-center gap-1 rounded-full px-2.5 text-[13px] font-medium text-muted transition-colors hover:bg-surface-2 hover:text-fg"
+                  title="Documents this chat searches when you ask questions"
+                  aria-label={`${props.chatDocuments!.length} documents in this chat`}
+                >
+                  <FileText className="size-4" />
+                  <span className="tabular-nums">{props.chatDocuments!.length}</span>
+                </button>
+              )}
+              items={props.chatDocuments!.map((d) => ({
+                label: d.name,
+                icon: <FileText className="size-4" />,
+                hint: 'Remove',
+                onSelect: () => props.onDetachChatDocument!(d.id),
+              }))}
+            />
+          )}
           <div className="flex-1" />
           {whisper ? (
             <IconButton
@@ -441,10 +528,10 @@ export function Composer(props: ComposerProps) {
               onClick={send}
               disabled={!canSend}
               className="flex size-9 items-center justify-center rounded-full bg-accent text-accent-fg transition-all hover:bg-accent-hover disabled:bg-surface-2 disabled:text-subtle"
-              aria-label="Send message"
-              title="Send"
+              aria-label={props.sending ? 'Sending message' : 'Send message'}
+              title={waiting ? 'Waiting for your documents to finish uploading and processing' : props.sending ? 'Sending…' : 'Send'}
             >
-              <ArrowUp className="size-[18px]" strokeWidth={2.4} />
+              {props.sending ? <Loader2 className="size-[18px] animate-spin" /> : <ArrowUp className="size-[18px]" strokeWidth={2.4} />}
             </button>
           )}
         </div>

@@ -32,3 +32,13 @@ export function idleState(now: number, lastActivity: number, opts: { installedAp
   if (idle >= IDLE_WARN_MS) return 'warn';
   return 'active';
 }
+
+export type SignOutReason = 'user' | 'inactivity' | 'revoked' | 'device';
+/**
+ * Where a sign-out lands. The website goes to the public home page (with the reason for a
+ * short notice); the installed app has no public pages, so it opens the sign-in form.
+ */
+export function signOutDestination(reason: SignOutReason, installedApp: boolean): string {
+  if (installedApp) return reason === 'user' ? '/login' : `/login?reason=${reason}`;
+  return reason === 'user' ? '/?signedOut=user' : `/?signedOut=${reason}`;
+}

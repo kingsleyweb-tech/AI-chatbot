@@ -66,6 +66,14 @@ export const ADMIN_ACTIONS = [
   'help_article_deleted',
   'news_feeds_changed',
   'ownership_changed',
+  'usage_config_changed',
+  'usage_profile_saved',
+  'usage_profile_deleted',
+  'usage_profile_assigned',
+  'usage_unlimited_granted',
+  'usage_unlimited_revoked',
+  'usage_unlimited_expired',
+  'usage_reset',
 ] as const;
 export type AdminAction = (typeof ADMIN_ACTIONS)[number];
 
@@ -139,12 +147,15 @@ export async function recordAdminAction(
     targetUid: string;
     targetEmail: string | null;
     detail?: string;
+    /** previous and new values (profiles, limits, unlimited access, expiry, resets) */
+    changes?: { before: unknown; after: unknown };
   },
   now = Date.now(),
 ): Promise<void> {
   await db.set(`adminLogs/${eventId(now)}`, {
     ...entry,
     detail: entry.detail?.slice(0, 300) ?? null,
+    changes: entry.changes ?? null,
     at: new Date(now),
   });
 }

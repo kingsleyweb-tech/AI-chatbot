@@ -73,7 +73,7 @@ export function parseGuardVerdict(reply: string): SafetyCategory | null | 'unpar
 
 type GuardFn = (prompt: string, signal?: AbortSignal) => Promise<{ text: string; neurons: number }>;
 
-const defaultGuard: GuardFn = (prompt, signal) =>
+export const defaultGuard: GuardFn = (prompt, signal) =>
   chatOnce(SAFETY_MODEL, [{ role: 'user', content: `Create an image: ${prompt}` }], { maxTokens: 12, signal, timeoutMs: 15_000 });
 
 export async function checkImagePrompt(prompt: string, opts: { signal?: AbortSignal; guard?: GuardFn } = {}): Promise<SafetyResult> {

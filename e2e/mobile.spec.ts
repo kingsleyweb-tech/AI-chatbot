@@ -24,7 +24,7 @@ test('public pages render on a phone without sideways scrolling, and unknown pag
     ['/integrations', /The technology behind Atlas AI/],
     ['/docs', /Atlas AI documentation/],
     ['/docs/getting-started', /Getting started/],
-    ['/blog', /Notes from the Atlas AI team/],
+    ['/blog', /The Atlas AI blog/],
     ['/trust', /Security and privacy, stated plainly/],
     ['/contact', /Get in touch/],
     ['/help-centre', /How can we help/],
@@ -57,7 +57,7 @@ test('sign-in offers Google then email, and no Apple option', async ({ page }) =
 test('empty email sign-in shows a validation message', async ({ page }) => {
   await page.goto('/login');
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-  await expect(page.getByRole('alert')).toHaveText('Enter your email and password.');
+  await expect(page.getByRole('alert')).toHaveText('Enter your email or phone number and your password.');
 });
 
 test('phone verification page requires sign-in', async ({ page }) => {
@@ -83,7 +83,7 @@ test('buttons get a finger-sized hit area beyond their visible edge on touch scr
   await page.goto('/login');
   const button = page.getByRole('button', { name: 'Sign in', exact: true });
   // on a small phone the analytics banner takes the bottom row, so the form may need scrolling
-  await button.scrollIntoViewIfNeeded();
+  await button.evaluate((el) => el.scrollIntoView({ block: 'center' }));
   const box = (await button.boundingBox())!;
   const hit = await page.evaluate(
     ({ x, y }) => (document.elementFromPoint(x, y) as HTMLElement | null)?.closest('button')?.textContent?.trim() ?? null,
@@ -112,8 +112,10 @@ test('reset rejects an invalid email before contacting the server', async ({ pag
   });
   await page.goto('/reset');
   await page.getByLabel('Email').fill('not-an-email');
-  await page.getByRole('button', { name: 'Text me a code' }).click();
-  await expect(page.getByText('Enter a valid email address.')).toBeVisible();
+  // the button stays disabled until the address looks valid, so nothing is sent
+  await expect(page.getByRole('button', { name: 'Text me a code' })).toBeDisabled();
+  await page.getByLabel('Email').fill('person@example.com');
+  await expect(page.getByRole('button', { name: 'Text me a code' })).toBeEnabled();
   expect(called).toBe(false);
 });
 
@@ -142,11 +144,12 @@ test('privacy policy and terms are public, versioned, final and fit a phone scre
 
 test('the sign-in screen links to the privacy policy and terms', async ({ page }) => {
   await page.goto('/login');
-  await page.getByRole('link', { name: 'Privacy Policy' }).click();
+  // the first link is the sign-in form's; the analytics banner may add another
+  await page.getByRole('link', { name: 'Privacy Policy' }).first().click();
   await expect(page).toHaveURL(/\/privacy$/);
   await page.goBack();
   await expect(page).toHaveURL(/\/login$/);
-  await page.getByRole('link', { name: 'Terms of Use' }).click();
+  await page.getByRole('link', { name: 'Terms of Use' }).first().click();
   await expect(page.getByRole('heading', { level: 1, name: 'Terms of Use' })).toBeVisible();
 });
 

@@ -3,7 +3,8 @@
  *
  * Model ids are namespaced as "gemini:<model>" so they can live next to
  * OpenRouter ids in one catalog and one router. The key is server-only
- * (GEMINI_API_KEY); it is sent in a header, never in a URL or to the client.
+ * (GEMINI_API_KEY, plus GEMINI_API_KEY_SECONDARY for a second project: see geminiAccounts.ts);
+ * it is sent in a header, never in a URL or to the client.
  *
  * Cost (Free Models Only policy, server/billing/policy.ts): only models that
  * Google lists as "Free of charge" on the Free Tier are marked free and used.
@@ -11,8 +12,8 @@
  * no Gemini model is used at all.
  */
 import { geminiBillingPaid, GEMINI_FREE_TIER } from '../billing/policy.js';
-import { env } from '../env.js';
 import { parseSSE } from '../shared/sse.js';
+import { exhaustedError, geminiAccounts, leases, newAttemptState, setAccountModels, withGeminiAccount } from './geminiAccounts.js';
 import type { ModelInfo } from '../shared/types.js';
 import {
   ProviderError,
@@ -98,10 +99,12 @@ export function mapGeminiModel(m: GModel): ModelInfo | null {
 /** Map a Gemini API error to a typed ProviderError. */
 export function mapGeminiError(status: number, body: string): ProviderError {
   let message = body;
+  let details: { '@type'?: string; violations?: { quotaId?: string; quotaValue?: string | number }[]; retryDelay?: string }[] = [];
   try {
     const parsed = JSON.parse(body) as { error?: { message?: string; status?: string } } | { error?: unknown }[];
     const e = Array.isArray(parsed) ? (parsed[0] as { error?: { message?: string } })?.error : parsed.error;
     message = (e as { message?: string })?.message ?? body;
+    details = ((e as { details?: typeof details })?.details ?? []).filter((d) => d && typeof d === 'object');
   } catch {
     /* keep raw */
   }
@@ -110,7 +113,22 @@ export function mapGeminiError(status: number, body: string): ProviderError {
   if (status === 401 || status === 403) return new ProviderError('invalid_key', 'Google rejected the Gemini API key.', 401);
   if (status === 429 && /limit:\s*0\b/.test(lower))
     return new ProviderError('model_unavailable', 'This Gemini model is not included in the free tier.', 404);
-  if (status === 429) return new ProviderError('rate_limited', 'The Gemini free-tier quota for this model is used up for now.', 429);
+  if (status === 429) {
+    // Google names the exhausted quota (QuotaFailure) and how long to wait (RetryInfo).
+    const violation = details.flatMap((d) => d.violations ?? []).find((v) => v.quotaId);
+    const delay = details.map((d) => d.retryDelay).find((d): d is string => typeof d === 'string');
+    const seconds = delay ? Number.parseFloat(delay) : NaN;
+    const perDay = /PerDay/i.test(violation?.quotaId ?? '');
+    const e = perDay
+      ? new ProviderError('daily_limit', 'The Gemini free-tier daily quota for this model is used up. It resets at midnight Pacific time.', 429)
+      : new ProviderError('rate_limited', 'The Gemini free-tier quota for this model is used up for now.', 429);
+    if (Number.isFinite(seconds) && seconds > 0) e.retryAfterMs = Math.ceil(seconds * 1000);
+    if (violation?.quotaId) {
+      const value = Number(violation.quotaValue);
+      e.quota = { id: String(violation.quotaId).slice(0, 120), value: Number.isFinite(value) ? value : null, perDay };
+    }
+    return e;
+  }
   if (status === 404) return new ProviderError('model_unavailable', 'This Gemini model is currently unavailable.', 404);
   if (lower.includes('token') && (lower.includes('exceed') || lower.includes('too long') || lower.includes('limit')))
     return new ProviderError('context_too_long', 'The conversation is too long for this model.', 400);
@@ -165,21 +183,33 @@ export class GeminiProvider implements ChatProvider {
   readonly id = 'gemini';
 
   isConfigured(): boolean {
-    return Boolean(env().geminiKey);
+    return geminiAccounts().length > 0;
   }
 
-  private headers(): HeadersInit {
-    const key = env().geminiKey;
+  private headers(key: string): HeadersInit {
     if (!key) throw new ProviderError('not_configured', 'GEMINI_API_KEY is not configured.', 500);
     return { 'x-goog-api-key': key, 'content-type': 'application/json' };
   }
 
+  /** Models offered by any configured account (each account's own list is remembered for routing). */
   async listModels(): Promise<ModelInfo[]> {
     if (modelCache && Date.now() - modelCache.at < MODEL_TTL) return modelCache.models;
-    const res = await fetch(`${BASE}/models?pageSize=200`, { headers: this.headers(), signal: AbortSignal.timeout(15_000) });
-    if (!res.ok) throw mapGeminiError(res.status, await res.text());
-    const { models = [] } = (await res.json()) as { models?: GModel[] };
-    const mapped = models.map(mapGeminiModel).filter((m): m is ModelInfo => m !== null);
+    const accounts = geminiAccounts();
+    if (!accounts.length) throw new ProviderError('not_configured', 'GEMINI_API_KEY is not configured.', 500);
+    const results = await Promise.allSettled(
+      accounts.map(async (a) => {
+        const res = await fetch(`${BASE}/models?pageSize=200`, { headers: this.headers(a.key), signal: AbortSignal.timeout(15_000) });
+        if (!res.ok) throw mapGeminiError(res.status, await res.text());
+        const { models = [] } = (await res.json()) as { models?: GModel[] };
+        setAccountModels(a.id, models.map((m) => m.name.replace(/^models\//, '')));
+        return models;
+      }),
+    );
+    const ok = results.filter((r): r is PromiseFulfilledResult<GModel[]> => r.status === 'fulfilled');
+    if (!ok.length) throw (results[0] as PromiseRejectedResult).reason;
+    const seen = new Map<string, ModelInfo>();
+    for (const r of ok) for (const m of r.value.map(mapGeminiModel)) if (m && !seen.has(m.id)) seen.set(m.id, m);
+    const mapped = [...seen.values()];
     // keep the curated order
     mapped.sort(
       (a, b) =>
@@ -214,8 +244,36 @@ export class GeminiProvider implements ChatProvider {
     });
   }
 
+  /**
+   * Stream from the best available account. A limit or outage before the first text moves the
+   * request to the other account; once text has been sent, the error goes to the caller (one
+   * request never produces two answers).
+   */
   async *stream(p: CompletionParams): AsyncGenerator<ProviderChunk> {
-    const headers = this.headers();
+    const model = toGeminiId(p.model);
+    const state = newAttemptState();
+    for await (const lease of leases(model, state)) {
+      let started = false;
+      try {
+        for await (const chunk of this.streamOn(p, lease.account.key)) {
+          if (chunk.type === 'delta' || chunk.type === 'reasoning') started = true;
+          yield chunk;
+        }
+        lease.ok();
+        return;
+      } catch (err) {
+        const next = lease.fail(err);
+        if (started || next === 'stop') throw err;
+        state.errors.push(err);
+      } finally {
+        lease.end();
+      }
+    }
+    throw exhaustedError(model, state);
+  }
+
+  private async *streamOn(p: CompletionParams, key: string): AsyncGenerator<ProviderChunk> {
+    const headers = this.headers(key);
     const connect = new AbortController();
     const timer = setTimeout(() => connect.abort(), p.firstByteTimeoutMs ?? CONNECT_TIMEOUT_MS);
     const signal = AbortSignal.any([connect.signal, p.signal].filter(Boolean) as AbortSignal[]);
@@ -284,16 +342,21 @@ export class GeminiProvider implements ChatProvider {
   }
 
   async complete(p: CompletionParams): Promise<string> {
+    return withGeminiAccount(toGeminiId(p.model), (a) => this.completeOn(p, a.key));
+  }
+
+  private async completeOn(p: CompletionParams, key: string): Promise<string> {
     let res: Response;
     try {
       res = await fetch(`${BASE}/models/${encodeURIComponent(toGeminiId(p.model))}:generateContent`, {
         method: 'POST',
-        headers: this.headers(),
+        headers: this.headers(key),
         body: this.body(p),
         signal: AbortSignal.any([AbortSignal.timeout(CONNECT_TIMEOUT_MS), p.signal].filter(Boolean) as AbortSignal[]),
       });
     } catch (err) {
       if (err instanceof ProviderError) throw err;
+      if (p.signal?.aborted) throw err;
       throw new ProviderError('timeout', 'Gemini did not respond in time.', 504);
     }
     if (!res.ok) throw mapGeminiError(res.status, await res.text());
@@ -304,20 +367,28 @@ export class GeminiProvider implements ChatProvider {
       .join('');
   }
 
-  /** Embeddings (768 dims) via gemini-embedding models. */
+  /** Embeddings (768 dims) via gemini-embedding models; both accounts give the same vectors. */
   async embed(model: string, inputs: string[], signal?: AbortSignal): Promise<number[][]> {
     const id = toGeminiId(model);
-    const res = await fetch(`${BASE}/models/${encodeURIComponent(id)}:batchEmbedContents`, {
-      method: 'POST',
-      headers: this.headers(),
-      body: JSON.stringify({
-        requests: inputs.map((text) => ({ model: `models/${id}`, content: { parts: [{ text }] }, outputDimensionality: 768 })),
-      }),
-      signal: signal ?? AbortSignal.timeout(30_000),
+    return withGeminiAccount(id, async (a) => {
+      let res: Response;
+      try {
+        res = await fetch(`${BASE}/models/${encodeURIComponent(id)}:batchEmbedContents`, {
+          method: 'POST',
+          headers: this.headers(a.key),
+          body: JSON.stringify({
+            requests: inputs.map((text) => ({ model: `models/${id}`, content: { parts: [{ text }] }, outputDimensionality: 768 })),
+          }),
+          signal: signal ?? AbortSignal.timeout(30_000),
+        });
+      } catch (err) {
+        if (signal?.aborted) throw err;
+        throw new ProviderError('timeout', 'Gemini did not respond in time.', 504);
+      }
+      if (!res.ok) throw mapGeminiError(res.status, await res.text());
+      const data = (await res.json()) as { embeddings?: { values: number[] }[] };
+      if (!data.embeddings?.length) throw new ProviderError('provider_error', 'No embeddings returned.');
+      return data.embeddings.map((e) => e.values);
     });
-    if (!res.ok) throw mapGeminiError(res.status, await res.text());
-    const data = (await res.json()) as { embeddings?: { values: number[] }[] };
-    if (!data.embeddings?.length) throw new ProviderError('provider_error', 'No embeddings returned.');
-    return data.embeddings.map((e) => e.values);
   }
 }

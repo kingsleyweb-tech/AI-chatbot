@@ -4,7 +4,7 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-route
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { SessionGuard } from './features/shell/SessionGuard';
 import { LogoMark } from './components/Logo';
-import { sessionEnding, subscribeSessionEnding } from './lib/session';
+import { isInstalledApp, sessionEnding, subscribeSessionEnding } from './lib/session';
 import { useVisualViewport } from './lib/viewport';
 import { AuthProvider, useAuth } from './state/auth';
 import { CatalogProvider } from './state/catalog';
@@ -32,6 +32,15 @@ const MessagesPage = lazy(() => import('./features/admin/MessagesPage'));
 const NewsAdminPage = lazy(() => import('./features/admin/NewsAdminPage'));
 const KnowledgeCenterPage = lazy(() => import('./features/admin/KnowledgeCenterPage'));
 const OwnershipPage = lazy(() => import('./features/admin/OwnershipPage'));
+const ProvidersPage = lazy(() => import('./features/admin/ProvidersPage'));
+const AdminOverviewPage = lazy(() => import('./features/admin/AdminOverviewPage'));
+const UsageLimitsPage = lazy(() => import('./features/admin/UsageLimitsPage'));
+const UnlimitedAccessPage = lazy(() => import('./features/admin/UnlimitedAccessPage'));
+const UsageAnalyticsPage = lazy(() => import('./features/admin/UsageAnalyticsPage'));
+const SystemHealthPage = lazy(() => import('./features/admin/SystemHealthPage'));
+const AuditLogsPage = lazy(() => import('./features/admin/AuditLogsPage'));
+const AccessSettingsPage = lazy(() => import('./features/admin/AccessSettingsPage'));
+const UsagePage = lazy(() => import('./features/usage/UsagePage'));
 const ReportIssuePage = lazy(() => import('./features/support/ReportIssuePage'));
 const MyReportsPage = lazy(() => import('./features/support/MyReportsPage'));
 const ReportThreadPage = lazy(() => import('./features/support/ReportThreadPage'));
@@ -103,6 +112,8 @@ function AdminOnly({ children }: { children: ReactNode }) {
 function AppGate() {
   const { access } = useAuth();
   const { pathname } = useLocation();
+  // The installed app has no public website: signed-out users get the sign-in form.
+  if (access === 'signed-out' && pathname === '/' && installed) return <Navigate to="/login" replace />;
   if (access === 'signed-out' && pathname === '/') {
     return (
       <SiteLayout>
@@ -117,11 +128,33 @@ function AppGate() {
   );
 }
 
+/**
+ * Installed app (PWA): launched from the home screen or app list. Decided once at start-up;
+ * the display mode of a window does not change while it is open.
+ */
+const installed = isInstalledApp();
+
+/** Legal pages stay readable in the installed app (sign-up and consent link to them). */
+const APP_LEGAL_PAGES = new Set(['/privacy', '/terms', '/cookies', '/acceptable-use', '/ai-transparency']);
+
+/**
+ * Public website pages. In the installed app they are not shown: signed-out users get the
+ * sign-in form and signed-in users the app, except for the legal pages.
+ */
+function PublicSite() {
+  const { access } = useAuth();
+  const { pathname } = useLocation();
+  if (!installed || APP_LEGAL_PAGES.has(pathname)) return <SiteLayout />;
+  if (access === 'loading') return <Splash />;
+  return <Navigate to={access === 'signed-out' ? '/login' : '/'} replace />;
+}
+
 /** Unknown addresses: a 404 page for visitors, the app home for signed-in users. */
 function CatchAll() {
   const { access } = useAuth();
   if (access === 'loading') return <Splash />;
   if (access !== 'signed-out') return <Navigate to="/" replace />;
+  if (installed) return <Navigate to="/login" replace />;
   return (
     <SiteLayout>
       <NotFoundPage />
@@ -181,7 +214,7 @@ function Routed() {
               <Route path="/denied" element={<AuthPages mode="denied" />} />
               <Route path="/request-access" element={<AuthPages mode="request" />} />
               <Route path="/consent" element={<AuthPages mode="consent" />} />
-              <Route element={<SiteLayout />}>
+              <Route element={<PublicSite />}>
                 <Route path="/about" element={<AboutPage />} />
                 <Route path="/features" element={<FeaturesPage />} />
                 <Route path="/integrations" element={<IntegrationsPage />} />
@@ -214,24 +247,43 @@ function Routed() {
                 <Route path="documents" element={<DocumentsPage />} />
                 <Route path="knowledge" element={<KnowledgePage />} />
                 <Route path="settings/:section?" element={<SettingsPage />} />
-                <Route path="admin/users" element={<AdminOnly><UsersPage /></AdminOnly>} />
-                <Route path="admin/requests" element={<AdminOnly><AccessRequestsPage /></AdminOnly>} />
-                <Route path="admin/support" element={<AdminOnly><SupportAdminPage /></AdminOnly>} />
-                <Route path="admin/support/:ref" element={<AdminOnly><SupportReportAdminPage /></AdminOnly>} />
-                <Route path="admin/sms" element={<AdminOnly><SmsAdminPage /></AdminOnly>} />
-                <Route path="admin/email" element={<AdminOnly><EmailAdminPage /></AdminOnly>} />
-                <Route path="admin/messages" element={<AdminOnly><MessagesPage /></AdminOnly>} />
-                <Route path="admin/news" element={<AdminOnly><NewsAdminPage /></AdminOnly>} />
-                <Route path="admin/ownership" element={<AdminOnly><OwnershipPage /></AdminOnly>} />
-                {/* roles are checked by the server: platform admins and knowledge administrators */}
-                <Route path="admin/knowledge-center" element={<KnowledgeCenterPage />} />
-                <Route path="admin/*" element={<Navigate to="/" replace />} />
+                <Route path="usage" element={<UsagePage />} />
                 <Route path="support" element={<MyReportsPage />} />
                 <Route path="support/new" element={<ReportIssuePage />} />
                 <Route path="support/:ref" element={<ReportThreadPage />} />
                 <Route path="notifications" element={<NotificationsPage />} />
                 <Route path="help" element={<HelpPage />} />
                 <Route path="help/:id" element={<HelpPage />} />
+              </Route>
+              {/* The Admin Dashboard: its own layout and menu, separate from the AI workspace */}
+              <Route
+                path="/admin"
+                element={
+                  <Protected>
+                    <AppShell variant="admin" />
+                  </Protected>
+                }
+              >
+                <Route index element={<AdminOnly><AdminOverviewPage /></AdminOnly>} />
+                <Route path="users" element={<AdminOnly><UsersPage /></AdminOnly>} />
+                <Route path="requests" element={<AdminOnly><AccessRequestsPage /></AdminOnly>} />
+                <Route path="usage" element={<AdminOnly><UsageLimitsPage /></AdminOnly>} />
+                <Route path="unlimited" element={<AdminOnly><UnlimitedAccessPage /></AdminOnly>} />
+                <Route path="analytics" element={<AdminOnly><UsageAnalyticsPage /></AdminOnly>} />
+                <Route path="providers" element={<AdminOnly><ProvidersPage /></AdminOnly>} />
+                <Route path="health" element={<AdminOnly><SystemHealthPage /></AdminOnly>} />
+                <Route path="logs" element={<AdminOnly><AuditLogsPage /></AdminOnly>} />
+                <Route path="access" element={<AdminOnly><AccessSettingsPage /></AdminOnly>} />
+                <Route path="support" element={<AdminOnly><SupportAdminPage /></AdminOnly>} />
+                <Route path="support/:ref" element={<AdminOnly><SupportReportAdminPage /></AdminOnly>} />
+                <Route path="sms" element={<AdminOnly><SmsAdminPage /></AdminOnly>} />
+                <Route path="email" element={<AdminOnly><EmailAdminPage /></AdminOnly>} />
+                <Route path="messages" element={<AdminOnly><MessagesPage /></AdminOnly>} />
+                <Route path="news" element={<AdminOnly><NewsAdminPage /></AdminOnly>} />
+                <Route path="ownership" element={<AdminOnly><OwnershipPage /></AdminOnly>} />
+                {/* roles are checked by the server: platform admins and knowledge administrators */}
+                <Route path="knowledge-center" element={<KnowledgeCenterPage />} />
+                <Route path="*" element={<Navigate to="/admin" replace />} />
               </Route>
               <Route path="*" element={<CatchAll />} />
             </Routes>

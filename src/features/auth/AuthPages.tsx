@@ -29,6 +29,7 @@ import {
 import { countryByCode, toE164 } from '@/lib/phone';
 import { PhoneField } from './PhoneField';
 import { auth, db } from '@/lib/firebase';
+import { isInstalledApp } from '@/lib/idle';
 import { validateRegistration } from './validate';
 import {
   CodeBoxes,
@@ -77,7 +78,8 @@ function Shell({ children, footer = TAGLINE }: { children: ReactNode; footer?: R
   const { access } = useAuth();
   return (
     <div className="scroll-thin touch-scroll flex h-full flex-col overflow-y-auto bg-bg pt-safe pb-safe">
-      {access === 'signed-out' && (
+      {/* the installed app has no public website to go back to */}
+      {access === 'signed-out' && !isInstalledApp() && (
         <div className="px-3 pt-3 sm:px-5">
           <Link to="/" className="inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-sm text-muted hover:bg-surface-2 hover:text-fg">
             <ArrowLeft className="size-4" aria-hidden="true" /> Atlas AI home

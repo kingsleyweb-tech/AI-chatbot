@@ -89,7 +89,6 @@ export default function SupportAdminPage() {
   return (
     <Page
       title="Support"
-      back="/settings"
       wide
       actions={
         <Button size="sm" variant="ghost" icon={<RefreshCw className={cn('size-4', loading && 'animate-spin')} />} onClick={() => void load()} disabled={loading}>

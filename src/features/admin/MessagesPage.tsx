@@ -529,7 +529,7 @@ export default function MessagesPage() {
   );
 
   return (
-    <Page title="Messages" back="/settings" wide actions={refresh}>
+    <Page title="Messages" wide actions={refresh}>
       <div className="mx-auto w-full max-w-5xl">
         <div className="mb-5 hidden items-center justify-between lg:flex">
           <h1 className="text-xl font-semibold tracking-tight">Messages</h1>

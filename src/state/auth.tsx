@@ -1,4 +1,4 @@
-import { onAuthStateChanged, signOut as fbSignOut, type User } from 'firebase/auth';
+import { onAuthStateChanged, type User } from 'firebase/auth';
 import { doc, getDoc, onSnapshot, serverTimestamp, setDoc, updateDoc, FirestoreError } from 'firebase/firestore';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ACCOUNT_BLOCK_EVENT, api } from '@/lib/api';
@@ -336,8 +336,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (optimistic && r.state === 'error') r = { state: 'allowed', admin: cached === 'admin', provider: r.provider };
     if (r.revoked) {
       writeCache(u.uid, null);
-      setSignInError('You were signed out because your password was changed or all sessions were signed out. Please sign in again.');
-      await fbSignOut(auth).catch(() => undefined);
+      // Same exit as any other sign-out: clears local data, then the home page (website)
+      // or the sign-in form (installed app) explains why.
+      await endSession('revoked');
       return;
     }
     if (r.state === 'allowed') {

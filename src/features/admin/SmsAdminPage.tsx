@@ -120,7 +120,7 @@ export default function SmsAdminPage() {
   );
 
   return (
-    <Page title="SMS & verification" back="/settings" wide actions={refresh}>
+    <Page title="SMS & verification" wide actions={refresh}>
       <div className="mx-auto w-full max-w-5xl">
         <div className="mb-5 hidden items-center justify-between lg:flex">
           <h1 className="text-xl font-semibold tracking-tight">SMS & verification</h1>

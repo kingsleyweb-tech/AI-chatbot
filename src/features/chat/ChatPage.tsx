@@ -29,11 +29,13 @@ import { useToast } from '@/state/toast';
 import { uploadDocument } from '../documents/upload';
 import { useShell } from '../shell/AppShell';
 import { useDeleteConversation, useRenameDialog } from '../shell/Sidebar';
+import { planSend, withoutSent, type PendingUpload } from './attachments';
 import { Composer } from './Composer';
 import { clearLiveReply, generate, isGenerating, setSending, stopGeneration, toTurns, useLiveReplies, useSending, type LiveReply } from './engine';
 import { AssistantMessage, UserMessage, type MessageActions } from './MessageItem';
 import { ModelPicker } from './ModelPicker';
 import { Welcome } from './Welcome';
+import { UsageIndicator } from '../usage/UsageIndicator';
 
 const PAGE = 60;
 /** A reply still 'processing' this long after it started was interrupted (longer than the server may run). */
@@ -132,8 +134,22 @@ export default function ChatPage() {
   const projectParam = params.get('project');
   const docParam = params.get('doc');
 
+  // Documents waiting in the composer of an existing conversation (they move into the next
+  // message once it is stored). A new chat uses draftDocs for the same purpose.
+  const [tray, setTray] = useState<Record<string, string[]>>({});
+  const [uploads, setUploads] = useState<PendingUpload[]>([]);
+  // the file behind each document added here, so a failed upload or read can be retried
+  const files = useRef(new Map<string, File>());
+  // A message that could not be stored: its text, images and documents go back into the composer.
+  const [restore, setRestore] = useState<{ key: string; text: string; images: ImageAttachment[]; seq: number } | null>(null);
+  const restoreDocs = useRef<string[] | null>(null);
+
   useEffect(() => {
-    if (!conversationId) setDraftDocs(docParam ? [docParam] : []);
+    if (!conversationId) {
+      const back = restoreDocs.current;
+      restoreDocs.current = null;
+      setDraftDocs(back ?? (docParam ? [docParam] : []));
+    }
     setCount(PAGE);
   }, [conversationId, docParam]);
 
@@ -188,7 +204,22 @@ export default function ChatPage() {
     docIds.length ? query(paths.documents(uid), orderBy('createdAt', 'desc'), limit(200)) : null,
     [uid, docIds.join(',')],
   );
-  const attachedDocs = useMemo(() => allDocs.filter((d) => docIds.includes(d.id)), [allDocs, docIds]);
+  const convKey = conversationId ?? 'new';
+  const pendingIds = useMemo(() => (conversationId ? tray[conversationId] ?? [] : draftDocs), [conversationId, tray, draftDocs]);
+  const pendingDocs = useMemo(
+    () => pendingIds.map((id) => allDocs.find((d) => d.id === id)).filter((d): d is DocumentMeta => Boolean(d)),
+    [allDocs, pendingIds],
+  );
+  // documents this conversation already searches that are not waiting in the composer
+  const chatDocs = useMemo(
+    () => (conversationId ? allDocs.filter((d) => docIds.includes(d.id) && !pendingIds.includes(d.id)) : []),
+    [allDocs, docIds, pendingIds, conversationId],
+  );
+  const visibleUploads = useMemo(() => uploads.filter((u) => u.key === convKey), [uploads, convKey]);
+  // a restored draft belongs to one composer: forget it once the user goes elsewhere
+  useEffect(() => {
+    setRestore((r) => (r && r.key !== convKey ? null : r));
+  }, [convKey]);
 
   // ----- model -----
   const fallbackDefault = catalog?.defaultModel ?? 'gemini:gemini-3.8-flash';
@@ -264,14 +295,23 @@ export default function ChatPage() {
     [uid, modelId, webSearch, deepResearch, caps?.searchAvailable, settings.memoryEnabled, settings.autoSearch, settings.searchMode, docIds, projectId],
   );
 
+  const [sendingMsg, setSendingMsg] = useState<string | null>(null);
   const send = async (text: string, images: ImageAttachment[], opts: { voice?: boolean } = {}) => {
     if (!online) {
       toast('You are offline. Reconnect to send messages.', 'error');
+      if (!opts.voice) setRestore({ key: convKey, text, images, seq: Date.now() });
       return;
     }
     // one message at a time: a double tap must not send twice or start two replies
     if (sendingRef.current || sending || generating) return;
+    const plan = planSend(opts.voice ? [] : pendingDocs, opts.voice ? [] : visibleUploads);
+    if (plan.waiting) {
+      toast('Wait until your documents have finished uploading and processing.', 'info');
+      setRestore({ key: convKey, text, images, seq: Date.now() });
+      return;
+    }
     sendingRef.current = true;
+    const draftBefore = draftDocs;
     const isNew = !conversationId;
     // a new conversation gets its ID now, so it can never reuse the previous conversation's ID
     const cid = conversationId ?? newId();
@@ -291,22 +331,37 @@ export default function ChatPage() {
           }),
         );
       }
-      const docAttachments = attachedDocs
-        .filter((d) => d.status === 'ready')
-        .map((d) => ({ kind: 'document' as const, documentId: d.id, name: d.name, mime: d.mime }));
-      const isFirstDocMention = messages.length === 0;
-      const attachments = [...images, ...(isFirstDocMention ? docAttachments : [])];
+      // the ready documents in the composer are referenced by this message
+      const attachments = [...images, ...plan.attachments];
       const mid = newId();
+      setSendingMsg(mid);
       writes.push(addUserMessage(uid, cid, text, attachments, mid));
       if (isNew) navigate(`/c/${cid}`, { replace: false });
       stick.current = true;
+      // resolves once the server has stored the message (and the new conversation)
       await Promise.all(writes);
+      // stored: the sent documents leave the composer; failed ones stay for a retry
+      if (isNew) {
+        const left = withoutSent(draftBefore, plan.sentIds);
+        if (left.length) setTray((t) => ({ ...t, [cid]: left }));
+      } else if (plan.sentIds.length) {
+        setTray((t) => ({ ...t, [cid]: withoutSent(t[cid] ?? [], plan.sentIds) }));
+      }
       const userMsg: Message = { id: mid, role: 'user', content: text, attachments };
-      runGeneration(cid, [...currentThread(), userMsg], docIds, undefined, undefined, opts.voice);
+      runGeneration(cid, [...currentThread(), userMsg], isNew ? draftBefore : docIds, undefined, undefined, opts.voice);
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Could not send the message.', 'error');
+      // nothing was sent: put the message back into the composer, documents included
+      if (!opts.voice) {
+        if (isNew) {
+          restoreDocs.current = draftBefore;
+          navigate(projectParam ? `/?project=${projectParam}` : '/', { replace: true });
+        }
+        setRestore({ key: isNew ? 'new' : cid, text, images, seq: Date.now() });
+      }
     } finally {
       sendingRef.current = false;
+      setSendingMsg(null);
       setSending(cid, false);
     }
   };
@@ -385,30 +440,75 @@ export default function ChatPage() {
     onDelete: (m) => conversationId && deleteMessages(uid, conversationId, [m.id]).catch(() => toast('Could not delete.', 'error')),
     onToggleSave: (m, s) => conv && toggleSavedResponse(uid, conv, m, s).catch(() => toast('Could not update bookmark.', 'error')),
     onQuickAction: quickAction,
+    // the same description again, as a new message (one at a time: send() ignores repeats)
+    onGenerateAnother: (prompt) => void send(prompt, []),
   };
 
-  const uploadDocs = async (files: File[]) => {
-    for (const f of files) {
-      try {
-        const id = await uploadDocument(uid, f);
-        if (conversationId) await attachDocument(uid, conversationId, id, true);
-        else setDraftDocs((d) => [...d, id]);
-      } catch (err) {
-        toast(err instanceof Error ? err.message : 'Upload failed.', 'error');
-      }
+  /** Upload one file into the composer of `cid` (undefined: the new chat). Each file is uploaded once. */
+  const uploadOne = async (f: File, cid: string | undefined, uploadId: string) => {
+    const key = cid ?? 'new';
+    setUploads((u) => [...u.filter((x) => x.id !== uploadId), { id: uploadId, key, name: f.name, status: 'uploading' }]);
+    try {
+      const id = await uploadDocument(uid, f);
+      files.current.set(id, f);
+      if (cid) {
+        await attachDocument(uid, cid, id, true);
+        setTray((t) => ({ ...t, [cid]: [...(t[cid] ?? []), id] }));
+      } else setDraftDocs((d) => [...d, id]);
+      setUploads((u) => u.filter((x) => x.id !== uploadId));
+    } catch (err) {
+      const error = err instanceof Error ? err.message : 'Upload failed.';
+      // keep the file for Retry
+      files.current.set(uploadId, f);
+      setUploads((u) => u.map((x) => (x.id === uploadId ? { ...x, status: 'failed', error } : x)));
     }
   };
+  const uploadDocs = async (list: File[]) => {
+    for (const f of list) await uploadOne(f, conversationId, newId());
+  };
+  const retryUpload = (uploadId: string) => {
+    const u = uploads.find((x) => x.id === uploadId);
+    const f = files.current.get(uploadId);
+    // one upload at a time per file: a second tap while it runs does nothing
+    if (!u || u.status === 'uploading' || !f) return;
+    files.current.delete(uploadId);
+    void uploadOne(f, u.key === 'new' ? undefined : u.key, uploadId);
+  };
+  const dismissUpload = (uploadId: string) => {
+    files.current.delete(uploadId);
+    setUploads((u) => u.filter((x) => x.id !== uploadId));
+  };
+  /** A document that could not be read: upload the same file again in its place. */
+  const retryDocument = (id: string) => {
+    const f = files.current.get(id);
+    if (!f) return;
+    files.current.delete(id);
+    removeDoc(id);
+    void uploadOne(f, conversationId, newId());
+  };
+  const canRetryDocument = (id: string) => files.current.has(id);
+  /** Stop searching a document this conversation was given earlier. */
+  const detachChatDoc = (id: string) => {
+    if (conversationId) attachDocument(uid, conversationId, id, false).catch(() => toast('Could not remove the document.', 'error'));
+  };
   const removeDoc = (id: string) => {
-    if (conversationId) attachDocument(uid, conversationId, id, false).catch(() => undefined);
-    else setDraftDocs((d) => d.filter((x) => x !== id));
+    if (conversationId) {
+      const cid = conversationId;
+      attachDocument(uid, cid, id, false).catch(() => undefined);
+      setTray((t) => ({ ...t, [cid]: (t[cid] ?? []).filter((x) => x !== id) }));
+    } else setDraftDocs((d) => d.filter((x) => x !== id));
     if (docParam === id) {
       params.delete('doc');
       setParams(params, { replace: true });
     }
   };
   const pickDoc = (id: string) => {
-    if (conversationId) attachDocument(uid, conversationId, id, true).catch(() => undefined);
-    else setDraftDocs((d) => (d.includes(id) ? d : [...d, id]));
+    if (conversationId) {
+      const cid = conversationId;
+      attachDocument(uid, cid, id, true)
+        .then(() => setTray((t) => ({ ...t, [cid]: (t[cid] ?? []).includes(id) ? t[cid] : [...(t[cid] ?? []), id] })))
+        .catch(() => toast('Could not attach the document.', 'error'));
+    } else setDraftDocs((d) => (d.includes(id) ? d : [...d, id]));
   };
 
   const notFound = conversationId && !convState.loading && !convState.exists;
@@ -511,7 +611,7 @@ export default function ChatPage() {
             )}
             <div className="space-y-7">
               {messages.map((m) => {
-                if (m.role === 'user') return <UserMessage key={m.id} m={m} actions={actions} canEdit={!generating} />;
+                if (m.role === 'user') return <UserMessage key={m.id} m={m} actions={actions} canEdit={!generating} delivery={m.id === sendingMsg ? 'sending' : 'sent'} />;
                 const r = liveById.get(m.id);
                 return (
                   <AssistantMessage
@@ -561,9 +661,13 @@ export default function ChatPage() {
             <ArrowDown className="size-4" />
           </button>
         )}
+        {!notFound && <UsageIndicator focus={deepResearch ? 'research' : docIds.length ? 'documents' : undefined} />}
         {!notFound && (
           <Composer
-            key={conversationId ?? 'new'}
+            key={`${convKey}:${restore?.key === convKey ? restore.seq : 0}`}
+            initialText={restore?.key === convKey ? restore.text : undefined}
+            initialImages={restore?.key === convKey ? restore.images : undefined}
+            sending={Boolean(sendingMsg)}
             onSend={send}
             onStop={() => conversationId && stopGeneration(conversationId)}
             generating={generating}
@@ -582,7 +686,14 @@ export default function ChatPage() {
             }
             deepResearch={deepResearch}
             onDeepResearch={setDeepResearch}
-            documents={attachedDocs}
+            documents={pendingDocs}
+            uploads={visibleUploads}
+            onRetryUpload={retryUpload}
+            onDismissUpload={dismissUpload}
+            onRetryDocument={retryDocument}
+            canRetryDocument={canRetryDocument}
+            chatDocuments={chatDocs}
+            onDetachChatDocument={detachChatDoc}
             onUploadDocuments={uploadDocs}
             onRemoveDocument={removeDoc}
             onPickFromLibrary={() => setLibraryOpen(true)}
@@ -608,7 +719,7 @@ export default function ChatPage() {
         </p>
       </div>
 
-      <LibraryPicker open={libraryOpen} onClose={() => setLibraryOpen(false)} selected={docIds} onPick={pickDoc} />
+      <LibraryPicker open={libraryOpen} onClose={() => setLibraryOpen(false)} selected={conversationId ? docIds : draftDocs} onPick={pickDoc} />
 
       <Dialog
         open={translateOpen}

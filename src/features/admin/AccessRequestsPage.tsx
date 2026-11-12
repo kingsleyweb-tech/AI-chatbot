@@ -117,7 +117,6 @@ export default function AccessRequestsPage() {
   return (
     <Page
       title="Access requests"
-      back="/settings"
       wide
       actions={
         <Button size="sm" variant="ghost" icon={<RefreshCw className={cn('size-4', loading && 'animate-spin')} />} onClick={() => void load()} disabled={loading}>

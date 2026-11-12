@@ -351,6 +351,23 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // AI usage allowances (server/usage): counters, profile, custom limits, unlimited access,
+    // reservations and daily history. Only the server writes them, so users cannot change
+    // their counters, limits, unlimited flag or resets. The owner and administrators can read.
+    match /usageAccounts/{uid} {
+      allow read: if isOwner(uid) || isAdmin();
+      allow write: if false;
+      match /{sub=**} {
+        allow read: if isOwner(uid) || isAdmin();
+        allow write: if false;
+      }
+    }
+    // Daily totals across all users (administrator analytics).
+    match /usageStats/{day} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+
     // The server identity may read and write everything (rules combine with OR).
     match /{document=**} {
       allow read, write: if isServer();

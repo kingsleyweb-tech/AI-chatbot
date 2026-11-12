@@ -8,7 +8,6 @@ import {
   Copy,
   FileText,
   Library,
-  Globe,
   Languages,
   ListCollapse,
   Maximize2,
@@ -17,17 +16,17 @@ import {
   Pause,
   Play,
   Square,
+  Loader2,
   Pencil,
   RefreshCw,
   Shuffle,
   Sparkles,
   StepForward,
-  Telescope,
   Trash2,
   Volume2,
 } from 'lucide-react';
 import { memo, useState } from 'react';
-import type { ApprovalRequest, QuickAction, ResearchStep, RouteInfo, SearchInfo, Source } from '@shared/types';
+import type { ApprovalRequest, QuickAction, RouteInfo, Source } from '@shared/types';
 import { LogoMark } from '@/components/Logo';
 import { Markdown } from '@/components/Markdown';
 import { Button, IconButton, Menu, Textarea } from '@/components/ui';
@@ -35,13 +34,15 @@ import { pauseSpeaking, resumeSpeaking, speak, stopSpeaking, ttsSupported, usePl
 import type { Message } from '@/lib/types';
 import { stripSourceList } from '@/lib/sourceList';
 import { naturalVoiceFrom } from '@/lib/voice';
-import { cn, copyText, domainOf, modelShortName, relativeTime } from '@/lib/utils';
+import { cn, copyText, domainOf, modelShortName } from '@/lib/utils';
 import { useSettings } from '@/state/settings';
 import { useToast } from '@/state/toast';
-import { GeneratedImage } from '../images/GeneratedImage';
+import { GeneratedImage, ImagePlaceholder } from '../images/GeneratedImage';
 import type { LiveReply } from './engine';
 import { TranslateDialog, TranslationView, type TranslationResult } from './Translate';
 import { replyPhase } from './phase';
+import { activitySteps } from './activity';
+import { ActivityPanel } from './ActivityPanel';
 import { SourcesButton, SourcesSheet } from './SourcesSheet';
 
 /** Excerpts from the person's documents and knowledge base (web sources are under the Sources button). */
@@ -94,8 +95,6 @@ function Sources({ sources }: { sources: Source[] }) {
   );
 }
 
-const PROVIDER: Record<string, string> = { serpapi: 'SerpAPI', tavily: 'Tavily' };
-
 /** Where the answer's information came from (source transparency). */
 function ContextLine({ used }: { used: { memories: number; documents: number; conversations: number; knowledge?: number; web?: number } | null }) {
   if (!used) return null;
@@ -110,50 +109,6 @@ function ContextLine({ used }: { used: { memories: number; documents: number; co
     <span className="ml-1.5 text-[11px] text-subtle" title="Sources used for this answer">
       · {parts.length ? `used ${parts.join(', ')}` : 'model knowledge only'}
     </span>
-  );
-}
-
-function SearchStatus({ info, steps, live }: { info?: SearchInfo | null; steps: ResearchStep[]; live: boolean }) {
-  const [open, setOpen] = useState(false);
-  if (!info && !steps.length) return null;
-  const provider = info?.provider ? PROVIDER[info.provider] : null;
-  let label: string;
-  if (!info) label = 'Researching…';
-  else if (info.status === 'unavailable') label = info.message ? `Web search not used: ${info.message}` : 'Web search not used';
-  else if (info.mode === 'research') label = `Deep research${info.message ? ` · ${info.message}` : ''}`;
-  else if (info.mode === 'extract') label = `Read the linked page${info.cached ? ' (from cache)' : ''}`;
-  else if (info.cached) label = `Web results from cache${info.cachedAt ? `, fetched ${relativeTime(info.cachedAt)}` : ''}`;
-  else label = info.trigger === 'auto' ? 'Searched the web automatically (current information needed)' : 'Searched the web';
-  const Icon = info?.mode === 'research' || (!info && steps.length) ? Telescope : Globe;
-  const expandable = steps.length > 0;
-  return (
-    <div className="mb-2 text-xs text-muted">
-      <button
-        type="button"
-        disabled={!expandable}
-        onClick={() => setOpen((o) => !o)}
-        className={cn('flex max-w-full items-center gap-1.5 text-left', expandable && 'hover:text-fg')}
-        title={info?.query ? `Query: ${info.query}` : undefined}
-      >
-        <Icon className={cn('size-3.5 shrink-0', info?.status === 'unavailable' ? 'text-warn' : 'text-accent', live && !info && 'animate-pulse')} />
-        <span className="min-w-0">
-          {label}
-          {provider && info?.status === 'ok' && <span className="text-subtle"> · {provider}</span>}
-        </span>
-        {expandable && <ChevronDown className={cn('size-3 shrink-0 transition-transform', (open || live) && 'rotate-180')} />}
-      </button>
-      {expandable && (open || (live && !info)) && (
-        <ol className="mt-1.5 space-y-1 border-l-2 border-border pl-3">
-          {steps.map((s, i) => (
-            <li key={i} className={cn(s.kind === 'skip' && 'text-warn')}>
-              {s.kind === 'search' ? 'Searched: ' : s.kind === 'read' ? '' : s.kind === 'skip' ? 'Skipped: ' : ''}
-              {s.text}
-              {s.provider && <span className="text-subtle"> · {PROVIDER[s.provider]}{s.cached ? ' (cache)' : ''}</span>}
-            </li>
-          ))}
-        </ol>
-      )}
-    </div>
   );
 }
 
@@ -222,6 +177,8 @@ export interface MessageActions {
   onRetry?: () => void;
   /** resend this reply once with a paid model the user explicitly approved */
   onApprovePaid?: (m: Message, model: string) => void;
+  /** ask for a new picture with the same description */
+  onGenerateAnother?: (prompt: string) => void;
 }
 
 function RouteNote({ route }: { route: RouteInfo }) {
@@ -278,10 +235,13 @@ export const UserMessage = memo(function UserMessage({
   m,
   actions,
   canEdit,
+  delivery = 'sent',
 }: {
   m: Message;
   actions: MessageActions;
   canEdit: boolean;
+  /** 'sending' until the server has stored the message (and its attachment references) */
+  delivery?: 'sending' | 'sent';
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(m.content);
@@ -334,6 +294,19 @@ export const UserMessage = memo(function UserMessage({
               <span className="truncate">{d.name}</span>
             </span>
           ))}
+        </div>
+      )}
+      {(images.length > 0 || docs.length > 0) && (
+        <div className="mb-1 flex items-center gap-1 text-[11px] text-subtle" aria-live="polite">
+          {delivery === 'sending' ? (
+            <>
+              <Loader2 className="size-3 animate-spin" aria-hidden="true" /> Sending…
+            </>
+          ) : (
+            <>
+              <Check className="size-3" aria-hidden="true" /> Sent
+            </>
+          )}
         </div>
       )}
       {m.content && (
@@ -410,6 +383,8 @@ export const AssistantMessage = memo(function AssistantMessage({
   const route = live ? live.route : m.route;
   const approval = live ? live.approval : m.approval;
   const createdImages = live?.images.length ? live.images : (m.images ?? []);
+  // a picture is being made: its placeholder stands where it will appear
+  const imagePending = Boolean(live?.imageStage) && streaming && !createdImages.length;
 
   return (
     <div className="group flex gap-3">
@@ -420,7 +395,21 @@ export const AssistantMessage = memo(function AssistantMessage({
       </div>
       <div className="min-w-0 flex-1">
         {route && <RouteNote route={route} />}
-        <SearchStatus info={search} steps={researchSteps} live={streaming} />
+        <ActivityPanel
+          live={streaming}
+          steps={activitySteps({
+            live: Boolean(live),
+            status,
+            // the switch is explained by its own note above
+            route: null,
+            search,
+            researchSteps,
+            context: live ? live.context : m.contextUsed,
+            imageStage: live?.imageStage,
+            imageCount: createdImages.length,
+            hasContent: Boolean(content),
+          })}
+        />
         {reasoning && <Reasoning text={reasoning} live={streaming && !content} />}
         {content && (
           <div className={cn('text-[15px] leading-[1.65]', streaming && 'caret-host')}>
@@ -428,9 +417,10 @@ export const AssistantMessage = memo(function AssistantMessage({
           </div>
         )}
         {createdImages.map((img) => (
-          <GeneratedImage key={img.id} info={img} />
+          <GeneratedImage key={img.id} info={img} onGenerateAnother={isLast && !live ? actions.onGenerateAnother : undefined} busy={busy} />
         ))}
-        {live && <GenerationIndicator live={live} />}
+        {imagePending && <ImagePlaceholder stage={live?.imageStage} size={live?.imageSize} />}
+        {live && !imagePending && <GenerationIndicator live={live} />}
         {!live && status === 'processing' && <p className="animate-pulse py-1.5 text-sm text-muted">Generating…</p>}
         {status === 'stopped' && <p className="mt-2 text-xs text-subtle">Stopped before it finished</p>}
         {approval && (

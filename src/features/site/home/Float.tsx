@@ -41,7 +41,7 @@ export function FloatCluster({ width, height, className, children }: { width: nu
   };
 
   return (
-    <div ref={ref} className={cn('relative mx-auto w-full select-none', className)} style={{ maxWidth: width, height: height * scale }} onPointerMove={move} onPointerLeave={leave} aria-hidden="true">
+    <div ref={ref} className={cn('relative mx-auto w-full select-none max-lg:overflow-x-clip', className)} style={{ maxWidth: width, height: height * scale }} onPointerMove={move} onPointerLeave={leave} aria-hidden="true">
       <div className="absolute top-0 left-0 origin-top-left" style={{ width, height, transform: `scale(${scale})` }}>
         <Pointer.Provider value={{ x, y }}>{children}</Pointer.Provider>
       </div>

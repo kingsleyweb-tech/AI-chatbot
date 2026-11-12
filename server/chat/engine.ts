@@ -55,6 +55,8 @@ import { atlasIdentityBrief } from './identity.js';
 import { isAboutAtlas } from '../shared/identity.js';
 import { loadOwnership } from './ownership.js';
 import { createRedactor } from './redact.js';
+import { reserveFor } from '../usage/allowance.js';
+import type { FeatureId } from '../usage/policy.js';
 
 const attachmentSchema = z.discriminatedUnion('kind', [
   z.object({
@@ -272,6 +274,26 @@ export async function runChat(
   /** turns in the conversation including this user message (the client sends at most the last 80) */
   const totalTurns = Math.max(convDoc?.data.messageCount ?? 0, body.messages.length);
 
+  // ---- Individual AI allowance: checked and reserved before the reply is accepted ----
+  // A refusal (HTTP 429) happens here, before anything runs. Once accepted the reply is never
+  // stopped by the allowance. The reservation uses the reply's id, so a retry is not counted twice.
+  const feature: FeatureId = imageIntent
+    ? 'images'
+    : body.options.deepResearch
+      ? 'research'
+      : body.options.documentIds.length
+        ? 'documents'
+        : catalog?.models.find((m) => m.id === body.model)?.capabilities.reasoning
+          ? 'reasoning'
+          : 'chat';
+  const allowance = await reserveFor({
+    uid,
+    admin: ctx.admin,
+    feature,
+    requestId: body.assistantMessageId,
+    detail: { deepResearch: body.options.deepResearch },
+  });
+
   const encoder = new TextEncoder();
   let closed = false;
   let controllerRef: ReadableStreamDefaultController<Uint8Array> | null = null;
@@ -376,6 +398,7 @@ export async function runChat(
         try {
           // keep-alive comment so proxies flush headers immediately
           controller.enqueue(encoder.encode(': ok\n\n'));
+          send({ type: 'allowance', feature: allowance.view });
 
           // ---- Image request: handled by the image model, not a chat model ----
           if (imageIntent) {
@@ -393,7 +416,8 @@ export async function runChat(
                 attachment: attachedImage && attachedImage.kind === 'image' ? attachedImage.dataUrl : null,
                 previousImageId: lastImage?.id ?? null,
                 signal,
-                onStage: (stage) => send({ type: 'image_progress', stage }),
+                onStage: (stage, size) => send({ type: 'image_progress', stage, ...(size ? { width: size.width, height: size.height } : {}) }),
+                allowanceChecked: allowance.counted || ctx.admin,
               });
               const info: GeneratedImageInfo = {
                 id: r.meta.id,
@@ -727,6 +751,8 @@ export async function runChat(
                 model: modelId,
                 messages,
                 signal,
+                // Cloudflare: the account the Neurons were reserved on
+                ...(cfReservation?.ok ? { account: cfReservation.account } : {}),
                 maxTokens: modelConfig().maxOutputTokens,
                 // with a fallback available, don't wait long for a stuck model
                 ...(i < chain.length - 1 ? { firstByteTimeoutMs: 15_000 } : {}),
@@ -807,6 +833,10 @@ export async function runChat(
         activeRequests.delete(requestKey);
         finished = true;
         requestSignal.removeEventListener('abort', onDisconnect);
+        // Settle the allowance: a reply that produced nothing (failed before any output, or a
+        // picture that was refused) gives its units back; everything else keeps them.
+        const producedNothing = (status === 'error' && !content.trim()) || (feature === 'images' && !images.length);
+        const settled = producedNothing ? allowance.release() : allowance.settle();
         // a progress write still on its way must not land after the final copy
         await progress;
         // ---- Persist the assistant message BEFORE the response ends ----
@@ -919,6 +949,7 @@ export async function runChat(
             console.warn('[chat] usage write failed', err instanceof Error ? err.message : err);
           }
         }
+        await settled; // never throws (logged inside)
 
         // ---- Background jobs: title, memory, summary ----
         if (status === 'complete' && content) {
@@ -1021,6 +1052,7 @@ export async function runChat(
       background(
         job.catch((err) => {
           console.error('[chat] reply job failed', err instanceof Error ? err.message : err);
+          void allowance.settle();
           finished = true;
           activeRequests.delete(requestKey);
           closed = true;

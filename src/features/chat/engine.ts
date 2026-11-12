@@ -1,3 +1,4 @@
+import { applyFeature, refreshUsage } from '../usage/usage';
 import { useSyncExternalStore } from 'react';
 import type { ApprovalRequest, ChatRequestBody, ChatTurn, GeneratedImageInfo, ImageStage, ResearchStep, RouteInfo, SearchInfo, Source, StreamEvent } from '@shared/types';
 import { ApiError, streamChat } from '@/lib/api';
@@ -20,6 +21,8 @@ export interface LiveReply {
   approval?: ApprovalRequest;
   /** set while a picture is being created (image requests only) */
   imageStage?: ImageStage;
+  /** the size of the picture being made (sent by the server once it is decided) */
+  imageSize?: { width: number; height: number };
   /** pictures created for this reply (their data is kept in memory, see images.ts) */
   images: GeneratedImageInfo[];
   status: 'connecting' | 'streaming' | 'done' | 'stopped' | 'error';
@@ -217,6 +220,7 @@ export async function generate(args: {
         break;
       case 'image_progress':
         reply.imageStage = e.stage;
+        if (e.width && e.height) reply.imageSize = { width: e.width, height: e.height };
         break;
       case 'image': {
         const { dataUrl, ...info } = e.image;
@@ -225,6 +229,9 @@ export async function generate(args: {
         reply.images = [...reply.images.filter((i) => i.id !== info.id), info];
         break;
       }
+      case 'allowance':
+        applyFeature(e.feature);
+        break;
       case 'delta':
         reply.status = 'streaming';
         reply.content += e.text;
@@ -271,6 +278,7 @@ export async function generate(args: {
     } else {
       if (!(err instanceof ApiError) || err.status === 0) dropped = true;
       reply.status = 'error';
+      if (err instanceof ApiError && err.code === 'usage_limit') void refreshUsage(true);
       if (err instanceof ApiError && err.code === 'duplicate_request') {
         // an earlier attempt reached the server and is still running: its stored reply will appear
         reply.saved = true;

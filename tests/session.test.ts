@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { APP_HEARTBEAT_MS, IDLE_LIMIT_MS, IDLE_WARN_MS, idleState } from '../src/lib/idle.js';
+import { APP_HEARTBEAT_MS, IDLE_LIMIT_MS, IDLE_WARN_MS, idleState, signOutDestination } from '../src/lib/idle.js';
 
 const MIN = 60_000;
 const web = { installedApp: false, appAliveAt: 0 };
@@ -30,6 +30,20 @@ describe('website inactivity', () => {
   });
   it('unavailable storage (no timestamp) never causes a sign-out loop', () => {
     expect(idleState(t0, 0, web)).toBe('active');
+  });
+});
+
+describe('where a sign-out lands', () => {
+  it('the website goes to the public home page with the reason', () => {
+    expect(signOutDestination('user', false)).toBe('/?signedOut=user');
+    expect(signOutDestination('inactivity', false)).toBe('/?signedOut=inactivity');
+    expect(signOutDestination('revoked', false)).toBe('/?signedOut=revoked');
+    expect(signOutDestination('device', false)).toBe('/?signedOut=device');
+  });
+  it('the installed app opens the sign-in form (it has no public pages)', () => {
+    expect(signOutDestination('user', true)).toBe('/login');
+    expect(signOutDestination('inactivity', true)).toBe('/login?reason=inactivity');
+    expect(signOutDestination('device', true)).toBe('/login?reason=device');
   });
 });
 

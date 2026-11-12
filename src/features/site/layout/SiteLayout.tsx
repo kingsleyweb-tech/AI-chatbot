@@ -1,7 +1,7 @@
 import { motion, useReducedMotion } from 'framer-motion';
-import { ArrowRight } from 'lucide-react';
-import { Suspense, useEffect, useRef, type ReactNode } from 'react';
-import { Link, Outlet, useLocation } from 'react-router-dom';
+import { ArrowRight, X } from 'lucide-react';
+import { Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { ANNOUNCEMENT } from '../content/site';
 import '../site.css';
 import { PublicFooter } from './PublicFooter';
@@ -19,6 +19,42 @@ function AnnouncementBar() {
             <ArrowRight className="size-3.5 transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
           </Link>
         )}
+      </div>
+    </div>
+  );
+}
+
+const SIGNED_OUT_TEXT: Record<string, string> = {
+  user: 'You have signed out.',
+  inactivity: 'You were signed out after 60 minutes of inactivity.',
+  revoked: 'Your session ended because your password was changed or all sessions were signed out.',
+  device: 'This device was removed from your account, so you were signed out.',
+};
+
+/**
+ * Why the last session ended (set by the sign-out redirect, see lib/session.ts). Shown once
+ * on the home page; the reason is removed from the address straight away.
+ */
+function SignedOutNotice() {
+  const navigate = useNavigate();
+  const [reason, setReason] = useState(() => new URLSearchParams(window.location.search).get('signedOut'));
+  const text = reason ? SIGNED_OUT_TEXT[reason] : undefined;
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).has('signedOut')) navigate('/', { replace: true });
+  }, [navigate]);
+  if (!text) return null;
+  return (
+    <div role="status" className="relative z-[51] border-b border-border bg-surface text-[14px]">
+      <div className="mx-auto flex max-w-[1200px] items-center gap-3 px-4 py-2.5">
+        <span className="min-w-0 flex-1 text-fg">
+          {text}{' '}
+          <Link to="/login" className="font-medium text-accent hover:underline">
+            Sign in again
+          </Link>
+        </span>
+        <button type="button" onClick={() => setReason(null)} aria-label="Dismiss" className="flex size-8 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-surface-2 hover:text-fg">
+          <X className="size-4" aria-hidden="true" />
+        </button>
       </div>
     </div>
   );
@@ -62,6 +98,7 @@ export default function SiteLayout({ children }: { children?: ReactNode }) {
       >
         Skip to content
       </a>
+      {pathname === '/' && <SignedOutNotice />}
       <AnnouncementBar />
       {!isDocs && <PublicHeader scrollRef={scroller} />}
       <motion.main

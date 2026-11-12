@@ -256,6 +256,25 @@ export class Firestore {
     }
   }
 
+  /**
+   * Atomically add to counters and return their new values (Firestore applies the increment on
+   * the server, so concurrent callers on any instance each see a distinct total).
+   */
+  async incrementAndGet(path: string, increments: Record<string, number>, data: object = {}): Promise<Record<string, number>> {
+    const w: Write = { op: 'increment', path, increments, data };
+    const res = await this.request(`${this.base}:commit`, { method: 'POST', body: JSON.stringify({ writes: [this.toWrite(w)] }) });
+    if (!res.ok) await this.fail(res, 'commit');
+    const body = (await res.json()) as { writeResults?: { transformResults?: FsValue[] }[] };
+    const results = body.writeResults?.[0]?.transformResults ?? [];
+    const skip = serverTimeFields(data).length;
+    const out: Record<string, number> = {};
+    Object.keys(increments).forEach((k, i) => {
+      const v = results[skip + i];
+      out[k] = v ? Number(decodeValue(v)) || 0 : 0;
+    });
+    return out;
+  }
+
   private toWrite(w: Write): object {
     const name = `${this.dbRoot}/${w.path}`;
     if (w.op === 'delete') return w.precondition ? { delete: name, currentDocument: w.precondition } : { delete: name };

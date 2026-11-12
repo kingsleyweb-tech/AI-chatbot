@@ -9,7 +9,7 @@
  */
 import { STT_MODEL, TRANSLATE_MODEL, TTS_MODEL, TURN_MODEL } from '../config/speech.js';
 import { ProviderError } from '../providers/types.js';
-import { aiBase, authHeader, mapCloudflareError, neuronsOf } from './client.js';
+import { aiBase, authHeader, currentCloudflareAccount, mapCloudflareError, neuronsOf } from './client.js';
 
 /** Scripted stand-in for tests and local end-to-end runs (no request reaches Cloudflare). */
 export interface SpeechFake {
@@ -24,12 +24,13 @@ export function setSpeechFake(f: SpeechFake | null) {
 }
 
 async function run(model: string, body: unknown, signal: AbortSignal | undefined, timeoutMs: number): Promise<Response> {
+  const account = currentCloudflareAccount(); // chosen by the caller's Neuron reservation
   const signals = [AbortSignal.timeout(timeoutMs), signal].filter(Boolean) as AbortSignal[];
   let res: Response;
   try {
-    res = await fetch(`${aiBase()}/run/${model}`, {
+    res = await fetch(`${aiBase(account)}/run/${model}`, {
       method: 'POST',
-      headers: { ...authHeader(), 'content-type': 'application/json' },
+      headers: { ...authHeader(account), 'content-type': 'application/json' },
       body: JSON.stringify(body),
       signal: AbortSignal.any(signals),
     });
@@ -39,7 +40,7 @@ async function run(model: string, body: unknown, signal: AbortSignal | undefined
     throw new ProviderError('timeout', 'Cloudflare Workers AI took too long to respond.', 504);
   }
   if (!res.ok) {
-    const e = mapCloudflareError(res.status, await res.text());
+    const e = mapCloudflareError(res.status, await res.text(), account, res.headers.get('retry-after'));
     (e as ProviderError & { neurons?: number }).neurons = neuronsOf(res);
     throw e;
   }

@@ -25,15 +25,15 @@ import { clearIndexedDbPersistence, terminate } from 'firebase/firestore';
 import { signOut as fbSignOut } from 'firebase/auth';
 import { api } from './api';
 import { auth, db } from './firebase';
+import { isInstalledApp, signOutDestination, type SignOutReason } from './idle';
 
-export { APP_HEARTBEAT_MS, IDLE_LIMIT_MS, IDLE_WARN_MS, idleState, isInstalledApp, type IdleState } from './idle';
+export { APP_HEARTBEAT_MS, IDLE_LIMIT_MS, IDLE_WARN_MS, idleState, isInstalledApp, signOutDestination, type IdleState, type SignOutReason } from './idle';
 
 const LAST_ACTIVITY = 'atlas.lastActivity';
 const APP_ALIVE = 'atlas.appAlive';
 const LOGOUT_SIGNAL = 'atlas.logout';
 const CHANNEL = 'atlas-session';
 
-export type SignOutReason = 'user' | 'inactivity' | 'revoked' | 'device';
 
 function num(key: string): number {
   try {
@@ -149,6 +149,6 @@ export async function endSession(reason: SignOutReason, fromOtherTab = false): P
   } catch {
     /* another tab still holds the cache; it clears it when it signs out */
   }
-  const to = reason === 'inactivity' ? '/login?reason=inactivity' : reason === 'revoked' ? '/login?reason=revoked' : reason === 'device' ? '/login?reason=device' : '/login';
-  window.location.replace(to);
+  window.location.replace(signOutDestination(reason, isInstalledApp()));
 }
+

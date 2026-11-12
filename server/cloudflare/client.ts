@@ -1,7 +1,8 @@
 /**
  * Cloudflare Workers AI REST client (server-only).
  *
- * Credentials come from CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN and are
+ * Credentials come from CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN (and the
+ * *_SECONDARY pair for a second account) and are
  * only ever placed in the Authorization header of requests made from the
  * server. They never appear in URLs that are logged, in error messages, or in
  * anything sent to the browser.
@@ -12,7 +13,9 @@
  *  - daily free allocation used up: code 4006 / "daily free allocation"
  *  - every response carries the exact cost in the `cf-ai-neurons` header
  */
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { env } from '../env.js';
+import * as H from '../providers/accountHealth.js';
 import { ProviderError } from '../providers/types.js';
 
 const API = 'https://api.cloudflare.com/client/v4/accounts';
@@ -30,38 +33,117 @@ export function setCloudflareFake(f: CloudflareFake | null) {
   fake = f;
 }
 
-export function cloudflareConfigured(): boolean {
-  if (fake) return true;
-  const e = env();
-  return Boolean(e.cloudflareAccountId && e.cloudflareApiToken);
+/* ---------------------------------- accounts ---------------------------------- */
+
+/**
+ * Two independent Cloudflare accounts, each with its own free daily allowance:
+ * A = CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN, B = the *_SECONDARY pair.
+ * Which account a call uses is decided by the Neuron reservation (budget.ts) and
+ * passed down either explicitly or through `withCloudflareAccount`.
+ */
+export type CfAccountId = 'A' | 'B';
+interface CfAccount {
+  id: CfAccountId;
+  accountId: string;
+  token: string;
 }
 
-export function aiBase(): string {
-  const id = env().cloudflareAccountId;
+function cloudflareAccounts(): CfAccount[] {
+  const e = env();
+  const out: CfAccount[] = [];
+  if (e.cloudflareAccountId && e.cloudflareApiToken) out.push({ id: 'A', accountId: e.cloudflareAccountId, token: e.cloudflareApiToken });
+  if (e.cloudflareAccountIdSecondary && e.cloudflareApiTokenSecondary && e.cloudflareAccountIdSecondary !== e.cloudflareAccountId)
+    out.push({ id: 'B', accountId: e.cloudflareAccountIdSecondary, token: e.cloudflareApiTokenSecondary });
+  return out;
+}
+
+/** Configured account labels (never the ids or tokens). The local end-to-end stand-in counts as A. */
+export function cloudflareAccountIds(): CfAccountId[] {
+  const ids = cloudflareAccounts().map((a) => a.id);
+  return ids.length ? ids : fake ? ['A'] : [];
+}
+
+const current = new AsyncLocalStorage<CfAccountId>();
+/** Run `fn` with every Cloudflare call inside it going to `account`. */
+export function withCloudflareAccount<T>(account: CfAccountId, fn: () => T): T {
+  return current.run(account, fn);
+}
+/** The account for a call: the one chosen by the surrounding reservation, else the first configured. */
+export function currentCloudflareAccount(): CfAccountId {
+  return current.getStore() ?? cloudflareAccounts()[0]?.id ?? 'A';
+}
+
+function accountFor(id?: string): CfAccount {
+  const want = id ?? currentCloudflareAccount();
+  const a = cloudflareAccounts().find((x) => x.id === want);
+  if (!a) throw new ProviderError('not_configured', 'Cloudflare Workers AI is not configured.', 500);
+  return a;
+}
+
+export function cloudflareConfigured(): boolean {
+  if (fake) return true;
+  return cloudflareAccounts().length > 0;
+}
+
+export function aiBase(account?: string): string {
+  const e = env();
+  // keep the original check: a malformed id is a configuration error, never sent anywhere
+  const id = account || cloudflareAccounts().length ? accountFor(account).accountId : e.cloudflareAccountId;
   if (!/^[a-f0-9]{32}$/i.test(id)) throw new ProviderError('not_configured', 'Cloudflare Workers AI is not configured.', 500);
   return `${API}/${id}/ai`;
 }
 
-export function authHeader(): Record<string, string> {
-  const token = env().cloudflareApiToken;
-  if (!token) throw new ProviderError('not_configured', 'Cloudflare Workers AI is not configured.', 500);
-  return { authorization: `Bearer ${token}` };
+export function authHeader(account?: string): Record<string, string> {
+  return { authorization: `Bearer ${accountFor(account).token}` };
 }
 
-/** Free daily allocation (10,000 Neurons) used up: remembered in-process until 00:00 UTC. */
-let dailyLimitUntil = 0;
+/* ------------------------------ account health ------------------------------ */
+
 export function nextUtcMidnight(now = Date.now()): number {
   const d = new Date(now);
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1);
 }
-export function markCloudflareDailyLimit(now = Date.now()) {
-  dailyLimitUntil = nextUtcMidnight(now);
+
+/** An account's free daily allocation (10,000 Neurons) is used up: it rests until 00:00 UTC, on every instance. */
+export function markCloudflareDailyLimit(now = Date.now(), account: string = currentCloudflareAccount()) {
+  H.noteFailure('cloudflare', account, H.ANY_MODEL, 'daily_limit', now);
+  H.startCooldown('cloudflare', account, H.ANY_MODEL, nextUtcMidnight(now) - now, 'daily_allowance', { error: 'daily_limit' }, now);
 }
-export function cloudflareDailyLimitActive(now = Date.now()): boolean {
-  return now < dailyLimitUntil;
+
+/** Without an account: true only when every configured account has used its allowance. */
+export function cloudflareDailyLimitActive(now = Date.now(), account?: string): boolean {
+  const ids = account ? [account] : cloudflareAccountIds();
+  return ids.length > 0 && ids.every((id) => H.cooldownOf('cloudflare', id, H.ANY_MODEL, now)?.reason === 'daily_allowance');
 }
+
+/** The account can take a request now (no daily-allowance, credential or rate-limit rest). */
+export function cloudflareAccountUsable(account: string, now = Date.now()): boolean {
+  return !H.cooldownOf('cloudflare', account, H.ANY_MODEL, now);
+}
+
 export function resetCloudflareDailyLimit() {
-  dailyLimitUntil = 0;
+  H.clearCooldowns('cloudflare');
+}
+
+/** Account-level consequences of an error (the request itself is handled by the caller). */
+function noteAccountError(e: ProviderError, account: string, now = Date.now()) {
+  if (e.code === 'invalid_key') {
+    H.noteFailure('cloudflare', account, H.ANY_MODEL, 'invalid_key', now);
+    console.error(
+      `[cloudflare] Cloudflare rejected the credentials for account ${account}. Check its server settings (${account === 'A' ? 'CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN' : 'CLOUDFLARE_ACCOUNT_ID_SECONDARY / CLOUDFLARE_API_TOKEN_SECONDARY'}).`,
+    );
+    H.startCooldown('cloudflare', account, H.ANY_MODEL, 10 * 60_000, 'auth', { error: 'invalid_key' }, now);
+    void H.logEvent({ provider: 'cloudflare', account, kind: 'auth', reason: 'invalid_key' });
+  } else if (e.code === 'rate_limited') {
+    H.noteFailure('cloudflare', account, H.ANY_MODEL, 'rate_limited', now);
+    const streak = H.failureStreak('cloudflare', account, H.ANY_MODEL);
+    H.startCooldown('cloudflare', account, H.ANY_MODEL, H.backoffMs(streak, 30_000, 5 * 60_000, e.retryAfterMs), 'rpm', { error: 'rate_limited' }, now);
+  }
+}
+
+/** A request on this account succeeded (ends its backoff streak). */
+export function noteCloudflareSuccess(account: string) {
+  H.noteSuccess('cloudflare', account, H.ANY_MODEL);
 }
 export function cloudflareDailyLimitError(): ProviderError {
   return new ProviderError(
@@ -72,7 +154,15 @@ export function cloudflareDailyLimitError(): ProviderError {
 }
 
 /** Map a Workers AI HTTP error to a typed ProviderError (never includes credentials). */
-export function mapCloudflareError(status: number, body: string): ProviderError {
+export function mapCloudflareError(status: number, body: string, account: string = currentCloudflareAccount(), retryAfter?: string | null): ProviderError {
+  const e = classifyCloudflareError(status, body, account);
+  const seconds = retryAfter ? Number(retryAfter) : NaN;
+  if (Number.isFinite(seconds) && seconds > 0) e.retryAfterMs = Math.ceil(seconds * 1000);
+  noteAccountError(e, account);
+  return e;
+}
+
+function classifyCloudflareError(status: number, body: string, account: string): ProviderError {
   let code = 0;
   let message: string;
   try {
@@ -85,7 +175,7 @@ export function mapCloudflareError(status: number, body: string): ProviderError 
   }
   const lower = message.toLowerCase();
   if (code === 4006 || /daily free allocation|neurons? (limit|allocation)|upgrade to .*paid/.test(lower)) {
-    markCloudflareDailyLimit();
+    markCloudflareDailyLimit(Date.now(), account);
     return cloudflareDailyLimitError();
   }
   if (status === 401 || status === 403 || code === 10000)
@@ -120,12 +210,13 @@ const IMAGE_TIMEOUT_MS = 90_000;
 /** Run an image model. Body is JSON or multipart, depending on the model. */
 export async function runImageModel(model: string, body: { json?: Record<string, unknown>; form?: FormData }, signal?: AbortSignal): Promise<ImageRunResult> {
   if (fake) return fake.image(model, body, signal);
+  const account = currentCloudflareAccount();
   const signals = [AbortSignal.timeout(IMAGE_TIMEOUT_MS), signal].filter(Boolean) as AbortSignal[];
   let res: Response;
   try {
-    res = await fetch(`${aiBase()}/run/${model}`, {
+    res = await fetch(`${aiBase(account)}/run/${model}`, {
       method: 'POST',
-      headers: { ...authHeader(), ...(body.json ? { 'content-type': 'application/json' } : {}) },
+      headers: { ...authHeader(account), ...(body.json ? { 'content-type': 'application/json' } : {}) },
       body: body.json ? JSON.stringify(body.json) : body.form,
       signal: AbortSignal.any(signals),
     });
@@ -137,7 +228,7 @@ export async function runImageModel(model: string, body: { json?: Record<string,
   const neurons = neuronsOf(res);
   const text = await res.text();
   if (!res.ok) {
-    const e = mapCloudflareError(res.status, text);
+    const e = mapCloudflareError(res.status, text, account, res.headers.get('retry-after'));
     (e as ProviderError & { neurons?: number }).neurons = neurons;
     throw e;
   }
@@ -201,12 +292,13 @@ export function imageSize(b: Uint8Array): { width: number; height: number } | nu
 /** One non-streaming OpenAI-compatible chat completion (used for the safety check). */
 export async function chatOnce(model: string, messages: { role: string; content: string }[], opts: { maxTokens?: number; signal?: AbortSignal; timeoutMs?: number } = {}): Promise<{ text: string; neurons: number }> {
   if (fake) return fake.chat(model, messages);
+  const account = currentCloudflareAccount();
   const signals = [AbortSignal.timeout(opts.timeoutMs ?? 20_000), opts.signal].filter(Boolean) as AbortSignal[];
   let res: Response;
   try {
-    res = await fetch(`${aiBase()}/v1/chat/completions`, {
+    res = await fetch(`${aiBase(account)}/v1/chat/completions`, {
       method: 'POST',
-      headers: { ...authHeader(), 'content-type': 'application/json' },
+      headers: { ...authHeader(account), 'content-type': 'application/json' },
       body: JSON.stringify({ model, messages, max_tokens: opts.maxTokens ?? 20, stream: false }),
       signal: AbortSignal.any(signals),
     });
@@ -216,7 +308,7 @@ export async function chatOnce(model: string, messages: { role: string; content:
     throw new ProviderError('timeout', 'The model did not respond in time.', 504);
   }
   const text = await res.text();
-  if (!res.ok) throw mapCloudflareError(res.status, text);
+  if (!res.ok) throw mapCloudflareError(res.status, text, account, res.headers.get('retry-after'));
   const data = JSON.parse(text) as { choices?: { message?: { content?: string } }[]; usage?: { neurons?: number } };
   return { text: data.choices?.[0]?.message?.content ?? '', neurons: neuronsOf(res) || Number(data.usage?.neurons ?? 0) || 0 };
 }

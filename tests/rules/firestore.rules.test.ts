@@ -494,6 +494,27 @@ describe('search limits, cache and document subcollections', () => {
     denied(await read(BOB, 'users/alice/usage/2026-11-08'));
   });
 
+  it('AI allowances: users read their own but cannot change counters, limits, unlimited access or resets', async () => {
+    ok(await write(OWNER, 'usageAccounts/alice', { counters: { chat: { d: '2026-11-12', du: 5, w: '2026-11-09', wu: 9 } }, profile: 'standard' }));
+    ok(await write(OWNER, 'usageAccounts/alice/reservations/chat-m1', { state: 'reserved' }));
+    ok(await write(OWNER, 'usageStats/2026-11-12', { chat_requests: 1 }));
+    ok(await read(ALLOWED, 'usageAccounts/alice'));
+    ok(await read(ALLOWED, 'usageAccounts/alice/reservations/chat-m1'));
+    ok(await read(ADMIN, 'usageAccounts/alice'));
+    denied(await write(ALLOWED, 'usageAccounts/alice', { counters: {} }));
+    denied(await write(ALLOWED, 'usageAccounts/alice', { unlimited: { until: null } }));
+    denied(await write(ALLOWED, 'usageAccounts/alice', { profile: 'premium' }));
+    denied(await del(ALLOWED, 'usageAccounts/alice'));
+    denied(await write(ALLOWED, 'usageAccounts/alice/reservations/chat-m1', { state: 'released' }));
+    denied(await write(ALLOWED, 'usageAccounts/alice/days/2026-11-12', { chat: 0 }));
+    denied(await read(BOB, 'usageAccounts/alice'));
+    denied(await read(ALLOWED, 'usageStats/2026-11-12'));
+    ok(await read(ADMIN, 'usageStats/2026-11-12'));
+    denied(await write(ADMIN, 'usageAccounts/alice', { unlimited: null }));
+    denied(await read(ALLOWED, 'config/usage'));
+    denied(await write(ADMIN, 'config/usage', { enabled: false }));
+  });
+
   it('allows only known document subcollections', async () => {
     ok(await write(ALLOWED, 'users/alice/documents/d1', { name: 'deck.pptx' }));
     ok(await write(ALLOWED, 'users/alice/documents/d1/images/1', { ref: 'Slide 2' }));

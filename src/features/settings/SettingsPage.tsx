@@ -11,14 +11,13 @@ import {
   LifeBuoy,
   ChevronRight,
   Cpu,
+  Gauge,
   Globe,
+  LayoutDashboard,
   Info,
   KeyRound,
   Library,
   LogOut,
-  MailCheck,
-  Megaphone,
-  MessageSquareText,
   Palette,
   Phone,
   Plus,
@@ -27,12 +26,8 @@ import {
   Smartphone,
   Sparkles,
   SunMoon,
-  UserPlus,
-  Users,
   X,
   type LucideIcon,
-  Newspaper,
-  BadgeCheck,
 } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
@@ -769,6 +764,13 @@ function UsageSection() {
 
   return (
     <Section title="Usage">
+      <Link to="/usage" className="flex items-center justify-between gap-3 border-b border-border py-3 text-sm hover:text-accent">
+        <span>
+          <span className="font-medium">AI allowance</span>
+          <span className="block text-xs text-muted">What you have left today and this week, and when it resets.</span>
+        </span>
+        <ChevronRight className="size-4 shrink-0 text-subtle" />
+      </Link>
       {loading ? (
         <div className="flex justify-center py-10">
           <Spinner />
@@ -1090,7 +1092,7 @@ function EmailList({
   );
 }
 
-function AccessSection() {
+export function AccessSection() {
   const { admin } = useAuth();
   const toast = useToast();
   const access = useDocument<{ allowedEmails?: string[]; adminEmails?: string[] }>(
@@ -1269,13 +1271,11 @@ function SettingsHome() {
         />
         <NavRow to="/settings/security" icon={ShieldCheck} label="Security and activity" />
         <NavRow to="/settings/usage" icon={BarChart3} label="Usage" />
-        {admin && <NavRow to="/admin/users" icon={Users} label="Users" value="Admin" />}
-        {admin && (
-          <NavRow to="/admin/requests" icon={UserPlus} label="Access requests" value="Admin" />
-        )}
+        <NavRow to="/usage" icon={Gauge} label="AI allowance" />
+        {admin && <NavRow to="/admin" icon={LayoutDashboard} label="Admin Dashboard" value="Admin" />}
         {admin && (
           <NavRow
-            to="/settings/access"
+            to="/admin/access"
             icon={ShieldCheck}
             label="Access and registration"
             value="Admin"
@@ -1338,30 +1338,6 @@ function SettingsHome() {
         <NavRow to="/help" icon={CircleHelp} label="Help Centre" />
         <NavRow to="/support/new" icon={LifeBuoy} label="Report an issue" />
         <NavRow to="/support" icon={Inbox} label="My reports" />
-        {admin && (
-          <NavRow
-            to="/admin/support"
-            icon={LifeBuoy}
-            label="Support & issue reports"
-            value="Admin"
-          />
-        )}
-        {admin && (
-          <NavRow
-            to="/admin/sms"
-            icon={MessageSquareText}
-            label="SMS & verification"
-            value="Admin"
-          />
-        )}
-        {admin && (
-          <NavRow to="/admin/email" icon={MailCheck} label="Email delivery" value="Admin" />
-        )}
-        {admin && (
-          <NavRow to="/admin/messages" icon={Megaphone} label="Messages to users" value="Admin" />
-        )}
-        {admin && <NavRow to="/admin/news" icon={Newspaper} label="News sources" value="Admin" />}
-        {admin && <NavRow to="/admin/ownership" icon={BadgeCheck} label="Ownership record" value="Admin" />}
         <KnowledgeCenterLink admin={admin} />
       </Group>
 

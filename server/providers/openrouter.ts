@@ -179,6 +179,30 @@ export class OpenRouterProvider implements ChatProvider {
     }
   }
 
+  /**
+   * The key's account status as OpenRouter reports it (GET /key: free to call, uses no requests),
+   * for the administrator provider view. Never contains the key itself.
+   */
+  async accountStatus(): Promise<{ freeTier: boolean | null; freeDailyRemaining: number | null; creditsRemaining: number | null } | null> {
+    if (!this.isConfigured()) return null;
+    try {
+      const res = await fetch(`${BASE}/key`, { headers: this.headers(), signal: AbortSignal.timeout(8_000) });
+      if (!res.ok) return null;
+      const { data } = (await res.json()) as {
+        data: { is_free_tier?: boolean; limit_remaining?: number | null; free_model_daily_requests?: { remaining?: number } };
+      };
+      const free = data.free_model_daily_requests?.remaining;
+      if (free === 0) markFreeDailyLimit();
+      return {
+        freeTier: typeof data.is_free_tier === 'boolean' ? data.is_free_tier : null,
+        freeDailyRemaining: typeof free === 'number' ? free : null,
+        creditsRemaining: typeof data.limit_remaining === 'number' ? data.limit_remaining : null,
+      };
+    } catch {
+      return null;
+    }
+  }
+
   private body(p: CompletionParams, stream: boolean) {
     return JSON.stringify({
       model: p.model,

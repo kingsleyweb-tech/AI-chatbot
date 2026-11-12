@@ -1,3 +1,5 @@
+import { AdminSidebar } from '../admin/AdminSidebar';
+import { UsageBridge } from '../usage/UsageIndicator';
 import { AnimatePresence, motion } from 'framer-motion';
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
@@ -22,7 +24,11 @@ export const useShell = () => {
   return v;
 };
 
-export default function AppShell() {
+/**
+ * The signed-in frame: sidebar (desktop) or drawer (mobile) plus the page. The AI workspace and the
+ * Admin Dashboard share this frame but have separate menus (variant).
+ */
+export default function AppShell({ variant = 'workspace' }: { variant?: 'workspace' | 'admin' }) {
   const isDesktop = useIsDesktop();
   const [navOpen, setNavOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -69,6 +75,7 @@ export default function AppShell() {
 
   return (
     <Ctx.Provider value={ctx}>
+      <UsageBridge />
       <NotificationsProvider>
         <div className="flex h-full w-full overflow-hidden bg-bg">
           {isDesktop ? (
@@ -79,7 +86,11 @@ export default function AppShell() {
               className="h-full shrink-0 overflow-hidden border-r border-border bg-surface"
             >
               <div className="h-full w-[272px]">
-                <Sidebar onSearch={() => setSearchOpen(true)} onCollapse={toggleSidebar} />
+                {variant === 'admin' ? (
+                  <AdminSidebar onCollapse={toggleSidebar} />
+                ) : (
+                  <Sidebar onSearch={() => setSearchOpen(true)} onCollapse={toggleSidebar} />
+                )}
               </div>
             </motion.aside>
           ) : (
@@ -107,10 +118,14 @@ export default function AppShell() {
                       if (info.offset.x < -80 || info.velocity.x < -400) setNavOpen(false);
                     }}
                   >
-                    <Sidebar
-                      onSearch={() => setSearchOpen(true)}
-                      onClose={() => setNavOpen(false)}
-                    />
+                    {variant === 'admin' ? (
+                      <AdminSidebar onClose={() => setNavOpen(false)} />
+                    ) : (
+                      <Sidebar
+                        onSearch={() => setSearchOpen(true)}
+                        onClose={() => setNavOpen(false)}
+                      />
+                    )}
                   </motion.aside>
                 </>
               )}
