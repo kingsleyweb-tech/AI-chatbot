@@ -193,6 +193,15 @@ describe('Vynfy OTP route', () => {
     expect(await verifyCode(deps, 'u1', c)).toEqual({ phone: '+233501901401' });
   });
 
+  it('falls back to ordinary SMS when the OTP service refuses a valid Ghana prefix (MTN 053)', async () => {
+    otp.fail = new SmsError(502, 'sms_failed', 'rejected', { httpStatus: 400, message: 'Invalid Ghana network code: 53. Must be MTN, Vodafone, or AirtelTigo' });
+    const r = await sendCode(deps, 'u1', '0538212213');
+    expect(r.route).toBe('sms');
+    expect(sms.sent).toEqual([expect.objectContaining({ to: '+233538212213' })]);
+    const c = /code is (\d{6})/.exec(sms.sent[0].message)![1];
+    expect(await verifyCode(deps, 'u1', c)).toEqual({ phone: '+233538212213' });
+  });
+
   it('does not fall back when disabled, or for other failures', async () => {
     deps.smsFallback = false;
     otp.fail = new SmsError(503, 'sms_unavailable', 'unavailable', { httpStatus: 402, code: 'INSUFFICIENT_BALANCE', message: 'Not enough credits' });

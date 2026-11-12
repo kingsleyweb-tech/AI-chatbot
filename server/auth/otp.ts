@@ -223,11 +223,15 @@ export async function sendCode(deps: OtpDeps, uid: string, rawPhone?: string | n
       const p = err instanceof SmsError ? err.provider : { message: (err as Error).message };
       await logSms(deps.db, { ...base, route: 'otp', ref: null, accepted: false, delivery: 'failed', error: p.message ?? null, httpStatus: p.httpStatus ?? null, providerStatus: p.code ?? 'rejected' });
       const outOfCredit = err instanceof SmsError && err.code === 'sms_unavailable' && /balance|credit|insufficient/i.test(`${p.code} ${p.message}`);
-      if (!(outOfCredit && deps.smsFallback !== false && deps.sms)) {
+      // Vynfy's OTP service checks Ghana network prefixes against an outdated list (it refuses
+      // MTN 053 with "Invalid Ghana network code: 53"). The number already passed our own check,
+      // so the ordinary SMS route is tried instead.
+      const prefixRefused = err instanceof SmsError && /network code/i.test(p.message ?? '');
+      if (!((outOfCredit || prefixRefused) && deps.smsFallback !== false && deps.sms)) {
         await release();
         throw err;
       }
-      // OTP balance empty: fall through to an app-generated code over ordinary SMS.
+      // OTP balance empty or prefix refused: fall through to an app-generated code over ordinary SMS.
     }
   }
 
