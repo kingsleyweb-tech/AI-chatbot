@@ -1,5 +1,6 @@
 import { getRedirectResult, GoogleAuthProvider, signInWithPopup, signInWithRedirect, type AuthProvider } from 'firebase/auth';
 import { auth } from './firebase';
+import { googleSignInMode } from './googleSignInMode';
 import { isStandalone } from './utils';
 
 /** Sign in with Apple was removed from the app; Google is the only social provider. */
@@ -80,10 +81,9 @@ async function redirect(p: AuthProvider) {
 }
 
 /**
- * Sign in with Google. Uses a popup in the browser and a full-page
- * redirect in installed apps (where popups open outside the app and their
- * result can be lost) or when the popup is blocked. The auth state listener
- * is the single source of truth for what happens next.
+ * Sign in with Google: a same-tab redirect where that is reliable, otherwise a
+ * popup that falls back to a redirect when blocked (see googleSignInMode). The
+ * auth state listener is the single source of truth for what happens next.
  *
  * Returns 'cancelled' when the user closed the window, 'redirect' when the
  * page is navigating away.
@@ -93,7 +93,7 @@ export async function signInWithProvider(_id: SocialProvider = 'google'): Promis
   inFlight = true;
   const p = provider();
   try {
-    if (isStandalone()) {
+    if (googleSignInMode(auth.config.authDomain, window.location.host, isStandalone()) === 'redirect') {
       await redirect(p);
       return 'redirect';
     }
