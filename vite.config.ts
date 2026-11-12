@@ -9,8 +9,16 @@ import pkg from './package.json' with { type: 'json' };
 
 export default defineConfig(({ mode }) => {
   // Expose server-only env vars (no VITE_ prefix) to the dev API handlers.
+  // Values from the .env files are refreshed when Vite reloads after a change to them; variables
+  // set in the shell itself still win.
+  const fromFile = ((globalThis as { __atlasEnvFromFile?: Set<string> }).__atlasEnvFromFile ??= new Set<string>());
+  for (const k of fromFile) delete process.env[k]; // loadEnv would otherwise return the stale value
   const all = loadEnv(mode, process.cwd(), '');
-  for (const [k, v] of Object.entries(all)) if (!(k in process.env)) process.env[k] = v;
+  for (const [k, v] of Object.entries(all)) {
+    if (k in process.env && !fromFile.has(k)) continue;
+    process.env[k] = v;
+    fromFile.add(k);
+  }
 
   return {
     define: { __APP_VERSION__: JSON.stringify(pkg.version) },
