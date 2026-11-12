@@ -9,6 +9,8 @@ import type { Firestore } from '../firestore.js';
 import { SERVER_TIME } from '../firestore.js';
 import { HttpError } from '../http.js';
 import { env } from '../env.js';
+import { usageEnv } from '../environments/index.js';
+import { ENV_LABEL } from '../shared/environments.js';
 import { elevenLabsConfigured } from '../elevenlabs/client.js';
 import {
   accountPath,
@@ -18,7 +20,9 @@ import {
   snapshotOf,
   updateAccount,
   usageHistory,
-  USAGE_CONFIG_PATH,
+  usageConfigPath,
+  accountsCollection,
+  usageStatsCollection,
 } from './allowance.js';
 import {
   BUILTIN_PROFILES,
@@ -106,7 +110,7 @@ export async function systemHealth(db: Firestore) {
   const started = Date.now();
   let database: { ok: boolean; ms: number | null };
   try {
-    await db.get(USAGE_CONFIG_PATH);
+    await db.get('config/usage');
     database = { ok: true, ms: Date.now() - started };
   } catch {
     database = { ok: false, ms: null };
@@ -146,7 +150,10 @@ export interface UsageAdminDeps {
 }
 
 async function log(d: UsageAdminDeps, action: AdminAction, target: { uid: string; email: string | null }, detail: string, changes: { before: unknown; after: unknown }) {
-  await recordAdminAction(d.db, { action, adminUid: d.actor.uid, adminEmail: d.actor.email, targetUid: target.uid, targetEmail: target.email, detail, changes });
+  // changes to another API environment's allowances say which environment they apply to
+  const e = usageEnv();
+  const where = e === 'main' ? '' : `[${ENV_LABEL[e]} environment] `;
+  await recordAdminAction(d.db, { action, adminUid: d.actor.uid, adminEmail: d.actor.email, targetUid: target.uid, targetEmail: target.email, detail: where + detail, changes });
 }
 
 async function saveConfig(db: Firestore, cfg: UsageConfig) {
@@ -155,7 +162,7 @@ async function saveConfig(db: Firestore, cfg: UsageConfig) {
   for (const [id, p] of Object.entries(cfg.profiles)) {
     profiles[id] = id in BUILTIN_PROFILES ? { limits: p.limits, description: p.description } : { name: p.name, description: p.description, limits: p.limits };
   }
-  await db.set(USAGE_CONFIG_PATH, { enabled: cfg.enabled, features: cfg.features, reset: cfg.reset, defaultProfile: cfg.defaultProfile, profiles, updatedAt: SERVER_TIME });
+  await db.set(usageConfigPath(), { enabled: cfg.enabled, features: cfg.features, reset: cfg.reset, defaultProfile: cfg.defaultProfile, profiles, updatedAt: SERVER_TIME });
   clearUsageCache();
 }
 
@@ -190,7 +197,7 @@ export async function usageAdmin(d: UsageAdminDeps, b: UsageOp): Promise<unknown
     });
     await saveConfig(db, after);
     const pick = (c: UsageConfig) => ({ enabled: c.enabled, features: c.features, reset: c.reset, defaultProfile: c.defaultProfile });
-    await log(d, 'usage_config_changed', { uid: USAGE_CONFIG_PATH, email: null }, `Limits ${after.enabled ? 'on' : 'off'}; resets ${after.reset.dailyTime} daily, day ${after.reset.weeklyDay} ${after.reset.weeklyTime} weekly (${after.reset.timezone})`, {
+    await log(d, 'usage_config_changed', { uid: usageConfigPath(), email: null }, `Limits ${after.enabled ? 'on' : 'off'}; resets ${after.reset.dailyTime} daily, day ${after.reset.weeklyDay} ${after.reset.weeklyTime} weekly (${after.reset.timezone})`, {
       before: pick(before),
       after: pick(after),
     });
@@ -207,7 +214,7 @@ export async function usageAdmin(d: UsageAdminDeps, b: UsageOp): Promise<unknown
       profiles: { ...before.profiles, [b.id]: { ...(prev ?? {}), name: isBuiltin ? prev!.name : b.name, description: b.description, limits: normalizeLimits(b.limits), ...(isBuiltin ? { builtin: true } : {}) } },
     };
     await saveConfig(db, after);
-    await log(d, 'usage_profile_saved', { uid: `${USAGE_CONFIG_PATH}#${b.id}`, email: null }, `Profile ${after.profiles[b.id].name}: ${describeLimits(after.profiles[b.id].limits)}`, {
+    await log(d, 'usage_profile_saved', { uid: `${usageConfigPath()}#${b.id}`, email: null }, `Profile ${after.profiles[b.id].name}: ${describeLimits(after.profiles[b.id].limits)}`, {
       before: prev ? { name: prev.name, limits: prev.limits } : null,
       after: { name: after.profiles[b.id].name, limits: after.profiles[b.id].limits },
     });
@@ -224,7 +231,7 @@ export async function usageAdmin(d: UsageAdminDeps, b: UsageOp): Promise<unknown
     delete profiles[b.id];
     await saveConfig(db, { ...before, profiles });
     // accounts on the deleted profile fall back to the default profile (their other settings stay)
-    await log(d, 'usage_profile_deleted', { uid: `${USAGE_CONFIG_PATH}#${b.id}`, email: null }, `Profile ${prev.name} deleted; its accounts use ${before.profiles[before.defaultProfile].name}`, {
+    await log(d, 'usage_profile_deleted', { uid: `${usageConfigPath()}#${b.id}`, email: null }, `Profile ${prev.name} deleted; its accounts use ${before.profiles[before.defaultProfile].name}`, {
       before: { name: prev.name, limits: prev.limits },
       after: null,
     });
@@ -232,7 +239,7 @@ export async function usageAdmin(d: UsageAdminDeps, b: UsageOp): Promise<unknown
   }
 
   if (b.op === 'users') {
-    const [cfg, accounts, rows] = await Promise.all([loadUsageConfig(db, true), d.accounts(), db.list<UsageAccount>('usageAccounts', { limit: 2500 })]);
+    const [cfg, accounts, rows] = await Promise.all([loadUsageConfig(db, true), d.accounts(), db.list<UsageAccount>(accountsCollection(), { limit: 2500 })]);
     const byUid = new Map(rows.map((r) => [r.id, r.data]));
     const users = accounts.map((a) => {
       const acct = byUid.get(a.uid) ?? null;
@@ -332,7 +339,7 @@ export async function usageAdmin(d: UsageAdminDeps, b: UsageOp): Promise<unknown
 
   // analytics: totals per day across all users
   const days = b.days ?? 14;
-  const rows = await db.list<Record<string, unknown>>('usageStats', { orderBy: 'day', direction: 'DESCENDING', limit: days });
+  const rows = await db.list<Record<string, unknown>>(usageStatsCollection(), { orderBy: 'day', direction: 'DESCENDING', limit: days });
   return {
     days: rows.map((r) => {
       const out: Record<string, unknown> = { day: r.data.day ?? r.id };

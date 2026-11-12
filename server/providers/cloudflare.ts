@@ -9,6 +9,7 @@
  * Usage arrives as per-chunk deltas, including `usage.neurons`; they are
  * summed and reported so the app-wide Neuron cap can be enforced.
  */
+import { chargeProviderRequest } from '../environments/index.js';
 import { parseSSE } from '../shared/sse.js';
 import type { ModelInfo } from '../shared/types.js';
 import {
@@ -157,6 +158,7 @@ export class CloudflareProvider implements ChatProvider {
     const account = p.account ?? currentCloudflareAccount();
     const headers = { ...authHeader(account), 'content-type': 'application/json' }; // throws not_configured first
     if (cloudflareDailyLimitActive(Date.now(), account)) throw cloudflareDailyLimitError();
+    await chargeProviderRequest('cloudflare');
     const connect = new AbortController();
     const timer = setTimeout(() => connect.abort(), p.firstByteTimeoutMs ?? CONNECT_TIMEOUT_MS);
     const signal = AbortSignal.any([connect.signal, p.signal].filter(Boolean) as AbortSignal[]);
@@ -180,11 +182,13 @@ export class CloudflareProvider implements ChatProvider {
   async complete(p: CompletionParams): Promise<string> {
     const account = p.account ?? currentCloudflareAccount();
     if (cloudflareDailyLimitActive(Date.now(), account)) throw cloudflareDailyLimitError();
+    const headers = { ...authHeader(account), 'content-type': 'application/json' };
+    await chargeProviderRequest('cloudflare');
     let res: Response;
     try {
       res = await fetch(`${aiBase(account)}/v1/chat/completions`, {
         method: 'POST',
-        headers: { ...authHeader(account), 'content-type': 'application/json' },
+        headers,
         body: this.body(p, false),
         signal: AbortSignal.any([AbortSignal.timeout(CONNECT_TIMEOUT_MS), p.signal].filter(Boolean) as AbortSignal[]),
       });

@@ -1,5 +1,6 @@
 import { Infinity as InfinityIcon, RefreshCw } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Button, Spinner } from '@/components/ui';
 import { cn } from '@/lib/utils';
 import { Page } from '../shell/Page';
@@ -109,7 +110,15 @@ function History({ s }: { s: UsageState }) {
 
 export default function UsagePage() {
   const { state, error } = useUsage();
+  const navigate = useNavigate();
   const now = useNow();
+  // The page is opened from Settings and from the usage line under the chat, so go back to
+  // wherever the person came from; on a direct visit, Settings is the natural parent.
+  const back = () => {
+    const idx = (window.history.state as { idx?: number } | null)?.idx ?? 0;
+    if (idx > 0) navigate(-1);
+    else navigate('/settings');
+  };
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     void refreshUsage(true);
@@ -126,7 +135,7 @@ export default function UsagePage() {
   );
 
   return (
-    <Page title="AI usage" actions={action}>
+    <Page title="AI usage" back={back} actions={action}>
       <div className="mx-auto max-w-2xl">
         <div className="mb-1 hidden items-center justify-between lg:flex">
           <h1 className="text-xl font-semibold tracking-tight">AI usage</h1>

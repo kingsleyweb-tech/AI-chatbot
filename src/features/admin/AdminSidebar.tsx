@@ -1,5 +1,6 @@
 import {
   Activity,
+  Layers,
   ArrowLeft,
   BadgeCheck,
   BarChart3,
@@ -103,6 +104,7 @@ export function AdminSidebar({ onClose, onCollapse }: { onClose?: () => void; on
             <Heading>System</Heading>
             <div className="space-y-0.5">
               <NavItem to="/admin/providers" icon={<Activity className={icon} />} label="Provider Monitoring" onClick={close} />
+              <NavItem to="/admin/environments" icon={<Layers className={icon} />} label="API Environments" onClick={close} />
               <NavItem to="/admin/health" icon={<HeartPulse className={icon} />} label="System Health" onClick={close} />
               <NavItem to="/admin/logs" icon={<ScrollText className={icon} />} label="Audit Logs" onClick={close} />
             </div>

@@ -26,6 +26,8 @@ import {
 import { formatHistory, indexExchange, loadIndex, searchHistory, tagConversationProject, type IndexEntry } from '../memory/history.js';
 import { detectFocus, formatProject, loadProjects, projectSlug, updateProjectMemory, type LoadedProject } from '../memory/projects.js';
 import { markFailed, markHealthy, preferHealthy } from '../providers/health.js';
+import { sameEnvironmentChain } from '../environments/index.js';
+import type { EnvProvider } from '../shared/environments.js';
 import { geminiModelResting } from '../providers/geminiAccounts.js';
 import { syncShared } from '../providers/accountHealth.js';
 import { getCatalog, providerFor } from '../providers/registry.js';
@@ -196,6 +198,8 @@ export function friendlyError(err: unknown): Extract<StreamEvent, { type: 'error
               ? 'Switch to a model that supports images.'
               : err.code === 'context_too_long'
                 ? 'Start a new chat or choose a model with a larger context window.'
+                : err.code === 'environment_limit'
+                  ? 'Please try again later.'
                 : err.code === 'invalid_key'
                   ? 'Check the OPENROUTER_API_KEY server setting.'
                   : undefined;
@@ -514,7 +518,8 @@ export async function runChat(
           // models that just failed (quota, hang) go last so the user doesn't wait for them again
           // (Gemini's account cooldowns are shared by every instance; refreshed at most every 15 s)
           if (route.chain.some((m) => m.startsWith('gemini:'))) await syncShared('gemini').catch(() => undefined);
-          const chain = preferHealthy(route.chain, Date.now(), geminiModelResting);
+          // fallback stays in the API environment of the selected model's provider (never mixes credentials)
+          const chain = preferHealthy(sameEnvironmentChain(route.chain, (id) => providerFor(id).id as EnvProvider), Date.now(), geminiModelResting);
           // the selected model is kept; while it rests the reply says which model answered instead
           if (chain[0] !== route.chain[0]) {
             console.info(`[chat] ${route.chain[0]} is resting after recent failures; trying ${chain[0]} first`);

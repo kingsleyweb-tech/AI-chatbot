@@ -1,4 +1,6 @@
 import { modelConfig } from './config/models.js';
+import { sameEnvironmentChain } from './environments/index.js';
+import type { EnvProvider } from './shared/environments.js';
 import { isModelConfigured, providerFor } from './providers/registry.js';
 import type { ProviderMessage } from './providers/types.js';
 
@@ -10,7 +12,14 @@ export async function utilityComplete(
   messages: ProviderMessage[],
   opts: { json?: boolean; maxTokens?: number } = {},
 ): Promise<string | null> {
-  for (const model of modelConfig().utilityModels.filter(isModelConfigured)) {
+  let models: string[];
+  try {
+    // like the chat: fallback stays inside one API environment
+    models = sameEnvironmentChain(modelConfig().utilityModels.filter(isModelConfigured), (id) => providerFor(id).id as EnvProvider);
+  } catch {
+    return null;
+  }
+  for (const model of models) {
     try {
       const out = await providerFor(model).complete({
         model,

@@ -15,7 +15,8 @@
  */
 import type { SearchLimits } from '../shared/types.js';
 import { SerpApiSearch } from './serpapi.js';
-import { cacheKey, findSimilar, normalizeQuery, type CacheEntry, type SearchStore, type UsageEvent, type UsageSnapshot } from './store.js';
+import { envOf } from '../environments/index.js';
+import { cacheKey, findSimilar, normalizeQuery, searchUsageField, type CacheEntry, type SearchStore, type UsageEvent, type UsageSnapshot } from './store.js';
 import { TavilySearch } from './tavily.js';
 import {
   SearchError,
@@ -94,10 +95,30 @@ function isFresh(entry: CacheEntry | null, now: number): entry is CacheEntry {
   return Boolean(entry && Date.parse(entry.expiresAt) > now);
 }
 
+/** Provider-reported usage is per account, so it is cached per API environment. */
+const reportedKey = (id: SearchProviderId) => `${searchUsageField(id)}|${id}`;
+
+/**
+ * Search fallback stays inside one API environment: the providers tried are those in the
+ * environment of the first usable provider (credentials are never mixed within a request).
+ */
+export function sameEnvironment(order: SearchProviderId[], usable: (id: SearchProviderId) => boolean): SearchProviderId[] {
+  const envName = (id: SearchProviderId) => {
+    try {
+      return envOf(id);
+    } catch {
+      return null;
+    }
+  };
+  const first = order.find(usable) ?? order[0];
+  const e = first ? envName(first) : null;
+  return e === null ? order : order.filter((id) => envName(id) === e);
+}
+
 export class SearchService {
   private inflight = new Map<string, Promise<RunResult | ExtractRunResult>>();
   private recent = new Map<string, number[]>();
-  private reported = new Map<SearchProviderId, { usage: AccountUsage | null; at: number }>();
+  private reported = new Map<string, { usage: AccountUsage | null; at: number }>();
 
   constructor(
     readonly providers: Providers = { serpapi: new SerpApiSearch(), tavily: new TavilySearch() },
@@ -111,23 +132,23 @@ export class SearchService {
 
   /** Provider-reported plan usage, cached; adjusted locally after each request. */
   async reportedUsage(id: SearchProviderId, signal?: AbortSignal): Promise<AccountUsage | null> {
-    const hit = this.reported.get(id);
+    const hit = this.reported.get(reportedKey(id));
     if (hit && this.now() - hit.at < this.opts.reportedTtlMs) return hit.usage;
     // unknown (null) means: rely on the app's own counters
     const usage = await this.providers[id].accountUsage(signal).catch(() => null);
-    this.reported.set(id, { usage, at: this.now() });
+    this.reported.set(reportedKey(id), { usage, at: this.now() });
     return usage;
   }
 
   private consumeReported(id: SearchProviderId, credits: number) {
-    const hit = this.reported.get(id);
+    const hit = this.reported.get(reportedKey(id));
     if (hit?.usage) hit.usage = { ...hit.usage, used: hit.usage.used + credits, remaining: Math.max(0, hit.usage.remaining - credits) };
   }
 
   private markExhausted(id: SearchProviderId) {
-    const hit = this.reported.get(id);
+    const hit = this.reported.get(reportedKey(id));
     const usage = hit?.usage ?? { used: 0, limit: 0, remaining: 0 };
-    this.reported.set(id, { usage: { ...usage, remaining: 0 }, at: this.now() });
+    this.reported.set(reportedKey(id), { usage: { ...usage, remaining: 0 }, at: this.now() });
   }
 
   /** Why a provider cannot be used right now, or null when it can. */
@@ -224,7 +245,7 @@ export class SearchService {
     const events: UsageEvent[] = [];
     const max = Math.min(args.max ?? 6, 10);
     try {
-      for (const id of args.providers ?? providerOrder(args.intent)) {
+      for (const id of sameEnvironment(args.providers ?? providerOrder(args.intent), (p) => this.providers[p].isConfigured())) {
         const credits = id === 'tavily' && args.depth === 'advanced' ? 2 : 1;
         const reason = await this.blockReason(id, credits, usage, args.limits, args.signal, args.priority ?? 'explicit');
         if (reason) {

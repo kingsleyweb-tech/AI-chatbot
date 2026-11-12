@@ -12,7 +12,7 @@ import type { Firestore } from '../server/firestore.js';
 import * as H from '../server/providers/accountHealth.js';
 import { CloudflareProvider } from '../server/providers/cloudflare.js';
 import { GeminiProvider } from '../server/providers/gemini.js';
-import { geminiAccounts, geminiUsagePath, resetGeminiAccounts } from '../server/providers/geminiAccounts.js';
+import { geminiAccounts, geminiModelResting, geminiUsagePath, resetGeminiAccounts } from '../server/providers/geminiAccounts.js';
 import { ProviderError } from '../server/providers/types.js';
 import { FakeDb } from './fakeDb.js';
 
@@ -446,5 +446,86 @@ describe('Cloudflare accounts', () => {
       if (c.type === 'delta') text += c.text;
     expect(text).toBe('hi');
     expect(urls[0]).toContain(CF_B);
+  });
+});
+
+/* --------------------------- a Gemini model that hangs --------------------------- */
+
+describe('a Gemini model that does not respond', () => {
+  /** headers arrive, then nothing (or data after `afterMs`); the body errors when the request is aborted, like fetch */
+  function slowFetch(plan: { A?: number[]; B?: number[] }) {
+    const used: string[] = [];
+    const fn = vi.fn(async (_url: string | URL, init?: RequestInit) => {
+      const key = (init?.headers as Record<string, string>)['x-goog-api-key'];
+      const acct = key === KEY_A ? 'A' : 'B';
+      used.push(acct);
+      const after = plan[acct]?.shift();
+      if (after === undefined) throw new Error(`unexpected call on account ${acct}`);
+      if (after < 0) return rpm429();
+      const body = new ReadableStream<Uint8Array>({
+        start(c) {
+          const t = Number.isFinite(after)
+            ? setTimeout(() => {
+                c.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: 'late hello' }] }, finishReason: 'STOP' }] })}\n\n`));
+                c.close();
+              }, after)
+            : undefined;
+          init?.signal?.addEventListener('abort', () => {
+            clearTimeout(t);
+            c.error(new DOMException('aborted', 'AbortError'));
+          });
+        },
+      });
+      return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+    });
+    vi.stubGlobal('fetch', fn);
+    return used;
+  }
+  const preferA = async () => {
+    H.startCooldown('gemini', 'B', 'gemini-3.8-flash', 1, 'rpm');
+    await new Promise((r) => setTimeout(r, 5));
+  };
+
+  it('silence after the headers counts as no response: the wait is limited, and the other project gets no second full wait', async () => {
+    await preferA();
+    const used = slowFetch({ A: [Infinity], B: [Infinity] });
+    const t0 = Date.now();
+    const err = await collect(new GeminiProvider().stream({ ...params('gemini:gemini-3.8-flash'), firstByteTimeoutMs: 300 })).catch((e) => e);
+    expect(err).toBeInstanceOf(ProviderError);
+    expect(err.code).toBe('timeout');
+    expect(err.message).toMatch(/start responding/);
+    expect(Date.now() - t0).toBeLessThan(1_500);
+    expect(used).toEqual(['A']);
+  });
+
+  it('a quick limit on one project leaves the wait for the other', async () => {
+    await preferA();
+    const used = slowFetch({ A: [-1], B: [50] });
+    const text = await collect(new GeminiProvider().stream({ ...params('gemini:gemini-3.8-flash'), firstByteTimeoutMs: 5_000 }));
+    expect(text).toBe('late hello');
+    expect(used).toEqual(['A', 'B']);
+  });
+
+  it('a slow but working start within the limit is not cut off', async () => {
+    slowFetch({ A: [200], B: [200] });
+    expect(await collect(new GeminiProvider().stream({ ...params('gemini:gemini-3.8-flash'), firstByteTimeoutMs: 2_000 }))).toBe('late hello');
+  });
+
+  it('after timeouts on both projects the model rests (shared), is reported as not responding, and is not called again', async () => {
+    const used = slowFetch({ A: [Infinity], B: [Infinity] });
+    const p = new GeminiProvider();
+    // two requests: each project times out once (the shared wait stops a second try in one request)
+    for (let i = 0; i < 2; i++) await collect(p.stream({ ...params('gemini:gemini-3.8-flash'), firstByteTimeoutMs: 200 })).catch(() => undefined);
+    expect(used.sort()).toEqual(['A', 'B']);
+    const cA = H.cooldownOf('gemini', 'A', 'gemini-3.8-flash')!;
+    expect(cA.reason).toBe('outage');
+    expect(cA.until - Date.now()).toBeGreaterThan(110_000); // a timeout rests the model for 2 minutes at first
+    expect(geminiModelResting('gemini:gemini-3.8-flash')).toBe(true);
+    expect(geminiModelResting('gemini:gemini-3.6-flash')).toBe(false);
+    expect(geminiModelResting('nvidia/nemotron-3-ultra-550b-a55b:free')).toBe(false);
+    const again = await collect(p.stream({ ...params('gemini:gemini-3.8-flash'), firstByteTimeoutMs: 200 })).catch((e) => e);
+    expect(again.code).toBe('timeout');
+    expect(again.message).toMatch(/not responding/);
+    expect(used.length).toBe(2);
   });
 });

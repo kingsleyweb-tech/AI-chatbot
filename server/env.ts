@@ -44,6 +44,16 @@ export function env() {
     /** Cloudflare account B: a separate account with its own free daily Neuron allowance. */
     cloudflareAccountIdSecondary: (e.CLOUDFLARE_ACCOUNT_ID_SECONDARY ?? '').trim(),
     cloudflareApiTokenSecondary: (e.CLOUDFLARE_API_TOKEN_SECONDARY ?? '').trim(),
+    /*
+     * Temporary public-testing credentials (API Environment Manager, server/environments).
+     * Used only while an administrator has switched a provider to the Temporary environment.
+     */
+    geminiKeyTemporary: (e.GEMINI_API_KEY_TEMPORARY ?? '').trim(),
+    openRouterKeyTemporary: (e.OPENROUTER_API_KEY_TEMPORARY ?? '').trim(),
+    tavilyKeyTemporary: (e.TAVILY_API_KEY_TEMPORARY ?? '').trim(),
+    serpApiKeyTemporary: (e.SERPAPI_API_KEY_TEMPORARY ?? '').trim(),
+    cloudflareAccountIdTemporary: (e.CLOUDFLARE_ACCOUNT_ID_TEMPORARY ?? '').trim(),
+    cloudflareApiTokenTemporary: (e.CLOUDFLARE_API_TOKEN_TEMPORARY ?? '').trim(),
     /** optional override of the default image model (must be listed in server/config/images.ts) */
     cloudflareImageModel: (e.CLOUDFLARE_IMAGE_MODEL ?? '').trim(),
     appUrl: e.APP_URL ?? 'http://localhost:5173',

@@ -14,7 +14,12 @@
  * are checked as well through `preferHealthy`'s `resting` argument. No test
  * request is ever sent: the next real request after a cooldown is the check.
  */
+import { envScopedKey } from '../environments/index.js';
 import type { ProviderErrorCode } from './types.js';
+
+/** A model's health is kept per API environment: a failure on one credential set never rests another. */
+const keyOf = (model: string) =>
+  envScopedKey(model.startsWith('gemini:') ? 'gemini' : model.startsWith('@cf/') ? 'cloudflare' : 'openrouter', model);
 
 /** First cooldown per error, and the ceiling repeated failures can reach. */
 const COOLDOWN: Partial<Record<ProviderErrorCode, { baseMs: number; maxMs: number }>> = {
@@ -36,26 +41,27 @@ const state = new Map<string, State>();
 export function markFailed(model: string, code: ProviderErrorCode, now = Date.now()) {
   const c = COOLDOWN[code];
   if (!c) return;
-  const prev = state.get(model);
+  const k = keyOf(model);
+  const prev = state.get(k);
   // a failure long after the previous cooldown ended starts over
   const streak = prev && now - prev.until < c.maxMs ? prev.streak + 1 : 1;
   const ms = Math.min(c.maxMs, c.baseMs * 2 ** (streak - 1));
-  state.set(model, { until: now + ms, streak });
+  state.set(k, { until: now + ms, streak });
 }
 
 export function markHealthy(model: string) {
-  state.delete(model);
+  state.delete(keyOf(model));
 }
 
 export function coolingDown(model: string, now = Date.now()): boolean {
-  const s = state.get(model);
+  const s = state.get(keyOf(model));
   // after the cooldown the streak is kept (a further failure backs off longer) until a success
   return s !== undefined && s.until > now;
 }
 
 /** How many failures in a row (0 when healthy); for tests and diagnostics. */
 export function failureStreak(model: string): number {
-  return state.get(model)?.streak ?? 0;
+  return state.get(keyOf(model))?.streak ?? 0;
 }
 
 /**

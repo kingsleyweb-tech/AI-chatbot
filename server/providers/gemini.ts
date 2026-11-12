@@ -11,6 +11,7 @@
  * The Google project must keep billing disabled. If GEMINI_BILLING=paid is set,
  * no Gemini model is used at all.
  */
+import { chargeProviderRequest } from '../environments/index.js';
 import { geminiBillingPaid, GEMINI_FREE_TIER } from '../billing/policy.js';
 import { parseSSE } from '../shared/sse.js';
 import { exhaustedError, geminiAccounts, leases, newAttemptState, setAccountModels, withGeminiAccount } from './geminiAccounts.js';
@@ -124,6 +125,8 @@ export function mapGeminiError(status: number, body: string): ProviderError {
   }
   const lower = message.toLowerCase();
   if (status === 400 && lower.includes('api key')) return new ProviderError('invalid_key', 'Google rejected the Gemini API key.', 401);
+  if (status === 403 && (lower.includes('free tier is not available') || lower.includes('billing')))
+    return new ProviderError('invalid_key', 'This Gemini project has no free tier (Google asks for billing), so its key cannot be used.', 401);
   if (status === 401 || status === 403) return new ProviderError('invalid_key', 'Google rejected the Gemini API key.', 401);
   if (status === 429 && /limit:\s*0\b/.test(lower))
     return new ProviderError('model_unavailable', 'This Gemini model is not included in the free tier.', 404);
@@ -287,6 +290,7 @@ export class GeminiProvider implements ChatProvider {
 
   private async *streamOn(p: CompletionParams, key: string): AsyncGenerator<ProviderChunk> {
     const headers = this.headers(key);
+    await chargeProviderRequest('gemini'); // counted per API environment; the Temporary ceiling refuses here
     const connect = new AbortController();
     const timer = setTimeout(() => connect.abort(), p.firstByteTimeoutMs ?? CONNECT_TIMEOUT_MS);
     const signal = AbortSignal.any([connect.signal, p.signal].filter(Boolean) as AbortSignal[]);
@@ -374,6 +378,7 @@ export class GeminiProvider implements ChatProvider {
   }
 
   private async completeOn(p: CompletionParams, key: string): Promise<string> {
+    await chargeProviderRequest('gemini');
     let res: Response;
     try {
       res = await fetch(`${BASE}/models/${encodeURIComponent(toGeminiId(p.model))}:generateContent`, {
@@ -399,6 +404,7 @@ export class GeminiProvider implements ChatProvider {
   async embed(model: string, inputs: string[], signal?: AbortSignal): Promise<number[][]> {
     const id = toGeminiId(model);
     return withGeminiAccount(id, async (a) => {
+      await chargeProviderRequest('gemini');
       let res: Response;
       try {
         res = await fetch(`${BASE}/models/${encodeURIComponent(id)}:batchEmbedContents`, {

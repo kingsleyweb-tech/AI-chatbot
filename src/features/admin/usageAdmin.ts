@@ -56,8 +56,33 @@ export interface UsageUserDetail {
   history: ({ day: string } & Partial<Record<FeatureId, number>>)[];
 }
 
+/** API environment whose allowances the usage pages manage; null = the active (global) environment. */
+export type UsageEnvironment = 'main' | 'secondary' | 'temporary';
+const ENV_KEY = 'atlas.admin.usageEnvironment';
+let chosen: UsageEnvironment | null | undefined;
+export function selectedUsageEnvironment(): UsageEnvironment | null {
+  if (chosen !== undefined) return chosen;
+  try {
+    const v = sessionStorage.getItem(ENV_KEY);
+    chosen = v === 'main' || v === 'secondary' || v === 'temporary' ? v : null;
+  } catch {
+    chosen = null;
+  }
+  return chosen;
+}
+export function selectUsageEnvironment(v: UsageEnvironment | null) {
+  chosen = v;
+  try {
+    if (v) sessionStorage.setItem(ENV_KEY, v);
+    else sessionStorage.removeItem(ENV_KEY);
+  } catch {
+    // storage unavailable: the choice lasts until the page is reloaded
+  }
+}
+
 export function usageOp<T>(op: Record<string, unknown>): Promise<T> {
-  return api<T>('admin', { json: { action: 'usage', op } });
+  const environment = selectedUsageEnvironment();
+  return api<T>('admin', { json: { action: 'usage', op, ...(environment ? { environment } : {}) } });
 }
 
 export const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];

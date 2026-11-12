@@ -1,4 +1,5 @@
 import { env } from '../env.js';
+import { apiKeyFor, chargeProviderRequest, environmentDisabled, envOf } from '../environments/index.js';
 import { FEATURED_MODELS, TASK_PREFERENCES } from '../config/models.js';
 import { parseSSE } from '../shared/sse.js';
 import type { Modality, ModelInfo } from '../shared/types.js';
@@ -24,7 +25,8 @@ interface ORModel {
 }
 
 let modelCache: { at: number; models: ModelInfo[] } | null = null;
-let keyCache: { at: number; paid: boolean | null } | null = null;
+/** per API environment (each key is its own OpenRouter account) */
+const keyCaches = new Map<string, { at: number; paid: boolean | null }>();
 const MODEL_TTL = 10 * 60_000;
 
 export function mapModel(m: ORModel, featuredIds: string[]): ModelInfo {
@@ -70,20 +72,36 @@ export function mapModel(m: ORModel, featuredIds: string[]): ModelInfo {
   };
 }
 
-/** Free-model daily cap: remembered in-process until the next UTC midnight. */
-let freeDailyLimitUntil = 0;
+/** Free-model daily cap: remembered in-process until the next UTC midnight, per API environment (account). */
+const freeDailyLimitUntil = new Map<string, number>();
+function envName(): string {
+  try {
+    return envOf('openrouter');
+  } catch {
+    return 'unavailable';
+  }
+}
+/** The OpenRouter key of the current API environment ('' when it has none or is switched off). */
+function currentKey(): string {
+  try {
+    const e = envOf('openrouter');
+    return environmentDisabled('openrouter', e) ? '' : apiKeyFor('openrouter', e);
+  } catch {
+    return '';
+  }
+}
 function nextUtcMidnight(now = Date.now()): number {
   const d = new Date(now);
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1);
 }
 export function markFreeDailyLimit(now = Date.now()) {
-  freeDailyLimitUntil = nextUtcMidnight(now);
+  freeDailyLimitUntil.set(envName(), nextUtcMidnight(now));
 }
 export function freeDailyLimitActive(now = Date.now()): boolean {
-  return now < freeDailyLimitUntil;
+  return now < (freeDailyLimitUntil.get(envName()) ?? 0);
 }
 export function resetFreeDailyLimit() {
-  freeDailyLimitUntil = 0;
+  freeDailyLimitUntil.clear();
 }
 function dailyLimitError(): ProviderError {
   return new ProviderError(
@@ -129,12 +147,12 @@ export class OpenRouterProvider implements ChatProvider {
   readonly id = 'openrouter';
 
   isConfigured(): boolean {
-    return Boolean(env().openRouterKey);
+    return Boolean(currentKey());
   }
 
   private headers(): HeadersInit {
-    const key = env().openRouterKey;
-    if (!key) throw new ProviderError('not_configured', 'OPENROUTER_API_KEY is not configured.', 500);
+    const key = currentKey();
+    if (!key) throw new ProviderError('not_configured', 'OpenRouter is not available in the current API environment.', 503);
     return {
       authorization: `Bearer ${key}`,
       'content-type': 'application/json',
@@ -158,6 +176,7 @@ export class OpenRouterProvider implements ChatProvider {
 
   /** Whether the key's account has purchased credits (can use paid models). */
   async paidAvailable(): Promise<boolean | null> {
+    const keyCache = keyCaches.get(envName());
     if (keyCache && Date.now() - keyCache.at < MODEL_TTL) return keyCache.paid;
     try {
       const res = await fetch(`${BASE}/key`, { headers: this.headers(), signal: AbortSignal.timeout(10_000) });
@@ -172,7 +191,7 @@ export class OpenRouterProvider implements ChatProvider {
       // Learn about an exhausted free daily quota without spending a failed request on it.
       if (data.free_model_daily_requests?.remaining === 0) markFreeDailyLimit();
       const paid = data.is_free_tier === false && (data.limit_remaining == null || data.limit_remaining > 0);
-      keyCache = { at: Date.now(), paid };
+      keyCaches.set(envName(), { at: Date.now(), paid });
       return paid;
     } catch {
       return null;
@@ -218,6 +237,7 @@ export class OpenRouterProvider implements ChatProvider {
   async *stream(p: CompletionParams): AsyncGenerator<ProviderChunk> {
     const headers = this.headers(); // throws not_configured before any network call
     if (p.model.endsWith(':free') && freeDailyLimitActive()) throw dailyLimitError();
+    await chargeProviderRequest('openrouter');
     const connect = new AbortController();
     const timer = setTimeout(() => connect.abort(), p.firstByteTimeoutMs ?? CONNECT_TIMEOUT_MS);
     const signals = [connect.signal, p.signal].filter(Boolean) as AbortSignal[];
@@ -302,12 +322,14 @@ export class OpenRouterProvider implements ChatProvider {
 
   async complete(p: CompletionParams): Promise<string> {
     if (p.model.endsWith(':free') && freeDailyLimitActive()) throw dailyLimitError();
+    const headers = this.headers();
+    await chargeProviderRequest('openrouter');
     const signals = [AbortSignal.timeout(CONNECT_TIMEOUT_MS), p.signal].filter(Boolean) as AbortSignal[];
     let res: Response;
     try {
       res = await fetch(`${BASE}/chat/completions`, {
         method: 'POST',
-        headers: this.headers(),
+        headers,
         body: this.body(p, false),
         signal: AbortSignal.any(signals),
       });
@@ -324,9 +346,11 @@ export class OpenRouterProvider implements ChatProvider {
   }
 
   async embed(model: string, inputs: string[], signal?: AbortSignal): Promise<number[][]> {
+    const headers = this.headers();
+    await chargeProviderRequest('openrouter');
     const res = await fetch(`${BASE}/embeddings`, {
       method: 'POST',
-      headers: this.headers(),
+      headers,
       body: JSON.stringify({ model, input: inputs }),
       signal: signal ?? AbortSignal.timeout(30_000),
     });

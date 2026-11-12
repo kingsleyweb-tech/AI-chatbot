@@ -33,6 +33,8 @@ const NewsAdminPage = lazy(() => import('./features/admin/NewsAdminPage'));
 const KnowledgeCenterPage = lazy(() => import('./features/admin/KnowledgeCenterPage'));
 const OwnershipPage = lazy(() => import('./features/admin/OwnershipPage'));
 const ProvidersPage = lazy(() => import('./features/admin/ProvidersPage'));
+const EnvironmentsPage = lazy(() => import('./features/admin/EnvironmentsPage'));
+const UsageEnvironmentScope = lazy(() => import('./features/admin/UsageEnvironmentScope').then((m) => ({ default: m.UsageEnvironmentScope })));
 const AdminOverviewPage = lazy(() => import('./features/admin/AdminOverviewPage'));
 const UsageLimitsPage = lazy(() => import('./features/admin/UsageLimitsPage'));
 const UnlimitedAccessPage = lazy(() => import('./features/admin/UnlimitedAccessPage'));
@@ -267,10 +269,11 @@ function Routed() {
                 <Route index element={<AdminOnly><AdminOverviewPage /></AdminOnly>} />
                 <Route path="users" element={<AdminOnly><UsersPage /></AdminOnly>} />
                 <Route path="requests" element={<AdminOnly><AccessRequestsPage /></AdminOnly>} />
-                <Route path="usage" element={<AdminOnly><UsageLimitsPage /></AdminOnly>} />
-                <Route path="unlimited" element={<AdminOnly><UnlimitedAccessPage /></AdminOnly>} />
-                <Route path="analytics" element={<AdminOnly><UsageAnalyticsPage /></AdminOnly>} />
+                <Route path="usage" element={<AdminOnly><UsageEnvironmentScope><UsageLimitsPage /></UsageEnvironmentScope></AdminOnly>} />
+                <Route path="unlimited" element={<AdminOnly><UsageEnvironmentScope><UnlimitedAccessPage /></UsageEnvironmentScope></AdminOnly>} />
+                <Route path="analytics" element={<AdminOnly><UsageEnvironmentScope><UsageAnalyticsPage /></UsageEnvironmentScope></AdminOnly>} />
                 <Route path="providers" element={<AdminOnly><ProvidersPage /></AdminOnly>} />
+                <Route path="environments" element={<AdminOnly><EnvironmentsPage /></AdminOnly>} />
                 <Route path="health" element={<AdminOnly><SystemHealthPage /></AdminOnly>} />
                 <Route path="logs" element={<AdminOnly><AuditLogsPage /></AdminOnly>} />
                 <Route path="access" element={<AdminOnly><AccessSettingsPage /></AdminOnly>} />

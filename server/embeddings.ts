@@ -1,4 +1,6 @@
 import { modelConfig } from './config/models.js';
+import { sameEnvironmentChain } from './environments/index.js';
+import type { EnvProvider } from './shared/environments.js';
 import { embeddingProvider } from './providers/registry.js';
 
 export interface Embedded {
@@ -14,9 +16,14 @@ let lastGood: string | null = null;
  */
 export async function embed(texts: string[], preferredModel?: string): Promise<Embedded | null> {
   if (!texts.length) return { model: preferredModel ?? lastGood ?? '', vectors: [] };
-  const candidates = [preferredModel, lastGood, ...modelConfig().embeddingModels].filter(
+  let candidates = [preferredModel, lastGood, ...modelConfig().embeddingModels].filter(
     (m, i, a): m is string => Boolean(m) && a.indexOf(m) === i && embeddingProvider(m!).isConfigured(),
   );
+  try {
+    candidates = sameEnvironmentChain(candidates, (m) => embeddingProvider(m).id as EnvProvider);
+  } catch {
+    return null;
+  }
   const inputs = texts.map((t) => t.slice(0, 8000));
   for (const model of candidates) {
     const provider = embeddingProvider(model);

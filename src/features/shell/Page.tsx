@@ -16,7 +16,8 @@ export function Page({
 }: {
   title: string;
   children: ReactNode;
-  back?: string;
+  /** where the back arrow goes: a path, or a handler for pages reached from several places */
+  back?: string | (() => void);
   actions?: ReactNode;
   wide?: boolean;
   /** extra classes for the page background */
@@ -31,7 +32,7 @@ export function Page({
         <header className="flex shrink-0 items-center gap-1 px-2 pt-safe sm:px-3">
           <div className="flex h-14 min-w-0 flex-1 items-center gap-1">
             {back ? (
-              <IconButton label="Back" onClick={() => navigate(back)}>
+              <IconButton label="Back" onClick={() => (typeof back === 'function' ? back() : navigate(back))}>
                 <ArrowLeft className="size-5" />
               </IconButton>
             ) : !shell.isDesktop ? (

@@ -65,6 +65,11 @@ export const ACTION_LABELS: Record<string, string> = {
   usage_unlimited_revoked: 'Removed unlimited AI access',
   usage_unlimited_expired: 'Unlimited AI access expired',
   usage_reset: 'Reset an AI allowance',
+  environment_switched: 'Switched the API environment',
+  environment_switch_refused: 'API environment switch refused',
+  environment_disabled: 'Switched off an API environment',
+  environment_enabled: 'Switched an API environment back on',
+  environment_ceiling_changed: 'Changed the Temporary environment ceiling',
 };
 
 /** Groups for the audit log filter */
@@ -75,5 +80,6 @@ export const ACTION_GROUPS: { id: string; label: string; match: (a: string) => b
   { id: 'usage', label: 'AI usage and limits', match: (a) => a.startsWith('usage_') },
   { id: 'support', label: 'Support and help', match: (a) => a.startsWith('support_') || a.startsWith('help_') },
   { id: 'messages', label: 'Messages', match: (a) => a.startsWith('message_') },
+  { id: 'environments', label: 'API environments', match: (a) => a.startsWith('environment_') },
   { id: 'settings', label: 'Settings and ownership', match: (a) => ['billing_policy_changed', 'news_feeds_changed', 'ownership_changed'].includes(a) },
 ];

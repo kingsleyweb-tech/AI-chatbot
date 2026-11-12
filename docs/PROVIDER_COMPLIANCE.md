@@ -10,7 +10,7 @@ Atlas AI is a general-purpose assistant for both everyday users (personal conver
 
 | Route | Models | Terms that apply |
 |---|---|---|
-| Gemini API (direct, Google AI Studio key, unpaid) | `gemini-3.5-flash`, `gemini-3.8-flash` (the default when the key is set) | Gemini API Additional Terms of Service (Unpaid Services), Google APIs Terms, Generative AI Prohibited Use Policy |
+| Gemini API (direct, Google AI Studio key, unpaid) | `gemini-3.6-flash` (the default when the key is set), `gemini-3.8-flash`, `gemini-3.5-flash-lite` | Gemini API Additional Terms of Service (Unpaid Services), Google APIs Terms, Generative AI Prohibited Use Policy |
 | OpenRouter (free models) | Nemotron 3 Ultra, Nemotron 3.5 Super VL, Gemma 4 26B/31B, Cohere North Mini Code, Nemotron embeddings | OpenRouter Terms (31 Aug 2026), plus each model's "Model Terms" (licence and serving provider's terms) |
 
 ## Findings
@@ -95,6 +95,14 @@ Atlas AI already routes every request through one server-side provider layer (`s
    - Free path: make OpenRouter's free open-weight models the default and disable the direct Gemini route through the policy switch. Trade-off: quality and rate limits, and prompts may be used for training by the free providers.
    - Paid path, when the budget allows and **with your approval**: move Google models to **Vertex AI**, or add **Anthropic** or **OpenAI** as a primary provider. All three give a no-training default and a documented commercial basis for end-user apps.
 4. **Whatever the outcome:** stop sending personal information to any **unpaid** tier whose terms advise against it, or say clearly in the app that the free models may use messages for training (the Privacy Policy now says this).
+
+## API environments and capacity
+
+Separate API keys do not by themselves mean separate quotas. Gemini free-tier limits apply per Google Cloud project, Cloudflare Workers AI limits per account, and OpenRouter, Tavily and SerpAPI limits per account.
+
+Atlas AI only treats an environment as extra capacity when the provider confirms it is a different project or account and a health check passes. Each Temporary credential is also checked with a real request.
+
+The health check needs that real request for Gemini. On 12 Nov 2026 the first Temporary Gemini key belonged to a project whose free tier was unavailable: Google listed its models but refused to generate without billing. It was replaced with a key from a project that answers on the free tier.
 
 ## Sources
 

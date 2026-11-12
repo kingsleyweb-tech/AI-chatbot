@@ -8,6 +8,7 @@
  * Every response carries its exact cost in the `cf-ai-neurons` header.
  */
 import { STT_MODEL, TRANSLATE_MODEL, TTS_MODEL, TURN_MODEL } from '../config/speech.js';
+import { chargeProviderRequest } from '../environments/index.js';
 import { ProviderError } from '../providers/types.js';
 import { aiBase, authHeader, currentCloudflareAccount, mapCloudflareError, neuronsOf } from './client.js';
 
@@ -25,6 +26,8 @@ export function setSpeechFake(f: SpeechFake | null) {
 
 async function run(model: string, body: unknown, signal: AbortSignal | undefined, timeoutMs: number): Promise<Response> {
   const account = currentCloudflareAccount(); // chosen by the caller's Neuron reservation
+  authHeader(account);
+  await chargeProviderRequest('cloudflare');
   const signals = [AbortSignal.timeout(timeoutMs), signal].filter(Boolean) as AbortSignal[];
   let res: Response;
   try {

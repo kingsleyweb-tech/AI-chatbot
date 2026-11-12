@@ -14,7 +14,7 @@
  *  - every response carries the exact cost in the `cf-ai-neurons` header
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { env } from '../env.js';
+import { chargeProviderRequest, cloudflareCredentials, environmentDisabled, envOf } from '../environments/index.js';
 import * as H from '../providers/accountHealth.js';
 import { ProviderError } from '../providers/types.js';
 
@@ -41,21 +41,31 @@ export function setCloudflareFake(f: CloudflareFake | null) {
  * Which account a call uses is decided by the Neuron reservation (budget.ts) and
  * passed down either explicitly or through `withCloudflareAccount`.
  */
-export type CfAccountId = 'A' | 'B';
+/** A and B: the Main pool (Secondary is B alone); T: the Temporary public-testing account. */
+export type CfAccountId = 'A' | 'B' | 'T';
 interface CfAccount {
   id: CfAccountId;
   accountId: string;
   token: string;
 }
 
+/** The accounts of the API environment this request runs in (never another environment's). */
 function cloudflareAccounts(): CfAccount[] {
-  const e = env();
-  const out: CfAccount[] = [];
-  if (e.cloudflareAccountId && e.cloudflareApiToken) out.push({ id: 'A', accountId: e.cloudflareAccountId, token: e.cloudflareApiToken });
-  if (e.cloudflareAccountIdSecondary && e.cloudflareApiTokenSecondary && e.cloudflareAccountIdSecondary !== e.cloudflareAccountId)
-    out.push({ id: 'B', accountId: e.cloudflareAccountIdSecondary, token: e.cloudflareApiTokenSecondary });
-  return out;
+  let e;
+  try {
+    e = envOf('cloudflare');
+  } catch {
+    return []; // the environment settings could not be read: no guessing
+  }
+  if (environmentDisabled('cloudflare', e)) return [];
+  return cloudflareCredentials(e);
 }
+
+const CF_VARIABLES: Record<CfAccountId, string> = {
+  A: 'CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN',
+  B: 'CLOUDFLARE_ACCOUNT_ID_SECONDARY / CLOUDFLARE_API_TOKEN_SECONDARY',
+  T: 'CLOUDFLARE_ACCOUNT_ID_TEMPORARY / CLOUDFLARE_API_TOKEN_TEMPORARY',
+};
 
 /** Configured account labels (never the ids or tokens). The local end-to-end stand-in counts as A. */
 export function cloudflareAccountIds(): CfAccountId[] {
@@ -86,9 +96,8 @@ export function cloudflareConfigured(): boolean {
 }
 
 export function aiBase(account?: string): string {
-  const e = env();
-  // keep the original check: a malformed id is a configuration error, never sent anywhere
-  const id = account || cloudflareAccounts().length ? accountFor(account).accountId : e.cloudflareAccountId;
+  // a malformed id is a configuration error, never sent anywhere
+  const id = account || cloudflareAccounts().length ? accountFor(account).accountId : '';
   if (!/^[a-f0-9]{32}$/i.test(id)) throw new ProviderError('not_configured', 'Cloudflare Workers AI is not configured.', 500);
   return `${API}/${id}/ai`;
 }
@@ -130,7 +139,7 @@ function noteAccountError(e: ProviderError, account: string, now = Date.now()) {
   if (e.code === 'invalid_key') {
     H.noteFailure('cloudflare', account, H.ANY_MODEL, 'invalid_key', now);
     console.error(
-      `[cloudflare] Cloudflare rejected the credentials for account ${account}. Check its server settings (${account === 'A' ? 'CLOUDFLARE_ACCOUNT_ID / CLOUDFLARE_API_TOKEN' : 'CLOUDFLARE_ACCOUNT_ID_SECONDARY / CLOUDFLARE_API_TOKEN_SECONDARY'}).`,
+      `[cloudflare] Cloudflare rejected the credentials for account ${account}. Check its server settings (${CF_VARIABLES[account as CfAccountId] ?? 'Cloudflare credentials'}).`,
     );
     H.startCooldown('cloudflare', account, H.ANY_MODEL, 10 * 60_000, 'auth', { error: 'invalid_key' }, now);
     void H.logEvent({ provider: 'cloudflare', account, kind: 'auth', reason: 'invalid_key' });
@@ -211,6 +220,8 @@ const IMAGE_TIMEOUT_MS = 90_000;
 export async function runImageModel(model: string, body: { json?: Record<string, unknown>; form?: FormData }, signal?: AbortSignal): Promise<ImageRunResult> {
   if (fake) return fake.image(model, body, signal);
   const account = currentCloudflareAccount();
+  authHeader(account); // not_configured before anything is counted
+  await chargeProviderRequest('cloudflare');
   const signals = [AbortSignal.timeout(IMAGE_TIMEOUT_MS), signal].filter(Boolean) as AbortSignal[];
   let res: Response;
   try {
@@ -293,6 +304,8 @@ export function imageSize(b: Uint8Array): { width: number; height: number } | nu
 export async function chatOnce(model: string, messages: { role: string; content: string }[], opts: { maxTokens?: number; signal?: AbortSignal; timeoutMs?: number } = {}): Promise<{ text: string; neurons: number }> {
   if (fake) return fake.chat(model, messages);
   const account = currentCloudflareAccount();
+  authHeader(account);
+  await chargeProviderRequest('cloudflare');
   const signals = [AbortSignal.timeout(opts.timeoutMs ?? 20_000), opts.signal].filter(Boolean) as AbortSignal[];
   let res: Response;
   try {

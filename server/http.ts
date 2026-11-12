@@ -48,11 +48,17 @@ export async function readJson<T>(request: Request, maxBytes = 4_000_000): Promi
   }
 }
 
-/** Wrap a handler so thrown HttpErrors become JSON responses. */
+/**
+ * Wrap a handler so thrown HttpErrors become JSON responses. The request runs with the API
+ * environment configuration pinned when it started (server/environments): a later switch never
+ * changes the credentials of a request already running, including its streamed reply.
+ */
 export function handle(fn: (req: Request) => Promise<Response>) {
   return async (req: Request): Promise<Response> => {
     try {
-      return await fn(req);
+      const { requestPin, runPinned } = await import('./environments/index.js');
+      const pin = await requestPin();
+      return await runPinned(pin, () => fn(req));
     } catch (err) {
       return errorResponse(err);
     }

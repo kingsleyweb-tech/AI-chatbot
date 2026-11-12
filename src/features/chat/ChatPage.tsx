@@ -222,7 +222,7 @@ export default function ChatPage() {
   }, [convKey]);
 
   // ----- model -----
-  const fallbackDefault = catalog?.defaultModel ?? 'gemini:gemini-3.8-flash';
+  const fallbackDefault = catalog?.defaultModel ?? 'gemini:gemini-3.6-flash';
   const modelId = (conversationId ? conv?.model : draftModel) ?? settings.defaultModel ?? fallbackDefault;
   const model = getModel(modelId);
   const visionAlternative = useMemo<ModelInfo | undefined>(() => {

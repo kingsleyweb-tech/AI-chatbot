@@ -1,5 +1,6 @@
-import { env } from '../env.js';
 import {
+  chargeSearch,
+  searchKey,
   SearchError,
   hostOf,
   type AccountUsage,
@@ -44,12 +45,13 @@ export class TavilySearch implements SearchProvider {
   readonly label = 'Tavily';
 
   isConfigured() {
-    return Boolean(env().tavilyKey);
+    return Boolean(searchKey('tavily'));
   }
 
   private async post<T>(path: string, body: object, signal?: AbortSignal): Promise<T> {
-    const key = env().tavilyKey;
+    const key = searchKey('tavily');
     if (!key) throw new SearchError('tavily', 'not_configured', 'Tavily is not configured.');
+    await chargeSearch('tavily');
     let res: Response;
     try {
       res = await fetch(`https://api.tavily.com${path}`, {
@@ -101,7 +103,7 @@ export class TavilySearch implements SearchProvider {
   }
 
   async accountUsage(signal?: AbortSignal): Promise<AccountUsage | null> {
-    const key = env().tavilyKey;
+    const key = searchKey('tavily');
     if (!key) return null;
     const res = await fetch('https://api.tavily.com/usage', {
       headers: { authorization: `Bearer ${key}` },

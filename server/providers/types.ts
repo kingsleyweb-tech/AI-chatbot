@@ -51,7 +51,9 @@ export type ProviderErrorCode =
   /** the model is not an approved free model (Free Models Only policy) */
   | 'paid_blocked'
   /** every approved free model is at its limit right now */
-  | 'free_limit';
+  | 'free_limit'
+  /** the Temporary API environment reached its request ceiling (never retried on other credentials) */
+  | 'environment_limit';
 
 export class ProviderError extends Error {
   /** how long the provider asked us to wait before retrying (ms), when it said */

@@ -18,7 +18,9 @@ import { randomBytes } from 'node:crypto';
 import { adminConfigured, adminDb } from '../admin.js';
 import type { Firestore, Write } from '../firestore.js';
 import { SERVER_TIME } from '../firestore.js';
+import { usageEnv } from '../environments/index.js';
 import { HttpError } from '../http.js';
+import type { EnvId } from '../shared/environments.js';
 import {
   costOf,
   dailyPeriod,
@@ -41,22 +43,42 @@ import {
   usedNow,
 } from './policy.js';
 
+/*
+ * Each API environment (server/environments) has its own allowances: settings, profiles, user
+ * assignments and counters. Main keeps the original paths; the others use their own documents:
+ *   config/usage_{env}, usageAccounts_{env}/{uid} (+ days, reservations), usageStats_{env}/{day}.
+ * The environment is the request's usage environment (the global environment, pinned per request).
+ * Until an administrator saves an environment's own settings it uses Main's (counters stay separate).
+ */
 export const USAGE_CONFIG_PATH = 'config/usage';
-export const accountPath = (uid: string) => `usageAccounts/${uid}`;
-const reservationPath = (uid: string, id: string) => `usageAccounts/${uid}/reservations/${id}`;
+const suffix = (e: EnvId = usageEnv()) => (e === 'main' ? '' : `_${e}`);
+export const usageConfigPath = (e: EnvId = usageEnv()) => `${USAGE_CONFIG_PATH}${suffix(e)}`;
+export const accountsCollection = (e: EnvId = usageEnv()) => `usageAccounts${suffix(e)}`;
+export const usageStatsCollection = (e: EnvId = usageEnv()) => `usageStats${suffix(e)}`;
+export const accountPath = (uid: string) => `${accountsCollection()}/${uid}`;
+const reservationPath = (uid: string, id: string) => `${accountPath(uid)}/reservations/${id}`;
 
-let cache: { value: UsageConfig; at: number } | null = null;
+const cache = new Map<EnvId, { value: UsageConfig; inherited: boolean; at: number }>();
 const TTL = 60_000;
 
+/** The usage settings of the current usage environment (Main's while it has none of its own). */
 export async function loadUsageConfig(db: Firestore, fresh = false): Promise<UsageConfig> {
-  if (!fresh && cache && Date.now() - cache.at < TTL) return cache.value;
-  const doc = await db.get<Record<string, unknown>>(USAGE_CONFIG_PATH).catch(() => null);
-  const value = normalizeUsageConfig(doc?.data);
-  cache = { value, at: Date.now() };
-  return value;
+  return (await loadUsageConfigInfo(db, fresh)).value;
+}
+
+export async function loadUsageConfigInfo(db: Firestore, fresh = false): Promise<{ value: UsageConfig; inherited: boolean }> {
+  const e = usageEnv();
+  const hit = cache.get(e);
+  if (!fresh && hit && Date.now() - hit.at < TTL) return hit;
+  let doc = await db.get<Record<string, unknown>>(usageConfigPath(e)).catch(() => null);
+  const inherited = e !== 'main' && !doc;
+  if (inherited) doc = await db.get<Record<string, unknown>>(USAGE_CONFIG_PATH).catch(() => null);
+  const entry = { value: normalizeUsageConfig(doc?.data), inherited, at: Date.now() };
+  cache.set(e, entry);
+  return entry;
 }
 export function clearUsageCache() {
-  cache = null;
+  cache.clear();
 }
 
 export interface UsageSnapshot {
@@ -199,7 +221,7 @@ export async function reserveUsage(db: Firestore, input: ReserveInput): Promise<
       },
       {
         op: 'increment',
-        path: `usageStats/${verdict.counter.d}`,
+        path: `${usageStatsCollection()}/${verdict.counter.d}`,
         data: { day: verdict.counter.d, updatedAt: SERVER_TIME },
         increments: { [`${feature}_requests`]: 1, [`${feature}_units`]: cost },
       },
@@ -265,7 +287,7 @@ async function finishReservation(db: Firestore, uid: string, rid: string, actual
         precondition: { updateTime: acctDoc.updateTime },
       });
       writes.push({ op: 'increment', path: `${accountPath(uid)}/days/${r.d}`, data: { day: r.d }, increments: { [r.feature]: delta } });
-      writes.push({ op: 'increment', path: `usageStats/${r.d}`, data: { updatedAt: SERVER_TIME }, increments: { [`${r.feature}_units`]: delta, ...(state === 'released' ? { [`${r.feature}_released`]: 1 } : {}) } });
+      writes.push({ op: 'increment', path: `${usageStatsCollection()}/${r.d}`, data: { updatedAt: SERVER_TIME }, increments: { [`${r.feature}_units`]: delta, ...(state === 'released' ? { [`${r.feature}_released`]: 1 } : {}) } });
     }
     try {
       await db.commit(writes);

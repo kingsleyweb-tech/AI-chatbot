@@ -80,6 +80,10 @@ import { EmailError, getEmailProvider } from '../server/email/provider.js';
 import { optionalLimit } from '../server/email/service.js';
 import { smsOverview } from '../server/sms/log.js';
 import { usageAdmin, usageOpSchema } from '../server/usage/admin.js';
+import { loadUsageConfigInfo } from '../server/usage/allowance.js';
+import { environmentAdmin, environmentOpSchema } from '../server/environments/admin.js';
+import { usageEnv, withUsageEnvironment } from '../server/environments/index.js';
+import { ENVIRONMENTS } from '../server/shared/environments.js';
 import { getOtpGateway, getSmsProvider, vynfyBalances } from '../server/sms/provider.js';
 
 const uid = z
@@ -105,7 +109,9 @@ const schema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('logs') }),
   z.object({ action: z.literal('providers') }),
   // AI usage allowances: profiles, limits, unlimited access, resets, analytics (server/usage)
-  z.object({ action: z.literal('usage'), op: usageOpSchema }),
+  // `environment`: manage that API environment's allowances (default: the active global environment)
+  z.object({ action: z.literal('usage'), op: usageOpSchema, environment: z.enum(ENVIRONMENTS).optional() }),
+  z.object({ action: z.literal('environments'), op: environmentOpSchema }),
   z.object({ action: z.literal('sms') }),
   z.object({ action: z.literal('email') }),
   z.object({ action: z.literal('requests') }),
@@ -844,11 +850,22 @@ export const POST = handle(async (request) => {
     return json(await providerOverview(db), { headers: { 'cache-control': 'no-store' } });
   }
 
+  // API Environment Manager: Super Admin only (credentials themselves are never returned)
+  if (b.action === 'environments') {
+    if (!isSuperAdmin(ctx.user, env().adminEmails)) {
+      await noteUnauthorizedAccess(ctx.user.uid, 'API Environment Manager', request.headers.get('user-agent'));
+      throw new HttpError(403, 'not_super_admin', 'Only the Super Admin can manage API environments.');
+    }
+    const result = await environmentAdmin({ db, actor }, b.op);
+    return json(result, { headers: { 'cache-control': 'no-store' } });
+  }
+
   if (b.action === 'usage') {
     const access = await db.get<AccessConfig>('config/access').then((d) => d?.data ?? null);
     const admins = new Set([...lower(env().adminEmails), ...lower(access?.adminEmails)]);
     let accounts: { uid: string; email: string | null; name: string }[] | null = null;
-    const result = await usageAdmin(
+    const usageEnvironment = b.environment ?? usageEnv();
+    const result = await withUsageEnvironment(usageEnvironment, () => usageAdmin(
       {
         db,
         actor,
@@ -859,8 +876,12 @@ export const POST = handle(async (request) => {
         isAdminEmail: (email) => Boolean(email && admins.has(email.toLowerCase())),
       },
       b.op,
+    ));
+    const inherited = usageEnvironment !== 'main' && b.op.op === 'get' ? (await withUsageEnvironment(usageEnvironment, () => loadUsageConfigInfo(db, true))).inherited : false;
+    return json(
+      result && typeof result === 'object' ? { ...result, environment: usageEnvironment, inherited } : result,
+      { headers: { 'cache-control': 'no-store' } },
     );
-    return json(result, { headers: { 'cache-control': 'no-store' } });
   }
 
   if (b.action === 'logs') {

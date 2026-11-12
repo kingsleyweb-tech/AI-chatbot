@@ -1,3 +1,4 @@
+import { apiKeyFor, chargeProviderRequest, environmentDisabled, envOf } from '../environments/index.js';
 export type SearchProviderId = 'serpapi' | 'tavily';
 export type SearchKind = 'web' | 'news';
 /** Why we are searching; drives provider choice and cache lifetime. */
@@ -52,6 +53,26 @@ export class SearchError extends Error {
   ) {
     super(message);
     this.name = 'SearchError';
+  }
+}
+
+/** The search key of the current API environment ('' when it has none or is switched off). */
+export function searchKey(p: SearchProviderId): string {
+  try {
+    const e = envOf(p);
+    return environmentDisabled(p, e) ? '' : apiKeyFor(p, e);
+  } catch {
+    return '';
+  }
+}
+
+/** Count one search request in its API environment; a ceiling or switch-off becomes a SearchError. */
+export async function chargeSearch(p: SearchProviderId): Promise<void> {
+  try {
+    await chargeProviderRequest(p);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Search is unavailable.';
+    throw new SearchError(p, (err as { code?: string }).code === 'environment_limit' ? 'quota' : 'not_configured', message);
   }
 }
 

@@ -34,10 +34,31 @@ const provOf = (id: string) => (id.startsWith('gemini:') ? 'gemini' : 'openroute
 const opts = { paidAvailable: false, preferredProvider: 'gemini' as const, fallback: 'any' as const };
 
 describe('Gemini as primary provider', () => {
-  it('1. uses Gemini by default and lists Gemini first in every task preference', () => {
-    expect(modelConfig().fallbackModels[0]).toBe(G_FLASH);
+  it('1. uses Gemini 3.6 Flash by default (Flash-Lite, then 3.8 Flash next), Flash-Lite for background jobs, Gemini first everywhere', () => {
+    const saved = { key: process.env.GEMINI_API_KEY, def: process.env.DEFAULT_MODEL };
+    process.env.GEMINI_API_KEY = 'x';
+    delete process.env.DEFAULT_MODEL;
+    try {
+      const cfg = modelConfig();
+      expect(cfg.defaultModel).toBe(G_NEW);
+      expect(cfg.fallbackModels.slice(0, 3)).toEqual([G_NEW, G_LITE, G_FLASH]);
+      // OpenRouter free models stay in the chain after Gemini; nothing paid
+      expect(cfg.fallbackModels.slice(3).every((m) => m.endsWith(':free'))).toBe(true);
+      expect(cfg.utilityModels[0]).toBe(G_LITE);
+    } finally {
+      if (saved.key === undefined) delete process.env.GEMINI_API_KEY;
+      else process.env.GEMINI_API_KEY = saved.key;
+      if (saved.def !== undefined) process.env.DEFAULT_MODEL = saved.def;
+    }
+    for (const list of Object.values(TASK_PREFERENCES)) expect(list.slice(0, 2)).toEqual([G_NEW, G_FLASH]);
     for (const list of Object.values(TASK_PREFERENCES)) expect(provOf(list[0])).toBe('gemini');
     expect(DEFAULT_AI_CONFIG.preferredProvider).toBe('gemini');
+  });
+
+  it('1b. a manually selected Gemini 3.8 Flash is kept, with 3.6 Flash as its first fallback', () => {
+    const r = routeModel(G_FLASH, detectTask([user('Explain recursion')]), catalog(), opts);
+    expect(r.kind === 'ok' && r.chain.slice(0, 2)).toEqual([G_FLASH, G_NEW]);
+    expect(r.kind === 'ok' && r.switched).toBeNull();
   });
 
   it('2. a normal text request on Gemini stays on Gemini, with OpenRouter as fallback', () => {
@@ -58,7 +79,7 @@ describe('Gemini as primary provider', () => {
     expect(r.kind).toBe('ok');
     if (r.kind !== 'ok') return;
     expect(provOf(r.chain[0])).toBe('gemini');
-    expect(r.switched).toMatchObject({ from: ULTRA, to: G_FLASH });
+    expect(r.switched).toMatchObject({ from: ULTRA, to: G_NEW });
   });
 
   it('5. Gemini unavailable: falls back to a free OpenRouter model', () => {
@@ -69,7 +90,7 @@ describe('Gemini as primary provider', () => {
 
   it('6. an image with a text-only model routes to a free Gemini vision model', () => {
     const r = routeModel(ULTRA, detectTask([user('What is in this picture?', true)]), catalog(), opts);
-    expect(r.kind === 'ok' && r.chain[0]).toBe(G_FLASH);
+    expect(r.kind === 'ok' && r.chain[0]).toBe(G_NEW);
   });
 
   it('7. both providers down and only a paid model fits: no paid model is used or offered', () => {

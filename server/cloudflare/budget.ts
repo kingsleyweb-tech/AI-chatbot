@@ -83,8 +83,9 @@ const claimField = (account: CfAccountId) => fieldPath('accounts', account, 'cla
 
 /** Neurons used today on one account (exact usage only, not reservations). */
 export function accountNeurons(data: Record<string, unknown> | undefined, account: CfAccountId): number {
-  if (account === 'B') return counter(data, 'accounts', 'B', 'neurons');
-  return Math.max(0, counter(data, 'neurons') - counter(data, 'accounts', 'B', 'neurons'));
+  if (account !== 'A') return counter(data, 'accounts', account, 'neurons');
+  // A is the total minus the other accounts (usage recorded before accounts were tracked counts toward A)
+  return Math.max(0, counter(data, 'neurons') - counter(data, 'accounts', 'B', 'neurons') - counter(data, 'accounts', 'T', 'neurons'));
 }
 
 /**

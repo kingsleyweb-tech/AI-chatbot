@@ -74,6 +74,11 @@ export const ADMIN_ACTIONS = [
   'usage_unlimited_revoked',
   'usage_unlimited_expired',
   'usage_reset',
+  'environment_switched',
+  'environment_switch_refused',
+  'environment_disabled',
+  'environment_enabled',
+  'environment_ceiling_changed',
 ] as const;
 export type AdminAction = (typeof ADMIN_ACTIONS)[number];
 

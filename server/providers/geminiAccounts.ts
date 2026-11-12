@@ -20,24 +20,35 @@
  */
 import { adminConfigured, adminDb } from '../admin.js';
 import { GEMINI_LIMITS, nextPacificMidnight, pacificDay, rpmGuard, type ModelLimits } from '../config/providerLimits.js';
-import { env } from '../env.js';
+import { environmentDisabled, envOf, geminiCredentials } from '../environments/index.js';
 import { fieldPath, SERVER_TIME } from '../firestore.js';
 import * as H from './accountHealth.js';
 import { ProviderError } from './types.js';
 
-export type GeminiAccountId = 'A' | 'B';
+/** A and B: the Main pool (Secondary is B alone); T: the Temporary public-testing project. */
+export type GeminiAccountId = 'A' | 'B' | 'T';
 export interface GeminiAccount {
   id: GeminiAccountId;
   key: string;
 }
 
+/**
+ * The accounts of the API environment this request runs in (server/environments): Main = A and B,
+ * Secondary = B, Temporary = T. Never another environment's keys: an environment that is switched
+ * off or has no key has no accounts, and Gemini is then unavailable for the request.
+ */
 export function geminiAccounts(): GeminiAccount[] {
-  const e = env();
-  const out: GeminiAccount[] = [];
-  if (e.geminiKey) out.push({ id: 'A', key: e.geminiKey });
-  if (e.geminiKeySecondary && e.geminiKeySecondary !== e.geminiKey) out.push({ id: 'B', key: e.geminiKeySecondary });
-  return out;
+  let e;
+  try {
+    e = envOf('gemini');
+  } catch {
+    return []; // the environment settings could not be read: no guessing
+  }
+  if (environmentDisabled('gemini', e)) return [];
+  return geminiCredentials(e);
 }
+
+const KEY_VARIABLE: Record<GeminiAccountId, string> = { A: 'GEMINI_API_KEY', B: 'GEMINI_API_KEY_SECONDARY', T: 'GEMINI_API_KEY_TEMPORARY' };
 
 export const modelKey = (model: string) => model.replace(/[^A-Za-z0-9_]/g, '_');
 export const geminiUsagePath = (day = pacificDay()) => `geminiUsage/${day}`;
@@ -203,7 +214,7 @@ function onFailure(account: GeminiAccountId, model: string, err: unknown, now = 
     case 'invalid_key':
       // a configuration problem: alert, rest the whole account, never retry it in a loop
       H.noteFailure('gemini', account, H.ANY_MODEL, 'invalid_key', now);
-      console.error(`[gemini] Google rejected the API key for account ${account}. Check its server setting (${account === 'A' ? 'GEMINI_API_KEY' : 'GEMINI_API_KEY_SECONDARY'}).`);
+      console.error(`[gemini] Google refused account ${account} (${err.message}) Check its server setting (${KEY_VARIABLE[account]}).`);
       H.startCooldown('gemini', account, H.ANY_MODEL, 10 * MIN, 'auth', { error: 'invalid_key' }, now);
       void H.logEvent({ provider: 'gemini', account, kind: 'auth', reason: 'invalid_key' });
       record(account, model, 'failed', { error: 'invalid_key' });
@@ -281,7 +292,7 @@ export function exhaustedError(model: string, state: AttemptState): ProviderErro
   const limitCodes = new Set(['rate_limited', 'daily_limit']);
   if (errors.length && errors.every((e) => e.code === 'daily_limit')) return errors[errors.length - 1];
   if (errors.some((e) => limitCodes.has(e.code)) || state.paced || !errors.length) {
-    if (!geminiAccounts().length) return new ProviderError('not_configured', 'GEMINI_API_KEY is not configured.', 500);
+    if (!geminiAccounts().length) return new ProviderError('not_configured', 'Gemini is not available in the current API environment.', 503);
     const reasons = geminiAccounts().map((a) => H.cooldownOf('gemini', a.id, model)?.reason);
     if (!errors.length && !state.paced && reasons.every((r) => r === 'rpd'))
       return new ProviderError('daily_limit', 'The Gemini free-tier daily quota for this model is used up. It resets at midnight Pacific time.', 429);

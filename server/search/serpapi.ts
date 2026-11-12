@@ -1,6 +1,7 @@
-import { env } from '../env.js';
 import { parseDate } from '../news/dates.js';
 import {
+  chargeSearch,
+  searchKey,
   SearchError,
   hostOf,
   type AccountUsage,
@@ -106,12 +107,13 @@ export class SerpApiSearch implements SearchProvider {
   readonly label = 'SerpAPI (Google)';
 
   isConfigured() {
-    return Boolean(env().serpApiKey);
+    return Boolean(searchKey('serpapi'));
   }
 
   async search(query: string, opts: SearchOptions): Promise<SearchResponse> {
-    const key = env().serpApiKey;
+    const key = searchKey('serpapi');
     if (!key) throw new SearchError('serpapi', 'not_configured', 'SerpAPI is not configured.');
+    await chargeSearch('serpapi');
     const params = new URLSearchParams({
       engine: 'google',
       q: query.slice(0, 400),
@@ -153,7 +155,7 @@ export class SerpApiSearch implements SearchProvider {
   }
 
   async accountUsage(signal?: AbortSignal): Promise<AccountUsage | null> {
-    const key = env().serpApiKey;
+    const key = searchKey('serpapi');
     if (!key) return null;
     const res = await fetch(`https://serpapi.com/account.json?api_key=${encodeURIComponent(key)}`, {
       signal: signal ?? AbortSignal.timeout(8_000),

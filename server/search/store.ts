@@ -5,6 +5,7 @@
 import { createHash } from 'node:crypto';
 import { cosine } from '../embeddings.js';
 import { fieldPath, SERVER_TIME, type Firestore, type Write } from '../firestore.js';
+import { envOf } from '../environments/index.js';
 import type { ExtractResult, SearchProviderId, SearchResult } from './types.js';
 
 export interface CacheEntry {
@@ -116,6 +117,17 @@ export const monthKey = (d = new Date()) => `m-${d.toISOString().slice(0, 7)}`;
 
 const empty = (): ProviderCount => ({ serpapi: 0, tavily: 0 });
 
+/** Usage field group of a search provider: `search` on Main (unchanged), `search_{env}` otherwise. */
+export function searchUsageField(p: SearchProviderId): string {
+  let e = 'main';
+  try {
+    e = envOf(p);
+  } catch {
+    // settings unavailable: the provider refuses before any search is counted
+  }
+  return e === 'main' ? 'search' : `search_${e}`;
+}
+
 export class FirestoreSearchStore implements SearchStore {
   /**
    * `usageDb` writes the budget counters (users/{uid}/usage): the server
@@ -151,14 +163,15 @@ export class FirestoreSearchStore implements SearchStore {
   }
 
   async getUsage(): Promise<UsageSnapshot> {
-    type U = { search?: Partial<Record<SearchProviderId, { credits?: number }>> };
+    type U = Record<string, Partial<Record<SearchProviderId, { credits?: number }>> | undefined>;
     const [day, month] = await Promise.all([
       this.usageDb.get<U>(`${this.base}/usage/${dayKey()}`).catch(() => null),
       this.usageDb.get<U>(`${this.base}/usage/${monthKey()}`).catch(() => null),
     ]);
+    // each API environment has its own counters (a Temporary search never uses the Main budget)
     const pick = (u: U | undefined): ProviderCount => ({
-      serpapi: u?.search?.serpapi?.credits ?? 0,
-      tavily: u?.search?.tavily?.credits ?? 0,
+      serpapi: u?.[searchUsageField('serpapi')]?.serpapi?.credits ?? 0,
+      tavily: u?.[searchUsageField('tavily')]?.tavily?.credits ?? 0,
     });
     return { day: pick(day?.data), month: pick(month?.data) };
   }
@@ -169,8 +182,9 @@ export class FirestoreSearchStore implements SearchStore {
     const add = (k: string, n: number) => (inc[k] = (inc[k] ?? 0) + n);
     for (const e of events) {
       const field = e.type === 'request' ? 'requests' : e.type;
-      add(fieldPath('search', e.provider, field), 1);
-      if (e.credits) add(fieldPath('search', e.provider, 'credits'), e.credits);
+      const group = searchUsageField(e.provider);
+      add(fieldPath(group, e.provider, field), 1);
+      if (e.credits) add(fieldPath(group, e.provider, 'credits'), e.credits);
     }
     const day = dayKey();
     const writes: Write[] = [
