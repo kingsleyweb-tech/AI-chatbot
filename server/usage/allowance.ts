@@ -26,6 +26,8 @@ import {
   effectiveLimits,
   featureView,
   FEATURES,
+  availableFeatures,
+  type AvailableFeature,
   normalizeUsageConfig,
   refusalMessage,
   weeklyPeriod,
@@ -124,8 +126,11 @@ export interface Reservation {
 }
 
 export class UsageLimitError extends HttpError {
-  constructor(feature: FeatureId, period: 'daily' | 'weekly', used: number, limit: number, resetsAt: number, tz: string) {
-    super(429, 'usage_limit', refusalMessage(feature, period, resetsAt, tz), { feature, period, used, limit, resetsAt });
+  /** the feature that reached its limit (only that feature is refused; the others carry on) */
+  readonly feature: FeatureId;
+  constructor(feature: FeatureId, period: 'daily' | 'weekly', used: number, limit: number, resetsAt: number, tz: string, available?: AvailableFeature[]) {
+    super(429, 'usage_limit', refusalMessage(feature, period, resetsAt, tz, available), { feature, period, used, limit, resetsAt, ...(available ? { available } : {}) });
+    this.feature = feature;
   }
 }
 
@@ -170,7 +175,10 @@ export async function reserveUsage(db: Firestore, input: ReserveInput): Promise<
     }
 
     const verdict = decide(feature, cost, cfg, eff, acct?.counters?.[feature], now);
-    if (!verdict.ok) throw new UsageLimitError(feature, verdict.period, verdict.used, verdict.limit, verdict.resetsAt, cfg.reset.timezone);
+    if (!verdict.ok) {
+      const views = FEATURES.map((x) => featureView(x, cfg, eff, acct?.counters?.[x], now));
+      throw new UsageLimitError(feature, verdict.period, verdict.used, verdict.limit, verdict.resetsAt, cfg.reset.timezone, availableFeatures(views, feature));
+    }
 
     const counters = { ...(acct?.counters ?? {}), [feature]: verdict.counter };
     const writes: Write[] = [

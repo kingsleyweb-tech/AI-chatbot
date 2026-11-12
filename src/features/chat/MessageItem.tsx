@@ -153,11 +153,17 @@ function GenerationIndicator({ live }: { live: LiveReply }) {
 function Reasoning({ text, live }: { text: string; live: boolean }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="mb-3">
-      <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-1.5 text-[13px] text-muted hover:text-fg">
-        <Brain className={cn('size-3.5', live && 'animate-pulse text-accent')} />
+    <div className="mb-2">
+      {/* shown only when the model actually reasoned (Advanced Reasoning) */}
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex items-center gap-1 text-xs text-subtle transition-colors hover:text-muted"
+      >
+        <Brain className={cn('size-3', live && 'animate-pulse text-accent')} aria-hidden="true" />
         Reasoning
-        <ChevronDown className={cn('size-3.5 transition-transform', open && 'rotate-180')} />
+        <ChevronDown className={cn('size-3 transition-transform', open && 'rotate-180')} aria-hidden="true" />
       </button>
       {open && (
         <div className="scroll-thin mt-2 max-h-72 overflow-y-auto whitespace-pre-wrap border-l-2 border-border pl-3 text-[13px] leading-relaxed text-muted">

@@ -109,18 +109,10 @@ export function activitySteps(a: ActivityInput): ActivityStep[] {
 export function activitySummary(steps: ActivityStep[]): string {
   const active = steps.find((s) => s.state === 'active');
   if (active) return `${active.label}…`;
+  // compact once finished: "2 steps", "3 steps · 1 failed" (the list itself says what they were)
   const failed = steps.filter((s) => s.state === 'failed' && s.kind !== 'skip');
-  const done = steps.filter((s) => s.state === 'done' && s.kind !== 'write');
-  if (!done.length && failed.length) return failed[0].label;
-  const searches = steps.filter((s) => s.kind === 'search' && s.state === 'done').length;
-  const reads = steps.filter((s) => s.kind === 'read' && s.state === 'done').length;
-  const parts: string[] = [];
-  if (steps.some((s) => s.kind === 'image' && s.state === 'done' && s.id === 'img-generating')) parts.push('Created an image');
-  if (searches) parts.push(searches > 1 ? `Searched the web ${searches} times` : 'Searched the web');
-  if (reads) parts.push(`read ${plural(reads, 'page')}`);
-  if (steps.some((s) => s.kind === 'documents')) parts.push('read your documents');
-  if (steps.some((s) => s.kind === 'knowledge')) parts.push('used the knowledge base');
-  if (!parts.length) return `${plural(steps.length, 'step')}`;
-  const text = parts.join(', ');
-  return text.charAt(0).toUpperCase() + text.slice(1);
+  const counted = steps.filter((s) => s.kind !== 'write');
+  const n = counted.length || steps.length;
+  if (failed.length && failed.length === n) return failed.length === 1 ? failed[0].label : `${plural(n, 'step')} failed`;
+  return failed.length ? `${plural(n, 'step')} · ${failed.length} failed` : plural(n, 'step');
 }

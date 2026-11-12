@@ -1,5 +1,5 @@
-import { Gauge, Infinity as InfinityIcon } from 'lucide-react';
-import { useEffect } from 'react';
+import { Gauge } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
@@ -7,7 +7,7 @@ import { useUid } from '@/state/auth';
 import { useToast } from '@/state/toast';
 import {
   clearUsage,
-  indicatorText,
+  indicatorView,
   refreshUsage,
   setUsageFetcher,
   setUsageWarner,
@@ -42,35 +42,44 @@ export function UsageBridge() {
 }
 
 /**
- * One compact line directly above the composer: the allowance of the feature the next message
- * will use. Fixed height (no layout shift), never inside the composer, so it cannot make the
- * composer taller or cover the keyboard.
+ * One compact line directly above the composer, only once the feature the next message will use
+ * has used 75% of its allowance. Below that (and for unlimited access) nothing is shown and no
+ * space is kept. Never inside the composer, so it cannot make the composer taller.
  */
 export function UsageIndicator({ focus }: { focus?: FeatureId }) {
   const { state, focus: last } = useUsage();
-  if (!state) return <div className="h-5" aria-hidden />;
-  const id = focus ?? last;
-  const view = state.features.find((f) => f.id === id);
-  const text = indicatorText(view, state);
-  if (!text) return <div className="h-5" aria-hidden />;
-  const pct = view?.percent ?? 0;
-  const tone = state.unlimited ? 'text-accent' : pct >= 100 ? 'text-danger' : pct >= 90 ? 'text-warn' : 'text-subtle';
-  const bar = pct >= 100 ? 'bg-danger' : pct >= 90 ? 'bg-warn' : 'bg-accent';
+  // automatic Advanced Reasoning falls back to chat when its allowance is used up, so the
+  // line follows chat unless the composer is set to a specific feature
+  const id = focus ?? (last && last !== 'reasoning' ? last : 'chat');
+  const view = state?.features.find((f) => f.id === id);
+  const shown = state ? indicatorView(view, state) : null;
+  const resetsAt = shown && view?.binding ? view[view.binding].resetsAt : null;
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!resetsAt) return;
+    // hide the line the moment the period resets, then fetch the new figures
+    const t = setTimeout(() => {
+      tick((n) => n + 1);
+      void refreshUsage(true);
+    }, Math.max(0, Math.min(resetsAt - Date.now() + 1_000, 2 ** 31 - 1)));
+    return () => clearTimeout(t);
+  }, [resetsAt]);
+  if (!shown) return null;
+  const tone = shown.level >= 100 ? 'text-danger' : shown.level >= 90 ? 'text-warn' : 'text-subtle';
+  const bar = shown.level >= 100 ? 'bg-danger' : shown.level >= 90 ? 'bg-warn' : 'bg-accent';
   return (
     <div className="mx-auto flex h-5 w-full max-w-3xl items-center px-4 sm:px-6">
       <Link
         to="/usage"
         className={cn('flex min-w-0 items-center gap-1.5 text-[11.5px] leading-none hover:text-fg', tone)}
-        aria-label={`${text}. Open AI usage`}
+        aria-label={`${shown.text} Open AI usage`}
         aria-live="polite"
       >
-        {state.unlimited ? <InfinityIcon className="size-3.5 shrink-0" /> : <Gauge className="size-3.5 shrink-0" />}
-        {!state.unlimited && (
-          <span className="h-1 w-10 shrink-0 overflow-hidden rounded-full bg-surface-2" aria-hidden>
-            <span className={cn('block h-full rounded-full transition-[width] duration-300', bar)} style={{ width: `${Math.min(100, pct)}%` }} />
-          </span>
-        )}
-        <span className="truncate">{text}</span>
+        <Gauge className="size-3.5 shrink-0" />
+        <span className="h-1 w-10 shrink-0 overflow-hidden rounded-full bg-surface-2" aria-hidden>
+          <span className={cn('block h-full rounded-full transition-[width] duration-300', bar)} style={{ width: `${Math.min(100, shown.percent)}%` }} />
+        </span>
+        <span className="truncate">{shown.text}</span>
       </Link>
     </div>
   );

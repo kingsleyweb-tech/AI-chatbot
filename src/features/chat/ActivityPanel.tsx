@@ -21,8 +21,10 @@ export function ActivityPanel({ steps, live }: { steps: ActivityStep[]; live: bo
   const [open, setOpen] = useState(false);
   const reduce = useReducedMotion();
   const listId = useId();
-  if (!steps.length) return null;
+  // memories and earlier chats alone are shown by the "used N memories" line, not as steps
+  if (!steps.some((s) => s.kind !== 'memory' && s.kind !== 'history' && s.kind !== 'write')) return null;
   const active = steps.some((s) => s.state === 'active');
+  const failed = steps.some((s) => s.state === 'failed' && s.kind !== 'skip');
   return (
     <div className="mb-2.5 max-w-full text-xs">
       <button
@@ -30,9 +32,15 @@ export function ActivityPanel({ steps, live }: { steps: ActivityStep[]; live: bo
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-controls={listId}
-        className="group inline-flex max-w-full items-center gap-1.5 rounded-full border border-border bg-surface px-2.5 py-1 text-left text-muted transition-colors hover:border-border-strong hover:text-fg"
+        className="group inline-flex max-w-full items-center gap-1 text-left text-subtle transition-colors hover:text-muted"
       >
-        {active ? <Loader2 className="size-3.5 shrink-0 animate-spin text-accent" aria-hidden="true" /> : <Check className="size-3.5 shrink-0 text-accent" aria-hidden="true" />}
+        {active ? (
+          <Loader2 className="size-3 shrink-0 animate-spin text-accent" aria-hidden="true" />
+        ) : failed ? (
+          <X className="size-3 shrink-0 text-warn" aria-hidden="true" />
+        ) : (
+          <Check className="size-3 shrink-0 text-accent" aria-hidden="true" />
+        )}
         <span className="min-w-0 truncate" aria-live={live ? 'polite' : undefined}>
           {activitySummary(steps)}
         </span>
@@ -47,13 +55,13 @@ export function ActivityPanel({ steps, live }: { steps: ActivityStep[]; live: bo
             animate={{ height: 'auto', opacity: 1 }}
             exit={reduce ? { opacity: 0 } : { height: 0, opacity: 0 }}
             transition={{ duration: 0.18, ease: 'easeOut' }}
-            className="mt-2 overflow-hidden rounded-xl border border-border bg-surface/60 px-3 py-2"
+            className="mt-1 overflow-hidden pl-0.5"
           >
             {steps.map((s, i) => (
               <li key={s.id} className="relative flex gap-2.5 py-1.5">
                 {/* the line joining the steps */}
                 {i < steps.length - 1 && <span className="absolute top-6 bottom-[-6px] left-[7px] w-px bg-border" aria-hidden="true" />}
-                <span className="relative z-[1] mt-px flex size-[15px] shrink-0 items-center justify-center rounded-full bg-surface">
+                <span className="relative z-[1] mt-px flex size-[15px] shrink-0 items-center justify-center rounded-full bg-bg">
                   <StepIcon state={s.state} />
                 </span>
                 <span className="min-w-0 flex-1">

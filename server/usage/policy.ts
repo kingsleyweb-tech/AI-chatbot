@@ -458,10 +458,47 @@ export function decide(f: FeatureId, cost: number, cfg: UsageConfig, eff: Effect
   return { ok: true, counter: { d: day.key, du: du + cost, w: week.key, wu: wu + cost } };
 }
 
-export function refusalMessage(f: FeatureId, period: 'daily' | 'weekly', resetsAt: number, tz: string): string {
+/** A feature that still has allowance left, listed when another feature reaches its limit. */
+export interface AvailableFeature {
+  id: FeatureId;
+  label: string;
+  /** units left in the period that runs out first; null = no limit applies */
+  remaining: number | null;
+  period: 'daily' | 'weekly' | null;
+}
+
+/** Features the person uses directly in a conversation, in the order they are listed. */
+const LISTED: FeatureId[] = ['chat', 'reasoning', 'research', 'documents', 'images', 'voice_input', 'voice_output', 'translation'];
+
+/** The features (other than `except`) that still have allowance, with what is left of each. */
+export function availableFeatures(views: FeatureView[], except: FeatureId): AvailableFeature[] {
+  const out: AvailableFeature[] = [];
+  for (const id of LISTED) {
+    const v = views.find((x) => x.id === id);
+    if (!v || id === except || v.exhausted) continue;
+    const left = [v.daily.remaining === null ? null : { r: v.daily.remaining, p: 'daily' as const }, v.weekly.remaining === null ? null : { r: v.weekly.remaining, p: 'weekly' as const }]
+      .filter((x): x is { r: number; p: 'daily' | 'weekly' } => x !== null)
+      .sort((a, b) => a.r - b.r)[0];
+    out.push({ id, label: v.label, remaining: left ? left.r : null, period: left ? left.p : null });
+  }
+  return out;
+}
+
+/** "Chat (120 left today), Web research (no limit)" */
+export function availableText(list: AvailableFeature[], max = 4): string {
+  const shown = list.slice(0, max).map((a) => `${a.label} (${a.remaining === null ? 'no limit' : `${a.remaining} left ${a.period === 'weekly' ? 'this week' : 'today'}`})`);
+  return shown.join(', ') + (list.length > max ? ` and ${list.length - max} more` : '');
+}
+
+export function refusalMessage(f: FeatureId, period: 'daily' | 'weekly', resetsAt: number, tz: string, available?: AvailableFeature[]): string {
   const when = formatReset(resetsAt, tz);
   const label = FEATURE_INFO[f].label;
-  return `You have used your ${period} ${label.toLowerCase()} allowance. It resets ${when}. Other features are still available.`;
+  const rest = available === undefined
+    ? 'Other features are still available.'
+    : available.length
+      ? `You can still use: ${availableText(available)}.`
+      : 'Your other features have also reached their limits.';
+  return `You have used your ${period} ${label.toLowerCase()} allowance. It resets ${when}. ${rest}`;
 }
 
 /** "at 00:00 on Fri 13 Nov (Africa/Accra)" */

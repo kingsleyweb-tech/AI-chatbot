@@ -48,7 +48,9 @@ export function fakeProvider(id: string): Pick<ChatProvider, 'stream' | 'complet
   return {
     embed: undefined, // no embeddings: memory and related-chat lookups are skipped
     async *stream(p: CompletionParams): AsyncGenerator<ProviderChunk> {
-      const { pieces, delayMs, reasoning = [] } = scriptedReply(p.messages);
+      const { pieces, delayMs, reasoning: thoughts = [] } = scriptedReply(p.messages);
+      // like Gemini Flash: with thinking switched off (the fast pathway) no thoughts are streamed
+      const reasoning = p.reasoning === false ? [] : thoughts;
       await sleep(200, p.signal);
       for (const piece of reasoning) {
         yield { type: 'reasoning', text: piece };

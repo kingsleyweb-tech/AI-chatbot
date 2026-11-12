@@ -8,7 +8,7 @@
  */
 import { useSyncExternalStore } from 'react';
 // relative imports (no path aliases): the tests import this file directly
-import type { FeatureId } from '../../../server/usage/policy.js';
+import { availableFeatures, availableText, type FeatureId } from '../../../server/usage/policy.js';
 import type { FeatureView } from '../../../server/shared/types.js';
 
 export type { FeatureId, FeatureView };
@@ -121,7 +121,7 @@ export function thresholdMessage(view: FeatureView, threshold: number, period: '
   const p = view[period];
   const when = resetText(p.resetsAt, tz);
   const name = view.label.toLowerCase();
-  if (threshold >= 100) return `You've used all of your ${period} ${name} allowance. It resets ${when}. Other features still work.`;
+  if (threshold >= 100) return `You've used all of your ${period} ${name} allowance. It resets ${when}.`;
   if (threshold >= 99 || p.remaining === 1) return `You've used ${Math.floor((p.used / (p.limit || 1)) * 100)}% of your ${period} ${name} allowance. One request remaining. Resets ${when}.`;
   return `You've used ${Math.round((p.used / (p.limit || 1)) * 100)}% of your ${period} ${name} allowance (${p.remaining} left). Resets ${when}.`;
 }
@@ -160,7 +160,11 @@ function checkThresholds(views: FeatureView[]) {
     if (!next) continue;
     shown[next.key] = next.threshold;
     changed = true;
-    warn(thresholdMessage(v, next.threshold, next.period, state.timezone), next.threshold);
+    // 75/90/99% are shown by the indicator above the composer; only the limit itself also
+    // gets a notification, with what can still be used
+    if (next.threshold < 100) continue;
+    const others = availableFeatures(state.features.map((f) => views.find((x) => x.id === f.id) ?? f), v.id);
+    warn(`${thresholdMessage(v, next.threshold, next.period, state.timezone)} ${others.length ? `You can still use: ${availableText(others, 3)}.` : ''}`.trim(), next.threshold);
   }
   if (changed) saveShown(shown, state.features.map((f) => views.find((v) => v.id === f.id) ?? f));
 }
@@ -188,15 +192,43 @@ export function countdown(at: number, now = Date.now()): string {
   return `${d} day${d === 1 ? '' : 's'}${h % 24 ? ` ${h % 24} h` : ''}`;
 }
 
-/** The compact line above the composer. */
-export function indicatorText(view: FeatureView | undefined, s: Pick<UsageState, 'unlimited' | 'timezone'>, now = Date.now()): string | null {
-  if (s.unlimited) return 'Unlimited AI Access';
-  if (!view || view.percent === null || !view.binding) return null;
+/** "12:07 AM" (or "Mon 16 Nov, 12:07 AM" when the reset is more than a day away) in the allowance's time zone. */
+export function resetClock(at: number, tz: string, now = Date.now()): string {
+  const time = new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', minute: '2-digit', hour12: true }).format(new Date(at));
+  if (at - now <= 86_400_000) return time;
+  const d = new Intl.DateTimeFormat('en-GB', { timeZone: tz, weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(at));
+  return `${d}, ${time}`;
+}
+
+export interface IndicatorView {
+  text: string;
+  /** the warning level reached: 75, 90, 99 or 100 */
+  level: 75 | 90 | 99 | 100;
+  percent: number;
+}
+
+/**
+ * The compact line above the composer, for the feature the next message will use. Nothing below
+ * 75%, nothing for unlimited access, and nothing once the period has reset (until fresh figures
+ * arrive). The figures are the server's.
+ */
+export function indicatorView(view: FeatureView | undefined, s: Pick<UsageState, 'unlimited' | 'timezone'>, now = Date.now()): IndicatorView | null {
+  if (s.unlimited || !view || view.percent === null || !view.binding) return null;
   const p = view[view.binding];
-  if (p.limit === null) return null;
-  const used = p.limit === 0 ? 100 : Math.min(100, Math.round((p.used / p.limit) * 100));
-  const when = resetText(p.resetsAt, s.timezone, now);
-  if (p.remaining === 0) return `${view.label}: allowance used | Resets ${when}`;
-  if (p.remaining === 1) return `${view.label}: ${used}% used | One request remaining | Resets ${when}`;
-  return `${view.label}: ${used}% used | ${100 - used}% remaining | Resets ${when}`;
+  if (p.limit === null || now >= p.resetsAt) return null;
+  const pct = p.limit === 0 ? 100 : Math.min(100, (p.used / p.limit) * 100);
+  const level = p.remaining === 0 ? 100 : pct >= 99 ? 99 : pct >= 90 ? 90 : pct >= 75 ? 75 : null;
+  if (!level) return null;
+  const period = view.binding;
+  const name = view.id === 'chat' ? 'chat' : view.label.toLowerCase();
+  const shown = Math.min(99, Math.floor(pct));
+  const text =
+    level === 100
+      ? `${period === 'weekly' ? 'Weekly' : 'Daily'} ${name} limit reached. Resets at ${resetClock(p.resetsAt, s.timezone, now)}.`
+      : level === 99
+        ? `${shown}% used. Almost all your ${period} ${view.id === 'chat' ? '' : `${name} `}allowance has been used.`
+        : level === 90
+          ? `${shown}% used. You're approaching your ${period} ${name} limit.`
+          : `${shown}% of your ${period} ${name} allowance used.`;
+  return { text, level, percent: pct };
 }

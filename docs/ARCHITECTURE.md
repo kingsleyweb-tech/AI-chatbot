@@ -25,9 +25,10 @@ Firestore SDK (offline) ──┼─ realtime reads/writes ───────
 
 1. Validate the body (zod) and check the allowlist (`server/access.ts`, cached for 5 minutes).
 2. Load the user's settings, conversation, project and model catalog. Build the **fallback chain**: requested model first, then configured fallbacks. Only free models are kept (Free Models Only policy), and non-vision models are skipped when images are attached.
-3. Gather context in parallel: relevant memories, related past conversations, attached-document excerpts and web results.
-4. Build the system prompt (`server/chat/prompt.ts`) and trim history to the model's context budget.
-5. Stream from the provider and re-emit normalized SSE events: `start`, `notice`, `sources`, `context`, `reasoning`, `delta`, `usage`, `error`, `done`. If a model fails **before** producing text (rate limit, unavailable, empty answer), the next model in the chain is tried and the UI shows a notice.
+3. Choose the **response pathway** (`server/router/pathway.ts`): rules on the message, with no model call. The fast pathway is the default (greetings, definitions, translations, writing, follow-ups). Advanced Reasoning is used for maths and word problems, debugging, algorithms, logic puzzles, multi-stage plans, technical comparisons, scenario analysis, hard-topic explanations, or an explicit "think step by step". On Gemini Flash models the pathway switches thinking on (`includeThoughts`) or off (`thinkingBudget: 0`, `thinkingLevel: 'minimal'` on Lite). The selected model is never changed. Models that always reason (Pro, or another provider's reasoning model picked by the user) keep doing so.
+4. Gather context in parallel: relevant memories, related past conversations, the knowledge base, attached-document excerpts and web results. The web decision waits only for the knowledge base. Greetings and thanks skip past chats and project briefs (saved memories are still read). A `[chat] timing` log line (no message text) records pathway, reservation, context and first-token times.
+5. Build the system prompt (`server/chat/prompt.ts`) and trim history to the model's context budget.
+6. Stream from the provider and re-emit normalized SSE events: `start`, `notice`, `sources`, `context`, `reasoning`, `delta`, `usage`, `error`, `done`. If a model fails **before** producing text (rate limit, unavailable, empty answer), the next model in the chain is tried and the UI shows a notice.
 6. Persist the assistant message (see **Message persistence** below), plus usage counters.
 7. After the response, in the background via `waitUntil`: generate a title, extract memories, and update the conversation summary.
 
@@ -409,13 +410,14 @@ Per-account daily and weekly allowances for each AI feature: chat, reasoning, re
 **Reserve → settle** (`allowance.ts`)
 - Before a model is called, `reserveUsage` checks the limit and increments the counters in one Firestore commit with an `updateTime` precondition, retrying on conflict. Concurrent requests cannot overspend.
 - The same commit writes `reservations/{feature-requestId}`, so a retry of the same request is never counted twice.
-- A request is refused only when the allowance is already used up (429 `usage_limit`, with the reset time). A reply that has started is never interrupted.
+- A request is refused only when the allowance is already used up (429 `usage_limit`, with the reset time and `available`: the other features that still have allowance and what is left of each). Only that feature is refused. A reply that has started is never interrupted.
+- Chat counts against **Chat** on the fast pathway and **Advanced reasoning** only when reasoning actually runs (or the user picked a model that always reasons). When an automatic reasoning request finds that allowance used up, it is answered on the fast pathway against Chat instead of being refused.
 - When a reply fails without producing anything, the reservation is released; otherwise it is settled with the actual cost.
 - Chat (`server/chat/engine.ts`) streams an `allowance` event so the indicator above the composer updates without an extra request. `api/speech.ts` wraps transcription, speech and translation the same way.
 
 **Where to see it**
 - Users: `GET /api/chat?usage` → the `/usage` page and the composer indicator.
-- Warnings at 75, 90, 99 (one request left) and 100% are shown once per feature and period, remembered in localStorage.
+- The line above the composer appears only from 75% (75, 90, 99 or one request left, and 100% with the reset time). It takes no space below that, is not shown for unlimited access, and disappears when the period resets. A notification appears only at 100%, listing the features still available. Each is shown once per feature and period, remembered in localStorage.
 - Admins: `POST /api/admin {action:'usage', op}` (`server/usage/admin.ts`). Every change is written to `adminLogs` with `changes: {before, after}`.
 - `usageStats/{day}` holds daily totals for Usage Analytics. Clients can read `usageAccounts` (owner and admins) and `usageStats` (admins), and cannot write to either.
 

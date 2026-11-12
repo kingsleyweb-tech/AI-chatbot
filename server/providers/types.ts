@@ -21,6 +21,12 @@ export interface CompletionParams {
   firstByteTimeoutMs?: number;
   /** provider account to use (Cloudflare: the account the Neuron reservation was made on) */
   account?: string;
+  /**
+   * Thinking before answering, on models that can switch it (Gemini Flash): true = think and
+   * stream the thoughts (Advanced Reasoning), false = answer straight away (normal pathway).
+   * Omitted: the provider's default for the call. Models that always think (Pro) ignore false.
+   */
+  reasoning?: boolean;
 }
 
 export type ProviderChunk =

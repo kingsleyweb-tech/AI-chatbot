@@ -90,7 +90,7 @@ describe('activity panel', () => {
     });
     expect(done.every((s) => s.state === 'done')).toBe(true);
     expect(done.filter((s) => s.label === 'Finished researching')).toHaveLength(1);
-    expect(activitySummary(done)).toBe('Searched the web, read 1 page');
+    expect(activitySummary(done)).toBe('4 steps');
   });
 
   it('documents and knowledge come from what the server retrieved', () => {
@@ -107,6 +107,15 @@ describe('activity panel', () => {
       hasContent: true,
     });
     expect(steps[0]).toMatchObject({ label: 'Web search not used', state: 'failed', detail: 'daily search limit reached' });
+    expect(activitySummary(steps)).toBe('Web search not used');
+    const mixed = activitySteps({
+      live: false,
+      status: 'complete',
+      search: { status: 'unavailable', mode: 'search', provider: null, query: 'x', cached: false, trigger: 'manual', message: 'limit' },
+      context: { memories: 0, documents: 2, conversations: 0, knowledge: 0 },
+      hasContent: true,
+    });
+    expect(activitySummary(mixed)).toBe('2 steps · 1 failed');
   });
 
   it('image stages follow the real stage the server reports', () => {
@@ -116,7 +125,7 @@ describe('activity panel', () => {
     expect(at('saving')).toEqual(['done', 'done', 'active']);
     const finished = activitySteps({ live: false, status: 'complete', imageCount: 1, hasContent: true });
     expect(finished.map((s) => s.label)).toEqual(['Checked the request', 'Created the image', 'Saved the image']);
-    expect(activitySummary(finished)).toBe('Created an image');
+    expect(activitySummary(finished)).toBe('3 steps');
   });
 
   it('a stopped or failed reply marks the running step as not completed, and lists no later stages', () => {

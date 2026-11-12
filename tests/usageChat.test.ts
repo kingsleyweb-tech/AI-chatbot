@@ -8,10 +8,17 @@ import { fakeModel } from './helpers.js';
 // server identity is the in-memory database.
 const MODEL = 'gemini:gemini-3.8-flash';
 let script: (signal: AbortSignal) => AsyncGenerator<ProviderChunk>;
+let lastReq: { reasoning?: boolean } | null = null;
 let db: FakeDb;
 vi.mock('../server/providers/registry.js', () => ({
   getCatalog: async () => ({ models: [fakeModel(MODEL, { contextLength: 100_000, free: true, pricing: { prompt: 0, completion: 0 } })], defaultModel: MODEL, fallbackModels: [], paidAvailable: false }),
-  providerFor: () => ({ id: 'gemini', stream: (req: { signal: AbortSignal }) => script(req.signal) }),
+  providerFor: () => ({
+    id: 'gemini',
+    stream: (req: { signal: AbortSignal; reasoning?: boolean }) => {
+      lastReq = req;
+      return script(req.signal);
+    },
+  }),
 }));
 vi.mock('../server/embeddings.js', async (orig) => ({ ...(await orig<object>()), embed: async () => null }));
 vi.mock('../server/admin.js', async (orig) => ({ ...(await orig<object>()), adminConfigured: () => true, adminDb: async () => db.asFirestore() }));
@@ -33,8 +40,8 @@ function body(replyId: string, opts: Record<string, unknown> = {}): ChatRequestB
     conversationId: CID,
     assistantMessageId: replyId,
     model: MODEL,
-    messages: [{ role: 'user', content: 'hello' }],
-    options: { webSearch: false, autoSearch: false, searchMode: 'manual', memory: false, documentIds: [], projectId: null, ...opts },
+    messages: [{ role: 'user', content: (opts.text as string | undefined) ?? 'hello' }],
+    options: { webSearch: false, autoSearch: false, searchMode: 'manual', memory: false, documentIds: [], projectId: null, ...opts, text: undefined },
   }) as ChatRequestBody;
 }
 async function* reply(text: string): AsyncGenerator<ProviderChunk> {
@@ -139,5 +146,55 @@ describe('allowances in chat', () => {
     const a = db.docs.get(accountPath(UID)) as UsageAccount;
     expect(a.counters?.research?.du).toBe(3);
     expect(a.counters?.chat).toBeUndefined();
+  });
+
+  it('a simple message uses the fast pathway and counts against Chat', async () => {
+    script = () => reply('Hello!');
+    await chat('r1');
+    expect(lastReq?.reasoning).toBe(false);
+    expect(chatUsed()).toBe(1);
+    expect((db.docs.get(accountPath(UID)) as UsageAccount).counters?.reasoning).toBeUndefined();
+  });
+
+  const HARD = 'Solve 3x^2 - 5x + 2 = 0 and show the steps';
+  const send = async (id: string, text: string) => {
+    const res = await runChat(ctx(), body(id, { text }), new AbortController().signal, (p) => jobs.push(p));
+    await res.text();
+    await Promise.all(jobs);
+  };
+
+  it('a message that needs it uses Advanced Reasoning and counts against that allowance only', async () => {
+    script = () => reply('x = 1 or x = 2/3');
+    await send('r1', HARD);
+    expect(lastReq?.reasoning).toBe(true);
+    const a = db.docs.get(accountPath(UID)) as UsageAccount;
+    expect(a.counters?.reasoning?.du).toBe(1);
+    expect(a.counters?.chat).toBeUndefined();
+  });
+
+  it('with the Advanced Reasoning allowance used up, a hard question is still answered on the normal pathway', async () => {
+    db.docs.set(USAGE_CONFIG_PATH, { profiles: { standard: { limits: { reasoning: { daily: 0, weekly: null } } } } });
+    clearUsageCache();
+    script = () => reply('x = 1 or x = 2/3');
+    await send('r1', HARD);
+    expect(lastReq?.reasoning).toBe(false);
+    expect(chatUsed()).toBe(1);
+  });
+
+  it('a used-up Chat allowance does not block the other features, and the refusal lists them', async () => {
+    setChatLimit(0);
+    const err = await runChat(ctx(), body('r1'), new AbortController().signal, () => undefined).catch((e) => e);
+    expect(err).toMatchObject({ status: 429, code: 'usage_limit', details: { feature: 'chat' } });
+    const available = (err as { details: { available: { id: string }[] } }).details.available.map((a) => a.id);
+    expect(available).toContain('research');
+    expect(available).toContain('images');
+    expect(available).not.toContain('chat');
+    expect((err as Error).message).toContain('You can still use:');
+    // Deep Research still works
+    script = () => reply('report');
+    const res = await runChat(ctx(), body('r2', { deepResearch: true }), new AbortController().signal, (p) => jobs.push(p));
+    await res.text();
+    await Promise.all(jobs);
+    expect((db.docs.get(accountPath(UID)) as UsageAccount).counters?.research?.du).toBe(3);
   });
 });

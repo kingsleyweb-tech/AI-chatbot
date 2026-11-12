@@ -55,7 +55,8 @@ import { atlasIdentityBrief } from './identity.js';
 import { isAboutAtlas } from '../shared/identity.js';
 import { loadOwnership } from './ownership.js';
 import { createRedactor } from './redact.js';
-import { reserveFor } from '../usage/allowance.js';
+import { reserveFor, UsageLimitError } from '../usage/allowance.js';
+import { choosePathway, thinkingSwitchable } from '../router/pathway.js';
 import type { FeatureId } from '../usage/policy.js';
 
 const attachmentSchema = z.discriminatedUnion('kind', [
@@ -113,6 +114,9 @@ export const chatRequestSchema = z.object({
     projectId: z.string().max(128).nullable().optional(),
   }),
 });
+
+/** attached files that are source code (debugging questions about them use Advanced Reasoning) */
+const CODE_FILE = /\.(?:js|jsx|ts|tsx|mjs|cjs|py|java|kt|swift|rs|go|c|h|cc|cpp|hpp|cs|php|rb|sql|sh|ps1|json|ya?ml|vue|svelte)$/i;
 
 export type BackgroundRunner = (p: Promise<unknown>) => void;
 
@@ -225,6 +229,7 @@ export async function runChat(
   // Generation is NOT tied to the browser connection: on a phone, switching apps or locking the
   // screen drops the connection, and the reply must still be finished and stored. It stops only
   // when the user presses Stop (the browser marks the message with stopRequested, see watchAfterDisconnect).
+  const t0 = Date.now();
   const gen = new AbortController();
   const signal = gen.signal;
   const { db, user } = ctx;
@@ -277,22 +282,33 @@ export async function runChat(
   // ---- Individual AI allowance: checked and reserved before the reply is accepted ----
   // A refusal (HTTP 429) happens here, before anything runs. Once accepted the reply is never
   // stopped by the allowance. The reservation uses the reply's id, so a retry is not counted twice.
-  const feature: FeatureId = imageIntent
-    ? 'images'
-    : body.options.deepResearch
-      ? 'research'
-      : body.options.documentIds.length
-        ? 'documents'
-        : catalog?.models.find((m) => m.id === body.model)?.capabilities.reasoning
-          ? 'reasoning'
-          : 'chat';
-  const allowance = await reserveFor({
-    uid,
-    admin: ctx.admin,
-    feature,
-    requestId: body.assistantMessageId,
-    detail: { deepResearch: body.options.deepResearch },
+  //
+  // Response pathway (server/router/pathway.ts, no model call): ordinary messages answer straight
+  // away; Advanced Reasoning (the model thinks first) only for messages that need it. It changes
+  // how the selected model works, never which model is used. A model the user picked that always
+  // reasons (e.g. a Pro or R1-style model) is their deliberate choice and is kept.
+  const pathway = choosePathway(lastUser.content, {
+    hasCodeAttachment: docMetas.some((d) => CODE_FILE.test(d?.data.name ?? '')),
   });
+  const switchable = thinkingSwitchable(body.model);
+  const alwaysReasons = !switchable && Boolean(catalog?.models.find((m) => m.id === body.model)?.capabilities.reasoning);
+  let reasoningOn = alwaysReasons || (switchable && pathway.pathway === 'reasoning');
+  const special: FeatureId | null = imageIntent ? 'images' : body.options.deepResearch ? 'research' : body.options.documentIds.length ? 'documents' : null;
+  let feature: FeatureId = special ?? (reasoningOn ? 'reasoning' : 'chat');
+  const reserve = (f: FeatureId) =>
+    reserveFor({ uid, admin: ctx.admin, feature: f, requestId: body.assistantMessageId, detail: { deepResearch: body.options.deepResearch } });
+  let allowance: Awaited<ReturnType<typeof reserveFor>>;
+  try {
+    allowance = await reserve(feature);
+  } catch (err) {
+    // Advanced Reasoning chosen automatically, but its allowance is used up: answer on the normal
+    // pathway (the chat allowance) instead of refusing. Each feature keeps its own limit.
+    if (!(err instanceof UsageLimitError && feature === 'reasoning' && !alwaysReasons)) throw err;
+    reasoningOn = false;
+    feature = 'chat';
+    allowance = await reserve('chat');
+  }
+  const tReserved = Date.now();
 
   const encoder = new TextEncoder();
   let closed = false;
@@ -370,6 +386,7 @@ export async function runChat(
         progressText = () => content;
         let usage: UsageInfo | null = null;
         let usedModel = body.model;
+        let tFirstToken = 0;
         let status: 'complete' | 'stopped' | 'error' = 'complete';
         let errorEvent: Extract<StreamEvent, { type: 'error' }> | null = null;
         let finishReason: string | null = null;
@@ -510,9 +527,15 @@ export async function runChat(
           const projectP = projectId
             ? db.get<{ name?: string; instructions?: string }>(`${base}/projects/${projectId}`).catch(() => null)
             : Promise.resolve(null);
-          const projectsP = memoryOn ? loadProjects(db, uid).catch(() => [] as LoadedProject[]) : Promise.resolve([] as LoadedProject[]);
-          const indexP = memoryOn ? loadIndex(db, uid).catch(() => [] as IndexEntry[]) : Promise.resolve([] as IndexEntry[]);
+          // A greeting or "thanks" can't use past chats or project briefs, so those reads are skipped
+          // for it (saved memories are still read: they can hold the name or tone to use).
+          const historyOn = memoryOn && !trivial;
+          const projectsP = historyOn ? loadProjects(db, uid).catch(() => [] as LoadedProject[]) : Promise.resolve([] as LoadedProject[]);
+          const indexP = historyOn ? loadIndex(db, uid).catch(() => [] as IndexEntry[]) : Promise.resolve([] as IndexEntry[]);
           const memoriesP = memoryOn ? loadMemories(db, uid).catch(() => []) : Promise.resolve([]);
+          // the owner record (cached) is needed for every system prompt: read it alongside
+          const ownershipP = loadOwnership(db);
+          ownershipP.catch(() => undefined);
           // A slow embedding service must not hold up the reply: after 3 s the
           // lexical fallbacks are used instead. Greetings need no embedding.
           const queryEmbedding =
@@ -543,11 +566,14 @@ export async function runChat(
                 }),
                 new Promise<null>((r) => setTimeout(() => r(null), 1_500)),
               ]);
-          if (!trivial) {
+          // The knowledge base runs alongside the memory and past-chat reads below; only the web
+          // decision waits for it (its result decides whether a question still needs the web).
+          const knowledgeP: Promise<KnowledgeContext | null> = (async () => {
+            if (trivial) return null;
             const previous = body.messages.filter((m) => m.role === 'user').slice(-2, -1)[0]?.content ?? '';
             // short follow-ups ("what services do they offer?") are searched with the previous question
             const kbText = previous && looksLikeFollowUp(lastUser.content) ? `${previous.slice(0, 600)}\n${queryText}` : queryText;
-            knowledge = await retrieveKnowledge({
+            const knowledge = await retrieveKnowledge({
               db,
               uid,
               query: kbText === queryText ? query : { text: kbText },
@@ -562,7 +588,31 @@ export async function runChat(
               if (knowledge.sources.length) count(['knowledge', 'used']);
               if (knowledge.hit) count(['knowledge', 'hits']);
             }
-          }
+            return knowledge;
+          })();
+          const webP = knowledgeP.then((k) =>
+            gatherWebContext({
+              db,
+              uid,
+              turns: body.messages,
+              text: lastUser.content,
+              options: body.options,
+              hasDocuments: body.options.documentIds.length > 0,
+              knowledgeHit: Boolean(k?.hit),
+              signal,
+              onStep: (step) => send({ type: 'research', step }),
+              onDecision: (d) => {
+                count(['searchDecisions', d.action]);
+                count(['searchDecisions', 'reasons', d.reason]);
+              },
+            }).catch((err) => {
+              if (signal.aborted) throw err;
+              console.warn('[chat] web search failed', err instanceof Error ? err.message : err);
+              return null;
+            }),
+          );
+          // awaited below; this only keeps an early rejection (Stop pressed meanwhile) from going unhandled
+          webP.catch(() => undefined);
 
           // ---- Project focus (decides which memories and past chats may be used) ----
           const [project, projects, historyIndex] = await Promise.all([projectP, projectsP, indexP]);
@@ -580,7 +630,7 @@ export async function runChat(
           const focusBrief = focus ? projects.find((p) => p.slug === focus!.slug) : undefined;
           // turns of this chat already in the context window are not retrieved again
           const sentFrom = totalTurns - body.messages.length;
-          const pastHits = memoryOn
+          const pastHits = historyOn
             ? await searchHistory({
                 db,
                 uid,
@@ -592,9 +642,9 @@ export async function runChat(
             : [];
           const convProject = new Map(historyIndex.map((e) => [e.c, e.p]));
 
-          const [memories, related, docs, web] = await Promise.all([
+          const [memories, related, docs, web, knowledgeResult] = await Promise.all([
             memoriesP.then((m) => (m.length ? selectRelevant(m, query, { focusProject: focus?.slug ?? null }) : [])).catch(() => []),
-            memoryOn
+            historyOn
               ? relatedConversations({ db, uid, excludeId: body.conversationId, query })
                   .then((r) =>
                     r.filter(
@@ -626,26 +676,10 @@ export async function runChat(
                   };
                 })
               : Promise.resolve(null),
-            gatherWebContext({
-              db,
-              uid,
-              turns: body.messages,
-              text: lastUser.content,
-              options: body.options,
-              hasDocuments: body.options.documentIds.length > 0,
-              knowledgeHit: Boolean(knowledge?.hit),
-              signal,
-              onStep: (step) => send({ type: 'research', step }),
-              onDecision: (d) => {
-                count(['searchDecisions', d.action]);
-                count(['searchDecisions', 'reasons', d.reason]);
-              },
-            }).catch((err) => {
-              if (signal.aborted) throw err;
-              console.warn('[chat] web search failed', err instanceof Error ? err.message : err);
-              return null;
-            }),
+            webP,
+            knowledgeP,
           ]);
+          knowledge = knowledgeResult;
 
           if (web) {
             searchInfo = web.info;
@@ -689,7 +723,7 @@ export async function runChat(
             knowledge: (knowledge?.sources.length ?? 0) + (central?.sources.length ?? 0),
           });
 
-          const ownership = await loadOwnership(db);
+          const ownership = await ownershipP;
           const system = buildSystemPrompt({
             settings,
             ownership,
@@ -716,6 +750,7 @@ export async function runChat(
             voice: Boolean(body.options.voice),
           });
 
+          const tContext = Date.now();
           // ---- Generation with fallbacks ----
           let lastErr: unknown = null;
           // stays true while every failure is a quota/limit one (then the free usage limit is reached)
@@ -742,7 +777,10 @@ export async function runChat(
               const reasoningFilter = createRedactor();
               const emit = (kind: 'delta' | 'reasoning', text: string) => {
                 if (!text) return;
-                if (kind === 'delta') content += text;
+                if (kind === 'delta') {
+                  if (!content) tFirstToken ||= Date.now();
+                  content += text;
+                }
                 else reasoning += text;
                 send({ type: kind, text });
               };
@@ -754,6 +792,7 @@ export async function runChat(
                 // Cloudflare: the account the Neurons were reserved on
                 ...(cfReservation?.ok ? { account: cfReservation.account } : {}),
                 maxTokens: modelConfig().maxOutputTokens,
+                reasoning: reasoningOn,
                 // with a fallback available, don't wait long for a stuck model
                 ...(i < chain.length - 1 ? { firstByteTimeoutMs: 15_000 } : {}),
               })) {
@@ -817,6 +856,17 @@ export async function runChat(
           if (!content.trim() && !signal.aborted) {
             throw new ProviderError('provider_error', 'The model returned an empty response.', 502);
           }
+          // timings only (no message text): where the time to the first word goes
+          console.info('[chat] timing', JSON.stringify({
+            pathway: reasoningOn ? 'reasoning' : 'fast',
+            reason: pathway.reason,
+            feature,
+            model: usedModel,
+            reserveMs: tReserved - t0,
+            contextMs: tContext - tReserved,
+            firstTokenMs: tFirstToken ? tFirstToken - t0 : null,
+            totalMs: Date.now() - t0,
+          }));
           send({ type: 'done', finishReason, model: usedModel });
         } catch (err) {
           if (err === APPROVAL_STOP || err === IMAGE_DONE) {

@@ -24,6 +24,18 @@ import {
   type ProviderMessage,
 } from './types.js';
 
+/**
+ * Gemini thinking setting for a call. Advanced Reasoning (reasoning: true) thinks and streams its
+ * thoughts. The normal pathway (reasoning: false) answers straight away. Short background calls
+ * (titles, memory, plans) also skip thinking so it can't consume their small output budget.
+ * Pro models always think.
+ */
+export function geminiThinking(id: string, p: Pick<CompletionParams, 'maxTokens' | 'reasoning'>) {
+  const think = id.includes('pro') || (p.reasoning ?? (p.maxTokens ?? 8192) > 2048);
+  if (think) return { includeThoughts: true };
+  return id.includes('lite') ? { thinkingLevel: 'minimal' } : { thinkingBudget: 0 }; // lite models reject a zero budget
+}
+
 const BASE = 'https://generativelanguage.googleapis.com/v1beta';
 export const GEMINI_PREFIX = 'gemini:';
 const CONNECT_TIMEOUT_MS = 30_000;
@@ -230,14 +242,7 @@ export class GeminiProvider implements ChatProvider {
         ...(p.json ? { responseMimeType: 'application/json' } : {}),
         ...(id.startsWith('gemini-')
           ? {
-              // Short background calls (titles, memory, plans) skip thinking so it can't
-              // consume the whole output budget; chat replies stream their thoughts.
-              thinkingConfig:
-                (p.maxTokens ?? 8192) > 2048 || id.includes('pro')
-                  ? { includeThoughts: true }
-                  : id.includes('lite')
-                    ? { thinkingLevel: 'minimal' } // lite models reject a zero budget
-                    : { thinkingBudget: 0 },
+              thinkingConfig: geminiThinking(id, p),
             }
           : {}),
       },
