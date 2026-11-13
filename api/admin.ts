@@ -83,6 +83,8 @@ import { smsOverview } from '../server/sms/log.js';
 import { usageAdmin, usageOpSchema } from '../server/usage/admin.js';
 import { loadUsageConfigInfo } from '../server/usage/allowance.js';
 import { environmentAdmin, environmentOpSchema } from '../server/environments/admin.js';
+import { apiManagement, apiManagementOpSchema } from '../server/apiPlatform/admin.js';
+import { pruneApiRecords } from '../server/apiPlatform/log.js';
 import { usageEnv, withUsageEnvironment } from '../server/environments/index.js';
 import { ENVIRONMENTS } from '../server/shared/environments.js';
 import { getOtpGateway, getSmsProvider, vynfyBalances } from '../server/sms/provider.js';
@@ -116,6 +118,7 @@ const schema = z.discriminatedUnion('action', [
   // `environment`: manage that API environment's allowances (default: the active global environment)
   z.object({ action: z.literal('usage'), op: usageOpSchema, environment: z.enum(ENVIRONMENTS).optional() }),
   z.object({ action: z.literal('environments'), op: environmentOpSchema }),
+  z.object({ action: z.literal('apiManagement'), op: apiManagementOpSchema }),
   z.object({ action: z.literal('sms') }),
   z.object({ action: z.literal('email') }),
   z.object({ action: z.literal('requests') }),
@@ -516,6 +519,11 @@ export const GET = handle(async (request) => {
     : 0;
   const activityRemoved = await pruneActivity(db).catch(() => 0);
   const emailLogRemoved = await pruneEmailLog(db).catch(() => 0);
+  // API platform: expired request logs, idempotency records and rate/concurrency counters
+  const apiRecords = await pruneApiRecords(db).catch((err) => {
+    console.error('[api] prune failed', err instanceof Error ? err.message : err);
+    return null;
+  });
   const result = await purgeDue(db);
   // Records kept after a purge (admin log entries, access request) go 30 days later.
   const retention = await cleanupPurgedRecords(db).catch((err) => {
@@ -537,6 +545,7 @@ export const GET = handle(async (request) => {
     failed: result.failed.length,
     retentionRemoved: retention.removed,
     knowledge,
+    apiRecords,
   });
 });
 
@@ -563,7 +572,8 @@ export const POST = handle(async (request) => {
       'admin_unconfigured',
       'User management needs FIREBASE_SERVICE_ACCOUNT on the server.',
     );
-  const parsed = schema.safeParse(await readJson(request, 5_000));
+  // (API Management sends integration settings and test-console input, hence the larger limit)
+  const parsed = schema.safeParse(await readJson(request, 16_000));
   if (!parsed.success) throw new HttpError(400, 'bad_request', 'Invalid request.');
   const b = parsed.data;
   const db = await adminDb();
@@ -878,6 +888,16 @@ export const POST = handle(async (request) => {
   // AI provider accounts: health, usage, cooldowns, switches (labels only; never keys or account ids)
   if (b.action === 'providers') {
     return json(await providerOverview(db), { headers: { 'cache-control': 'no-store' } });
+  }
+
+  // API Management (external applications, keys, limits): Super Admin only; key secrets are shown once
+  if (b.action === 'apiManagement') {
+    if (!isSuperAdmin(ctx.user, env().adminEmails)) {
+      await noteUnauthorizedAccess(ctx.user.uid, 'API Management', request.headers.get('user-agent'));
+      throw new HttpError(403, 'not_super_admin', 'Only the Super Admin can manage the Atlas AI API.');
+    }
+    const result = await apiManagement({ db, actor }, b.op);
+    return json(result, { headers: { 'cache-control': 'no-store' } });
   }
 
   // API Environment Manager: Super Admin only (credentials themselves are never returned)

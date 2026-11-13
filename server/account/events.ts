@@ -82,6 +82,15 @@ export const ADMIN_ACTIONS = [
   'environment_enabled',
   'environment_ceiling_changed',
   'restore_request_declined',
+  'api_integration_created',
+  'api_integration_updated',
+  'api_integration_status_changed',
+  'api_integration_deleted',
+  'api_key_created',
+  'api_key_rotated',
+  'api_key_revoked',
+  'api_key_status_changed',
+  'api_key_updated',
 ] as const;
 export type AdminAction = (typeof ADMIN_ACTIONS)[number];
 

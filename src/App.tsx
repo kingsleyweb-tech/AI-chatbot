@@ -34,6 +34,7 @@ const KnowledgeCenterPage = lazy(() => import('./features/admin/KnowledgeCenterP
 const OwnershipPage = lazy(() => import('./features/admin/OwnershipPage'));
 const ProvidersPage = lazy(() => import('./features/admin/ProvidersPage'));
 const EnvironmentsPage = lazy(() => import('./features/admin/EnvironmentsPage'));
+const ApiManagementPage = lazy(() => import('./features/admin/ApiManagementPage'));
 const UsageEnvironmentScope = lazy(() => import('./features/admin/UsageEnvironmentScope').then((m) => ({ default: m.UsageEnvironmentScope })));
 const AdminOverviewPage = lazy(() => import('./features/admin/AdminOverviewPage'));
 const UsageLimitsPage = lazy(() => import('./features/admin/UsageLimitsPage'));
@@ -57,6 +58,9 @@ const SiteHome = lazy(() => import('./features/site/home/HomePage'));
 const info = () => import('./features/site/pages/InfoPages');
 const docs = () => import('./features/site/pages/DocsPages');
 const blog = () => import('./features/site/pages/BlogPages');
+const dev = () => import('./features/site/pages/DeveloperPages');
+const DevelopersPage = lazy(() => dev().then((m) => ({ default: m.DevelopersPage })));
+const ApiSandboxPage = lazy(() => dev().then((m) => ({ default: m.ApiSandboxPage })));
 const AboutPage = lazy(() => info().then((m) => ({ default: m.AboutPage })));
 const FeaturesPage = lazy(() => info().then((m) => ({ default: m.FeaturesPage })));
 const IntegrationsPage = lazy(() => info().then((m) => ({ default: m.IntegrationsPage })));
@@ -238,6 +242,13 @@ function Routed() {
                 <Route path="/help-centre" element={<HelpCentrePage />} />
                 <Route path="/changelog" element={<ChangelogPage />} />
                 <Route path="/status" element={<StatusPage />} />
+                <Route path="/developers" element={<DevelopersPage />} />
+                <Route path="/developers/sandbox" element={<ApiSandboxPage />} />
+                <Route path="/docs/developers" element={<Navigate to="/developers" replace />} />
+                <Route path="/docs/developers/sandbox" element={<Navigate to="/developers/sandbox" replace />} />
+                <Route path="/docs/api" element={<Navigate to="/developers" replace />} />
+                <Route path="/api-docs" element={<Navigate to="/developers" replace />} />
+                <Route path="/sandbox" element={<Navigate to="/developers/sandbox" replace />} />
                 <Route path="/pricing" element={<PricingPage />} />
               </Route>
               <Route element={<AppGate />}>
@@ -277,6 +288,7 @@ function Routed() {
                 <Route path="analytics" element={<AdminOnly><UsageEnvironmentScope><UsageAnalyticsPage /></UsageEnvironmentScope></AdminOnly>} />
                 <Route path="providers" element={<AdminOnly><ProvidersPage /></AdminOnly>} />
                 <Route path="environments" element={<AdminOnly><EnvironmentsPage /></AdminOnly>} />
+                <Route path="api" element={<AdminOnly><ApiManagementPage /></AdminOnly>} />
                 <Route path="health" element={<AdminOnly><SystemHealthPage /></AdminOnly>} />
                 <Route path="logs" element={<AdminOnly><AuditLogsPage /></AdminOnly>} />
                 <Route path="access" element={<AdminOnly><AccessSettingsPage /></AdminOnly>} />

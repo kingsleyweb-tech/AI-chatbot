@@ -461,6 +461,38 @@ ElevenLabs is not part of this. It stays one shared integration, and switching e
 - **Health checks.** These run in `server/environments/health.ts`. Most use quota-free endpoints: the Cloudflare model search, OpenRouter `/key`, Tavily `/usage` and SerpAPI `account.json` (only plan figures are kept). Gemini also sends one generate request capped at one token on Flash-Lite. This is needed because Google lists models, and even counts tokens, for projects whose free tier is unavailable.
 - **Live check.** `dev/smoke-environments.ts` uses an in-memory database and makes about ten tiny real requests. It never prints secrets.
 
+## Atlas AI API for external applications (`server/apiPlatform`, `server/shared/apiPlatform.ts`, route `/admin/api`)
+
+External applications (the first planned one is a messaging app) use Atlas AI through versioned endpoints under `/api/v1`. The Super Admin manages them on the API Management page. These are internal notes; there are no public API docs.
+
+- **Routing.** Vercel Hobby allows 12 functions, so `vercel.json` rewrites `/api/v1/:path*` to `api/models.ts?v1path=…`, which hands off to `handleV1()` (`router.ts`). `dev/api-plugin.ts` does the same locally. Endpoints: `GET app`, `GET models`, `POST chat` (JSON or SSE), `conversations` (list, create, read, delete), `POST images`, `POST research` (search, answer or deep), `documents` (upload text, list, read, delete, analyze), `voice/speech`, `voice/transcriptions` and `memory`.
+- **Keys** (`keys.ts`, `apiKeys/{key_…}`). The format is `atlas_{live|test}_{16 hex id}_{43 chars of CSPRNG}`. Only the SHA-256 hash is stored, it is compared with `timingSafeEqual`, and the full key is returned once. A key can be rotated (with an optional grace period), revoked, disabled or given its own limits. An application can have up to 25 keys that are not revoked. Provider credentials are never involved.
+- **Pipeline.** A request goes through these steps in order:
+  1. Authenticate. Failures are throttled per IP.
+  2. Check CORS against the integration's origins. With no origins configured, the API is server-to-server only.
+  3. Resolve the end user from `X-Atlas-User`.
+  4. Pin the environment.
+  5. Handle `Idempotency-Key`.
+  6. Count the request (rate limits).
+  7. Take a concurrency slot.
+  8. Run the handler.
+  9. Wrap the result in the envelope (`success`, `request_id`, `api_version`, `app_id`, `conversation_id`, `data`, `usage`, `error`, `rate_limit`).
+  10. Log the request.
+
+  Errors use safe codes; unexpected 5xx messages are replaced.
+- **Isolation.** Each end user's data lives in `users/apiu_{sha256(integration:user)}`, so applications and website users never share a space. Conversations and documents also carry `apiIntegrationId`, which is checked on every access (404 otherwise). No shared knowledge base is used for applications.
+- **Engine reuse.** `startChat()` calls the normal `runChat()` with `Ctx.api` hooks (`server/access.ts`). The hooks replace the website user allowance with the integration's limits, gate images, reasoning and web search by permission, and cap output tokens. Streams are translated event by event without buffering.
+- **Permissions.** None are granted by default. Prerequisites are enforced (`chat_stream`, `models` and `reasoning` need `chat`; `deep_research` needs `research`). A missing permission returns 403 `permission_denied` with `details.permission`.
+- **Limits** (`limits.ts`). Profiles are Standard, Premium, Restricted, Unlimited and Custom; a key's limits apply on top of its application's.
+  - **Counting.** Day and month counters are in `apiStats/d-…` and `m-…`. Minute, hour and week counters are written only when such a limit is set. Each check happens after an atomic increment; a request over the limit is rolled back and answered with 429 and `Retry-After`.
+  - **Feature units.** Images, research, deep research, documents, TTS characters and STT are counted per day. A unit is given back when the work fails.
+  - **Concurrency.** Slots use 2-minute bucket counters (`apiConc`) and free themselves within 4 minutes if a function crashes.
+  - **Hard ceilings.** These always apply, including on Unlimited: 600/min per instance, 20 concurrent per instance, 100k input characters, 16k output tokens and 2.5M document characters. The existing provider safeguards (Temporary ceiling, Cloudflare Neuron caps, ElevenLabs credit caps) also stay in force.
+- **Environments** (`env.ts`). Each key mode uses either the active global environment or a fixed one allowed for the integration. A provider whose environment is not allowed is switched off for that request. The request then fails (`environment_not_permitted`) instead of falling back to another environment. ElevenLabs stays shared.
+- **Records.**
+  - **Logs and stats.** `apiLogs` holds metadata only: no prompts, keys or content. Rows are kept for 30 days and pruned by the daily cron, together with expired `apiIdem`, `apiRate` and `apiConc` records. Day stats feed the analytics.
+  - **Audit.** Admin changes go to `apiAudit` (with before and after, failures included) and `adminLogs`. All of these collections are server-only under the existing Firestore rules.
+
 ## Known limitations
 
 - **Created images use Firestore storage** (about 0.3-2 MB each, in chunks) because Firebase Storage needs the Blaze plan. Spark includes 1 GiB in total.
@@ -473,4 +505,5 @@ ElevenLabs is not part of this. It stays one shared integration, and switching e
 - **Vector search is in-process,** fine for one person's data (hundreds of memories, thousands of chunks). Larger scale would need Firestore vector indexes or a vector database.
 - **Free models are rate-limited** by every provider. When all of them are at their limit, the user is told to try again later; Atlas AI never switches to paid usage.
 - **Multi-factor authentication is not offered.** Firebase MFA (SMS or TOTP second factor) needs the Identity Platform upgrade of the Firebase project. Phone verification here is a one-time check of the number, not a second factor at each sign-in.
+- **API documents are text only.** PDF, DOCX, XLSX and PPTX must be extracted by the calling application; `content_base64` accepts plain-text formats only (otherwise 415). Generated images come back inline as data URLs. Streaming requests cannot be replayed with an Idempotency-Key. The burst and hard concurrency ceilings are per server instance.
 - **App Check is not enabled.** It needs a reCAPTCHA Enterprise site key; add `VITE_APPCHECK_SITE_KEY` and enforcement in the console if wanted.

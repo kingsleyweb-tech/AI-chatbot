@@ -270,7 +270,8 @@ export async function runChat(
   const lastAssistant = [...body.messages].reverse().find((m) => m.role === 'assistant');
   const attachedImage = lastUser.attachments?.find((a) => a.kind === 'image');
   const lastImage = convDoc?.data.lastImage ?? null;
-  const imageIntent = cloudflareConfigured()
+  // a connected application without the image permission never reaches the image model
+  const imageIntent = cloudflareConfigured() && ctx.api?.images !== false
     ? detectImageIntent(lastUser.content, {
         hasImageAttachment: Boolean(attachedImage),
         previousImage: Boolean(lastImage?.id && lastAssistant && IMAGE_REPLY_PREFIX.test(lastAssistant.content)),
@@ -298,11 +299,16 @@ export async function runChat(
   });
   const switchable = thinkingSwitchable(body.model);
   const alwaysReasons = !switchable && Boolean(catalog?.models.find((m) => m.id === body.model)?.capabilities.reasoning);
-  let reasoningOn = alwaysReasons || (switchable && pathway.pathway === 'reasoning');
+  // (a connected application without the reasoning permission always gets the fast pathway; models
+  // that always reason are refused for it before this point, see server/apiPlatform/chat.ts)
+  let reasoningOn = (alwaysReasons || (switchable && pathway.pathway === 'reasoning')) && ctx.api?.reasoning !== false;
   const special: FeatureId | null = imageIntent ? 'images' : body.options.deepResearch ? 'research' : body.options.documentIds.length ? 'documents' : null;
   let feature: FeatureId = special ?? (reasoningOn ? 'reasoning' : 'chat');
+  // connected applications are counted against their own limits, never a person's allowance
   const reserve = (f: FeatureId) =>
-    reserveFor({ uid, admin: ctx.admin, feature: f, requestId: body.assistantMessageId, detail: { deepResearch: body.options.deepResearch } });
+    ctx.api
+      ? ctx.api.reserve(f)
+      : reserveFor({ uid, admin: ctx.admin, feature: f, requestId: body.assistantMessageId, detail: { deepResearch: body.options.deepResearch } });
   let allowance: Awaited<ReturnType<typeof reserveFor>>;
   try {
     allowance = await reserve(feature);
@@ -583,7 +589,8 @@ export async function runChat(
           // The knowledge base runs alongside the memory and past-chat reads below; only the web
           // decision waits for it (its result decides whether a question still needs the web).
           const knowledgeP: Promise<KnowledgeContext | null> = (async () => {
-            if (trivial) return null;
+            // the shared knowledge base is for approved Atlas AI members, not connected applications
+            if (trivial || ctx.api) return null;
             const previous = body.messages.filter((m) => m.role === 'user').slice(-2, -1)[0]?.content ?? '';
             // short follow-ups ("what services do they offer?") are searched with the previous question
             const kbText = previous && looksLikeFollowUp(lastUser.content) ? `${previous.slice(0, 600)}\n${queryText}` : queryText;
@@ -604,8 +611,9 @@ export async function runChat(
             }
             return knowledge;
           })();
+          // (a connected application without the web research permission never searches the web)
           const webP = knowledgeP.then((k) =>
-            gatherWebContext({
+            ctx.api?.web === false ? null : gatherWebContext({
               db,
               uid,
               turns: body.messages,
@@ -618,6 +626,7 @@ export async function runChat(
               onDecision: (d) => {
                 count(['searchDecisions', d.action]);
                 count(['searchDecisions', 'reasons', d.reason]);
+                if (d.action !== 'none') ctx.api?.onWebSearch(d.action === 'research');
               },
             }).catch((err) => {
               if (signal.aborted) throw err;
@@ -805,7 +814,7 @@ export async function runChat(
                 signal,
                 // Cloudflare: the account the Neurons were reserved on
                 ...(cfReservation?.ok ? { account: cfReservation.account } : {}),
-                maxTokens: modelConfig().maxOutputTokens,
+                maxTokens: Math.min(modelConfig().maxOutputTokens, ctx.api?.maxOutputTokens ?? Infinity),
                 reasoning: reasoningOn,
                 // with a fallback available, don't wait long for a stuck model
                 ...(i < chain.length - 1 ? { firstByteTimeoutMs: 15_000 } : {}),

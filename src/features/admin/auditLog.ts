@@ -71,6 +71,15 @@ export const ACTION_LABELS: Record<string, string> = {
   environment_enabled: 'Switched an API environment back on',
   environment_ceiling_changed: 'Changed the Temporary environment ceiling',
   restore_request_declined: 'Declined a restore request',
+  api_integration_created: 'Created an API integration',
+  api_integration_updated: 'Changed an API integration',
+  api_integration_status_changed: 'Changed an API integration’s status',
+  api_integration_deleted: 'Deleted an API integration',
+  api_key_created: 'Created an API key',
+  api_key_rotated: 'Rotated an API key',
+  api_key_revoked: 'Revoked an API key',
+  api_key_status_changed: 'Changed an API key’s status',
+  api_key_updated: 'Changed an API key',
 };
 
 /** Groups for the audit log filter */
@@ -82,5 +91,6 @@ export const ACTION_GROUPS: { id: string; label: string; match: (a: string) => b
   { id: 'support', label: 'Support and help', match: (a) => a.startsWith('support_') || a.startsWith('help_') },
   { id: 'messages', label: 'Messages', match: (a) => a.startsWith('message_') },
   { id: 'environments', label: 'API environments', match: (a) => a.startsWith('environment_') },
+  { id: 'api', label: 'API management', match: (a) => a.startsWith('api_') },
   { id: 'settings', label: 'Settings and ownership', match: (a) => ['billing_policy_changed', 'news_feeds_changed', 'ownership_changed'].includes(a) },
 ];

@@ -15,7 +15,10 @@ export function apiDevPlugin(): Plugin {
       server.middlewares.use(async (req: IncomingMessage, res: ServerResponse, next) => {
         const url = new URL(req.url ?? '/', 'http://localhost');
         if (!url.pathname.startsWith('/api/')) return next();
-        const name = url.pathname.slice(5).replace(/[^a-z0-9-]/gi, '');
+        // /api/v1/... is served by api/models.ts (the same rewrite as vercel.json)
+        const v1 = url.pathname === '/api/v1' || url.pathname.startsWith('/api/v1/');
+        if (v1) url.searchParams.set('v1path', url.pathname.slice(8));
+        const name = v1 ? 'models' : url.pathname.slice(5).replace(/[^a-z0-9-]/gi, '');
         try {
           const mod = (await server.ssrLoadModule(`/api/${name}.ts`)) as Record<
             string,

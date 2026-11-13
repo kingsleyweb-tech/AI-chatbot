@@ -67,6 +67,7 @@ export const NAV: (NavGroup | NavLink)[] = [
           { label: 'Documentation', href: '/docs', description: 'Guides for every part of Atlas AI', icon: 'BookOpen' },
           { label: 'Help Centre', href: '/help-centre', description: 'Quick answers to common questions', icon: 'LifeBuoy' },
           { label: 'Blog', href: '/blog', description: 'Articles about how Atlas AI works', icon: 'Newspaper' },
+          { label: 'API for developers', href: '/developers', description: 'Base URL, endpoints, formats and a live sandbox', icon: 'Blocks' },
         ],
       },
       {
@@ -101,6 +102,8 @@ export const FOOTER: { heading: string; links: NavLink[] }[] = [
       { label: 'Help Centre', href: '/help-centre' },
       { label: 'Blog', href: '/blog' },
       { label: 'Getting started', href: '/docs/getting-started' },
+      { label: 'API documentation', href: '/developers' },
+      { label: 'API sandbox', href: '/developers/sandbox' },
     ],
   },
   {

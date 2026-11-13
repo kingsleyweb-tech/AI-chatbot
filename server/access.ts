@@ -5,6 +5,8 @@ import { env } from './env.js';
 import { Firestore } from './firestore.js';
 import { HttpError } from './http.js';
 import { consentCurrent, type ConsentRecord } from './shared/legal.js';
+import type { Reservation } from './usage/allowance.js';
+import type { FeatureId } from './usage/policy.js';
 
 export interface AccessConfig {
   allowedEmails?: string[];
@@ -102,6 +104,28 @@ export interface Ctx {
   user: AuthUser;
   db: Firestore;
   admin: boolean;
+  /**
+   * Set only for requests from a connected application (Atlas AI API, server/apiPlatform), never
+   * for signed-in people. The application's own permissions and limits then apply instead of the
+   * website user allowances, which stay separate.
+   */
+  api?: ApiCallerHooks;
+}
+
+export interface ApiCallerHooks {
+  integrationId: string;
+  /** reserves the application's own feature units (images, research ...) instead of a user allowance */
+  reserve(feature: FeatureId): Promise<Reservation>;
+  /** image generation and editing permitted */
+  images: boolean;
+  /** Advanced Reasoning permitted (otherwise the fast pathway is always used) */
+  reasoning: boolean;
+  /** output token cap of the application (the model's own cap still applies) */
+  maxOutputTokens: number | null;
+  /** web search and research permitted (otherwise the web is never searched) */
+  web: boolean;
+  /** a web search or research run started (counted against the application's research quota) */
+  onWebSearch(research: boolean): void;
 }
 
 let configCache: { value: AccessConfig | null; at: number } | null = null;

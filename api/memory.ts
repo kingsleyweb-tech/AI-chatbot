@@ -1,11 +1,9 @@
 import { z } from 'zod';
 import { requireAllowedUser } from '../server/access.js';
-import type { Firestore } from '../server/firestore.js';
 import { handle, HttpError, json, readJson } from '../server/http.js';
-import { clearIndex, removeConversationFromIndex } from '../server/memory/history.js';
+import { clearIndex } from '../server/memory/history.js';
+import { deleteConversation } from '../server/memory/deleteConversation.js';
 import { reembedMemory } from '../server/memory/memory.js';
-import { removeConversationFromProjects } from '../server/memory/projects.js';
-import { deleteImageWrites, type GeneratedImageMeta } from '../server/images/store.js';
 
 const id = z.string().regex(/^[A-Za-z0-9_-]+$/).max(128);
 
@@ -16,57 +14,6 @@ const schema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('clearMemories'), includeProjects: z.boolean().optional() }),
   z.object({ action: z.literal('clearHistoryIndex') }),
 ]);
-
-/**
- * Deletion policy for a conversation: its messages, the conversation doc, its
- * summary vector and its history-index entries are deleted; automatic
- * memories extracted from it are deleted; project briefs that drew on it are
- * rebuilt from the remaining chats (or deleted when nothing remains).
- * Pictures created in the conversation (metadata and image data) are deleted.
- * Manually written memories and saved responses are kept.
- */
-async function deleteConversation(db: Firestore, uid: string, conversationId: string) {
-  const base = `users/${uid}`;
-  const memories = await db.list<{ origin?: string }>(`${base}/memories`, {
-    where: [['sourceConversationId', 'EQUAL', conversationId]],
-    limit: 500,
-  });
-  const auto = memories.filter((m) => m.data.origin !== 'manual');
-  await db.commit(auto.flatMap((m) => [
-    { op: 'delete' as const, path: `${base}/memories/${m.id}` },
-    { op: 'delete' as const, path: `${base}/memoryVectors/${m.id}` },
-  ]));
-  const indexEntries = await removeConversationFromIndex(db, uid, conversationId);
-  await db.delete(`${base}/convVectors/${conversationId}`);
-  // messages in pages (runs with the user's token, so only their own chat can be touched)
-  const convPath = `${base}/conversations/${conversationId}`;
-  for (let page = 0; page < 50; page++) {
-    const msgs = await db.list(`${convPath}/messages`, { limit: 300 });
-    if (!msgs.length) break;
-    await db.commit(msgs.map((m) => ({ op: 'delete' as const, path: m.path })));
-  }
-  await db.delete(convPath);
-  const images = await deleteConversationImages(db, uid, conversationId);
-  // after the conversation itself is gone, so rebuilt briefs can't draw on it
-  const projects = await removeConversationFromProjects({ db, uid, conversationId });
-  return { memories: auto.length, indexEntries, projects, images };
-}
-
-/** Delete every picture created in a conversation (the owner may delete their own images). */
-async function deleteConversationImages(db: Firestore, uid: string, conversationId: string): Promise<number> {
-  let deleted = 0;
-  for (let page = 0; page < 20; page++) {
-    const imgs = await db.list<GeneratedImageMeta>(`users/${uid}/generatedImages`, {
-      where: [['conversationId', 'EQUAL', conversationId]],
-      limit: 50,
-    });
-    if (!imgs.length) break;
-    await db.commit(imgs.flatMap((i) => deleteImageWrites(uid, { id: i.id, chunks: i.data.chunks })));
-    deleted += imgs.length;
-    if (imgs.length < 50) break;
-  }
-  return deleted;
-}
 
 /** Memory maintenance for the signed-in user (always their own data, under the security rules). */
 export const POST = handle(async (request) => {
