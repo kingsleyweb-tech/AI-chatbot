@@ -10,6 +10,7 @@ import { AuthProvider, useAuth } from './state/auth';
 import { CatalogProvider } from './state/catalog';
 import { SettingsProvider } from './state/settings';
 import { ToastProvider } from './state/toast';
+import { MaintenanceScreen } from './features/shell/MaintenanceScreen';
 
 const AuthPages = lazy(() => import('./features/auth/AuthPages'));
 const AppShell = lazy(() => import('./features/shell/AppShell'));
@@ -36,6 +37,7 @@ const ProvidersPage = lazy(() => import('./features/admin/ProvidersPage'));
 const EnvironmentsPage = lazy(() => import('./features/admin/EnvironmentsPage'));
 const ApiManagementPage = lazy(() => import('./features/admin/ApiManagementPage'));
 const UsageEnvironmentScope = lazy(() => import('./features/admin/UsageEnvironmentScope').then((m) => ({ default: m.UsageEnvironmentScope })));
+const MaintenancePage = lazy(() => import('./features/admin/MaintenancePage'));
 const AdminOverviewPage = lazy(() => import('./features/admin/AdminOverviewPage'));
 const UsageLimitsPage = lazy(() => import('./features/admin/UsageLimitsPage'));
 const UnlimitedAccessPage = lazy(() => import('./features/admin/UnlimitedAccessPage'));
@@ -98,6 +100,8 @@ function Protected({ children }: { children: ReactNode }) {
   if (access === 'phone') return <Navigate to="/verify-phone" replace />;
   if (access === 'unverified') return <Navigate to="/verify" replace />;
   if (access === 'consent') return <Navigate to="/consent" replace />;
+  // Maintenance mode (administrators are never in this state): a notice instead of the app
+  if (access === 'maintenance') return <MaintenanceScreen />;
   if (access === 'request' || access === 'pending' || access === 'rejected') return <Navigate to="/request-access" replace />;
   if (access === 'denied' || access === 'error' || access === 'suspended' || access === 'deleted') return <Navigate to="/denied" replace />;
   return <>{children}</>;
@@ -292,6 +296,7 @@ function Routed() {
                 <Route path="health" element={<AdminOnly><SystemHealthPage /></AdminOnly>} />
                 <Route path="logs" element={<AdminOnly><AuditLogsPage /></AdminOnly>} />
                 <Route path="access" element={<AdminOnly><AccessSettingsPage /></AdminOnly>} />
+                <Route path="maintenance" element={<AdminOnly><MaintenancePage /></AdminOnly>} />
                 <Route path="support" element={<AdminOnly><SupportAdminPage /></AdminOnly>} />
                 <Route path="support/:ref" element={<AdminOnly><SupportReportAdminPage /></AdminOnly>} />
                 <Route path="sms" element={<AdminOnly><SmsAdminPage /></AdminOnly>} />

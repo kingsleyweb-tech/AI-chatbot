@@ -33,6 +33,7 @@ import {
 import { accountAdmin, adminConfigured, adminDb, mergeCustomClaims } from '../server/admin.js';
 import { isSuperAdmin } from '../server/chat/ownership.js';
 import { maskPhone } from '../server/auth/phone.js';
+import { loadMaintenance, maintenanceNotice } from '../server/maintenance.js';
 import { env } from '../server/env.js';
 import { requireUser } from '../server/auth.js';
 import { SERVER_TIME } from '../server/firestore.js';
@@ -263,11 +264,15 @@ export const POST = handle(async (request) => {
         console.error('[access] super admin claim update failed', err instanceof Error ? err.message : 'unknown');
       }
     }
+    // Maintenance mode: approved non-admins get the notice instead of the app (admins keep working)
+    const maintenance =
+      gate.state === 'approved' && !gate.admin ? maintenanceNotice(await loadMaintenance(db)) : null;
     return json({
       ok: true,
       configured: true,
       state: block?.code === 'session_revoked' ? 'revoked' : gate.state,
       admin: gate.admin,
+      maintenance,
       superAdmin,
       refreshToken,
       accessStatus: profile.accessStatus ?? 'pending',

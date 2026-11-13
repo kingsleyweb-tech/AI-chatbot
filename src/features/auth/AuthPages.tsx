@@ -50,7 +50,9 @@ type Mode = 'login' | 'register' | 'reset' | 'verify' | 'phone' | 'denied' | 're
 function routeFor(access: AccessState): string | null {
   switch (access) {
     case 'allowed':
+    case 'maintenance':
       // Every sign-in opens New Chat; the page before sign-out is never restored.
+      // During maintenance "/" shows the maintenance notice instead.
       return '/';
     case 'phone':
       return '/verify-phone';

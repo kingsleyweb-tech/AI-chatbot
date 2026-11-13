@@ -18,6 +18,7 @@ import {
   Radio,
   ScrollText,
   ShieldCheck,
+  Construction,
   Webhook,
   UserPlus,
   Users,
@@ -109,6 +110,7 @@ export function AdminSidebar({ onClose, onCollapse }: { onClose?: () => void; on
               <NavItem to="/admin/providers" icon={<Activity className={icon} />} label="Provider Monitoring" onClick={close} />
               <NavItem to="/admin/api" icon={<Webhook className={icon} />} label="API Management" onClick={close} />
               <NavItem to="/admin/environments" icon={<Layers className={icon} />} label="API Environments" onClick={close} />
+              <NavItem to="/admin/maintenance" icon={<Construction className={icon} />} label="Maintenance Mode" onClick={close} />
               <NavItem to="/admin/health" icon={<HeartPulse className={icon} />} label="System Health" onClick={close} />
               <NavItem to="/admin/logs" icon={<ScrollText className={icon} />} label="Audit Logs" onClick={close} />
             </div>

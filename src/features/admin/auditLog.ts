@@ -45,6 +45,9 @@ export const ACTION_LABELS: Record<string, string> = {
   request_rejected: 'Access request rejected',
   request_deleted: 'Access request deleted',
   ownership_changed: 'Changed the ownership record',
+  maintenance_on: 'Turned maintenance mode on',
+  maintenance_off: 'Turned maintenance mode off',
+  maintenance_updated: 'Changed the maintenance notice',
   support_replied: 'Replied to a support report',
   support_status_changed: 'Changed a support report status',
   support_priority_changed: 'Changed a support report priority',
@@ -92,5 +95,5 @@ export const ACTION_GROUPS: { id: string; label: string; match: (a: string) => b
   { id: 'messages', label: 'Messages', match: (a) => a.startsWith('message_') },
   { id: 'environments', label: 'API environments', match: (a) => a.startsWith('environment_') },
   { id: 'api', label: 'API management', match: (a) => a.startsWith('api_') },
-  { id: 'settings', label: 'Settings and ownership', match: (a) => ['billing_policy_changed', 'news_feeds_changed', 'ownership_changed'].includes(a) },
+  { id: 'settings', label: 'Settings and ownership', match: (a) => ['billing_policy_changed', 'news_feeds_changed', 'ownership_changed'].includes(a) || a.startsWith('maintenance_') },
 ];

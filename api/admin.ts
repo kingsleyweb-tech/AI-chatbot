@@ -85,6 +85,7 @@ import { loadUsageConfigInfo } from '../server/usage/allowance.js';
 import { environmentAdmin, environmentOpSchema } from '../server/environments/admin.js';
 import { apiManagement, apiManagementOpSchema } from '../server/apiPlatform/admin.js';
 import { pruneApiRecords } from '../server/apiPlatform/log.js';
+import { loadMaintenance, MAINTENANCE_PATH, saveMaintenance } from '../server/maintenance.js';
 import { usageEnv, withUsageEnvironment } from '../server/environments/index.js';
 import { ENVIRONMENTS } from '../server/shared/environments.js';
 import { getOtpGateway, getSmsProvider, vynfyBalances } from '../server/sms/provider.js';
@@ -175,6 +176,13 @@ const schema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('newsFeedRemove'), id: feedId }),
   z.object({ action: z.literal('billingGet') }),
   z.object({ action: z.literal('identityGet') }),
+  z.object({ action: z.literal('maintenanceGet') }),
+  z.object({
+    action: z.literal('maintenanceSet'),
+    enabled: z.boolean(),
+    title: z.string().trim().min(1).max(120).optional(),
+    message: z.string().trim().min(1).max(600).optional(),
+  }),
   z.object({
     action: z.literal('identitySet'),
     creator: z.string().max(80),
@@ -888,6 +896,29 @@ export const POST = handle(async (request) => {
   // AI provider accounts: health, usage, cooldowns, switches (labels only; never keys or account ids)
   if (b.action === 'providers') {
     return json(await providerOverview(db), { headers: { 'cache-control': 'no-store' } });
+  }
+
+  // Maintenance mode: administrators can view it; only the Super Admin can switch it or change the notice
+  if (b.action === 'maintenanceGet' || b.action === 'maintenanceSet') {
+    const superAdmin = isSuperAdmin(ctx.user, env().adminEmails);
+    if (b.action === 'maintenanceSet') {
+      if (!superAdmin) {
+        await noteUnauthorizedAccess(ctx.user.uid, 'Maintenance mode', request.headers.get('user-agent'));
+        throw new HttpError(403, 'not_super_admin', 'Only the Super Admin can switch maintenance mode.');
+      }
+      const before = await loadMaintenance(db, true);
+      const saved = await saveMaintenance(db, b, ctx.user.email ?? ctx.user.uid);
+      const action = saved.enabled === before.enabled ? 'maintenance_updated' : saved.enabled ? 'maintenance_on' : 'maintenance_off';
+      await recordAdminAction(db, {
+        action,
+        adminUid: ctx.user.uid,
+        adminEmail: ctx.user.email,
+        targetUid: MAINTENANCE_PATH,
+        targetEmail: null,
+        detail: `${saved.enabled ? 'On' : 'Off'}: "${saved.title}"`,
+      });
+    }
+    return json({ maintenance: await loadMaintenance(db, true), superAdmin }, { headers: { 'cache-control': 'no-store' } });
   }
 
   // API Management (external applications, keys, limits): Super Admin only; key secrets are shown once

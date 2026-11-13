@@ -4,6 +4,7 @@ import { needsPhone, requireUser, type AuthUser } from './auth.js';
 import { env } from './env.js';
 import { Firestore } from './firestore.js';
 import { HttpError } from './http.js';
+import { loadMaintenance, maintenanceError } from './maintenance.js';
 import { consentCurrent, type ConsentRecord } from './shared/legal.js';
 import type { Reservation } from './usage/allowance.js';
 import type { FeatureId } from './usage/policy.js';
@@ -232,6 +233,11 @@ export async function requireAllowedUser(request: Request): Promise<Ctx> {
       if (block) throw block;
       const r = decideAccess(user, profile?.data, config, env().adminEmails);
       if (r.state !== 'approved') throw denied(r.state);
+      // Maintenance mode: administrators keep working, everyone else is refused (503 maintenance).
+      if (!r.admin) {
+        const m = await loadMaintenance(sdb);
+        if (m.enabled) throw maintenanceError(m);
+      }
       await noteActive(sdb, user.uid, (profile?.data as { lastActiveAt?: number } | undefined)?.lastActiveAt);
       return { user, db, admin: r.admin };
     } catch (err) {

@@ -24,6 +24,7 @@ import { DEFAULT_SETTINGS, type UserProfile } from '@/lib/types';
  * deleted     scheduled for deletion by an administrator
  * error       access or profile could not be checked (retry offered)
  * allowed     full access
+ * maintenance the app is switched off for maintenance (administrators are never in this state)
  */
 export type AccessState =
   | 'loading'
@@ -38,6 +39,7 @@ export type AccessState =
   | 'suspended'
   | 'deleted'
   | 'allowed'
+  | 'maintenance'
   | 'error';
 
 /** The signed-in person's own access request, as the server reports it. */
@@ -56,6 +58,11 @@ export interface AccessInfo {
   profile: { displayName: string | null; email: string | null; phoneMasked: string | null; phoneVerified: boolean } | null;
 }
 
+export interface MaintenanceNotice {
+  title: string;
+  message: string;
+}
+
 interface AuthCtx {
   user: User | null;
   profile: UserProfile | null;
@@ -66,6 +73,8 @@ interface AuthCtx {
   accessError: string | null;
   /** access request and profile details for the request / pending screens */
   accessInfo: AccessInfo;
+  /** title and message of the maintenance notice (access === 'maintenance') */
+  maintenance: MaintenanceNotice | null;
   /** an error from a redirect sign-in that came back to the app */
   signInError: string | null;
   clearSignInError: () => void;
@@ -102,6 +111,7 @@ interface Decision {
   provider: string | null;
   error?: string;
   info?: AccessInfo;
+  maintenance?: MaintenanceNotice | null;
   /** the session was revoked (password reset, sign out everywhere): sign out */
   revoked?: boolean;
   /**
@@ -144,6 +154,8 @@ interface ServerAccess {
   /** the server updated this account's Super Admin claim: refresh the ID token */
   refreshToken?: boolean;
   needsSettings?: boolean;
+  /** set while the app is in maintenance (never for administrators) */
+  maintenance?: MaintenanceNotice | null;
   request?: OwnAccessRequest | null;
   profile?: AccessInfo['profile'];
 }
@@ -160,6 +172,7 @@ function decisionFrom(r: ServerAccess, provider: string | null): Decision | null
   const admin = Boolean(r.admin);
   switch (r.state) {
     case 'approved':
+      if (r.maintenance && !admin) return { state: 'maintenance', admin: false, provider, info, maintenance: r.maintenance };
       return { state: 'allowed', admin, provider, info, server: { needsSettings: Boolean(r.needsSettings) } };
     case 'revoked':
       return { state: 'signed-out', admin: false, provider, revoked: true };
@@ -289,6 +302,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [provider, setProvider] = useState<string | null>(null);
   const [signInError, setSignInError] = useState<string | null>(null);
   const [accessInfo, setAccessInfo] = useState<AccessInfo>({ request: null, profile: null });
+  const [maintenance, setMaintenance] = useState<MaintenanceNotice | null>(null);
   const [accessError, setAccessError] = useState<string | null>(
     firebaseConfigured ? null : 'Firebase is not configured. Set the VITE_FIREBASE_* environment variables.',
   );
@@ -366,6 +380,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setProvider(r.provider);
     setAccessError(r.error ?? null);
     setAccessInfo(r.info ?? { request: null, profile: null });
+    setMaintenance(r.state === 'maintenance' ? (r.maintenance ?? null) : null);
     setAccess(r.state);
   }, []);
 
@@ -445,6 +460,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       provider,
       accessError,
       accessInfo,
+      maintenance,
       signInError,
       clearSignInError: () => setSignInError(null),
       refreshAccess: async () => {
@@ -456,7 +472,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Full sign-out: security log, other tabs, Firebase, local session data, then a fresh /login.
       signOut: () => endSession('user'),
     }),
-    [user, profile, access, admin, provider, accessError, accessInfo, signInError, evaluate],
+    [user, profile, access, admin, provider, accessError, accessInfo, maintenance, signInError, evaluate],
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
