@@ -52,7 +52,7 @@ function enc(v: unknown): unknown {
 }
 
 /** Accepted current Terms/Privacy (server/shared/legal.ts); seeded profiles get it unless a test sets `consent`. */
-const CONSENT = { termsVersion: '1.4', privacyVersion: '1.4', acceptedAt: 1, method: 'google' };
+const CONSENT = { termsVersion: '1.5', privacyVersion: '1.5', acceptedAt: 1, method: 'google' };
 
 async function call(who: Who, method: string, path: string, data?: object): Promise<number> {
   if (

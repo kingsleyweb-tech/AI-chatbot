@@ -5,10 +5,10 @@ import { CONTACT_EMAIL, PRIVACY, TERMS } from './content';
 const CONTACT = 'kingsleyanaab99@gmail.com';
 const texts = (d: typeof PRIVACY) => [d.title, d.intro, ...d.sections.flatMap((s) => [s.heading, ...(s.paragraphs ?? []), ...(s.bullets ?? [])])];
 
-describe('legal documents (version 1.4)', () => {
-  it('both documents are version 1.4', () => {
-    expect(TERMS_VERSION).toBe('1.4');
-    expect(PRIVACY_VERSION).toBe('1.4');
+describe('legal documents (version 1.5)', () => {
+  it('both documents are version 1.5', () => {
+    expect(TERMS_VERSION).toBe('1.5');
+    expect(PRIVACY_VERSION).toBe('1.5');
   });
 
   for (const d of [PRIVACY, TERMS]) {

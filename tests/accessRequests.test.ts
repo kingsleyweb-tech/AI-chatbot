@@ -42,7 +42,7 @@ const password = (o: Partial<AuthUser> = {}): AuthUser =>
 
 /** current Terms/Privacy accepted (server/shared/legal.ts) */
 const C = {
-  consent: { termsVersion: '1.4', privacyVersion: '1.4', acceptedAt: 1, method: 'google' as const },
+  consent: { termsVersion: '1.5', privacyVersion: '1.5', acceptedAt: 1, method: 'google' as const },
 };
 const consented = (uid: string) =>
   db.docs.set(`users/${uid}`, { ...(db.docs.get(`users/${uid}`) ?? {}), ...C });

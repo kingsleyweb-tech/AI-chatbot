@@ -199,7 +199,7 @@ Save a conversation or a single response from its menu. Everything you saved is 
 
 ## Exporting
 
-**Settings → Download your data** exports your conversations, memories and other records as a file.`,
+**Settings → Security → Export your data** downloads your profile, conversations, memories, projects and activity, as an easy-to-read **PDF** or a complete **JSON** file. To export a single conversation, use **Export as PDF** (or Markdown or text) in that conversation's menu.`,
   },
 
   // ---------------------------------------------------------------- Research & search
@@ -418,7 +418,7 @@ Check your status on the request screen with **Refresh status**. The app opens a
     summary: 'Download your data, or delete your account.',
     body: `## Download your data
 
-**Settings → Download your data** exports your conversations, memories and other records as a file.
+**Settings → Security → Export your data** downloads your profile, conversations, memories, projects and activity, as an easy-to-read **PDF** or a complete **JSON** file. To export a single conversation, use **Export as PDF** (or Markdown or text) in that conversation's menu.
 
 ## Delete your account
 
@@ -441,7 +441,7 @@ To answer you, your message and relevant context go through the Atlas server to 
 
 ## Administrators
 
-Administrators manage accounts and access. They cannot read your conversations in the app.
+Administrators manage accounts and access. They can see account details, when each account was last active and a log of account events such as sign-ins, but they cannot read your conversations in the app.
 
 ## Analytics
 

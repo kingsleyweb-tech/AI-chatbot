@@ -1,5 +1,5 @@
 /**
- * Public policies alongside the Privacy Policy and Terms (version 1.4, accepted
+ * Public policies alongside the Privacy Policy and Terms (version 1.5, accepted
  * by users). Every statement is checked against the code; nothing is invented.
  * Change `updated` whenever a policy changes.
  */
@@ -12,7 +12,7 @@ export interface Policy {
   body: string;
 }
 
-export const POLICIES_UPDATED = '9 November 2026';
+export const POLICIES_UPDATED = '13 November 2026';
 
 export const POLICIES: Record<Policy['slug'], Policy> = {
   cookies: {
@@ -30,7 +30,8 @@ These are needed for Atlas AI to work and are always on. They stay in your brows
 | Device identifier | Local storage (\`atlas.deviceId\`) | Recognises this device for session security and new-device alerts |
 | Preferences | Local storage (\`tessera.appearance\`, \`tessera.sidebar\`, \`atlas:translateTarget\`) | Theme, accent colour, sidebar and last translation language |
 | Model list cache | Local storage (\`tessera.catalog.v1\`) | Opens the model list faster |
-| Reminders | Local storage (\`atlas.phoneReminderShown\`, \`atlas.emailReminderShown\`) | Avoids showing the same reminder twice |
+| Reminders | Local storage (\`atlas.phoneReminderShown\`, \`atlas.usageWarnings\`, \`atlas.greeting.last\`) and session storage (\`atlas.emailReminderShown\`) | Avoids showing the same reminder, usage warning or greeting twice |
+| Sign-in and update helpers | Local storage (\`atlas.redirect\`) and session storage (\`atlas:chunk-reload\`) | Completes Google sign-in in the installed app, and reloads once after an app update |
 | Offline copy | Service worker cache | Lets the installed app open quickly and offline |
 | Analytics choice | Local storage (\`atlas.analyticsConsent\`) | Remembers whether you allowed analytics |
 

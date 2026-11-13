@@ -280,7 +280,7 @@ export const READY_TEMPLATES: ReadyTemplate[] = [
     hint: 'They asked for a copy of their data.',
     sms: 'Hi {name}, you can download all your Atlas AI data any time in Settings > Security > Export your data.',
     subject: 'How to download your Atlas AI data',
-    body: `Hi {name},\n\nYou can download a copy of your data at any time: open Settings › Security and choose Export your data. The file includes your profile, conversations, memories and projects.\n\n${HELP}${SIGN_OFF}`,
+    body: `Hi {name},\n\nYou can download a copy of your data at any time: open Settings › Security and choose Export your data. You can download it as an easy-to-read PDF or a complete JSON file, and it includes your profile, conversations, memories and projects.\n\n${HELP}${SIGN_OFF}`,
   },
 
   /* ================================================================ announcements */

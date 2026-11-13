@@ -9,6 +9,28 @@ export interface Release {
 
 export const RELEASES: Release[] = [
   {
+    date: '2026-11-13',
+    version: '1.22.0',
+    title: 'Delete your account yourself, and export as PDF',
+    tag: 'New',
+    items: [
+      'Delete your account in Settings → Security, confirmed with a code sent to your email',
+      'Change your mind for 30 days: Cancel deletion in the email, or Ask to restore it on the sign-in screen',
+      'A reminder email 7 days before an account is permanently deleted',
+      'Export your data as an easy-to-read PDF, or a single conversation as PDF',
+    ],
+  },
+  {
+    date: '2026-11-13',
+    title: 'Privacy Policy and Terms of Use version 1.5',
+    tag: 'Improved',
+    items: [
+      'Describe self-service deletion, restore requests and PDF export',
+      'Explain the emails Atlas AI sends through Brevo and what is recorded about them',
+      'Explain the last-active time and the account activity log that administrators can see (never your conversations)',
+    ],
+  },
+  {
     date: '2026-11-09',
     title: 'Messages to users, approval notices and sign-in with phone',
     tag: 'New',

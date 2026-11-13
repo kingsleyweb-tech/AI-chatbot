@@ -294,7 +294,7 @@ describe('access request after phone verification', () => {
       displayName: 'Kojo',
       phoneNumber: '+233201234567',
       phoneVerified: true,
-      consent: { termsVersion: '1.4', privacyVersion: '1.4', acceptedAt: 1, method: 'password' },
+      consent: { termsVersion: '1.5', privacyVersion: '1.5', acceptedAt: 1, method: 'password' },
     });
     const r = await submitRequest(db.asFirestore(), user, { fullName: 'Kojo Boateng' });
     expect(r.request).toMatchObject({ phoneVerified: true });

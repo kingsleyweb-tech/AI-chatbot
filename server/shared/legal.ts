@@ -7,8 +7,8 @@
  * version here AND in firestore.rules: everyone is then asked to accept
  * again, and earlier acceptances stay in users/{uid}/consents.
  */
-export const TERMS_VERSION = '1.4';
-export const PRIVACY_VERSION = '1.4';
+export const TERMS_VERSION = '1.5';
+export const PRIVACY_VERSION = '1.5';
 
 /** Public contact address (Privacy Policy, Terms, account emails). */
 export const CONTACT_EMAIL = 'kingsleyanaab99@gmail.com';

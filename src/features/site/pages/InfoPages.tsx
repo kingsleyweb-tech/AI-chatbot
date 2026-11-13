@@ -398,8 +398,8 @@ const TRUST_TODAY: { id: string; icon: LucideIcon; title: string; items: string[
     items: [
       'Google Analytics only after you allow it; withdrawing removes its cookies',
       'Review, edit or delete memories; turn memory off',
-      'Download your data from Settings',
-      'Delete your account: disabled at once, permanently deleted after 30 days',
+      'Export your data as PDF or JSON from Settings → Security',
+      'Delete your account yourself: disabled at once, restorable for 30 days, then permanently deleted',
     ],
   },
 ];

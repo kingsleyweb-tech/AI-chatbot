@@ -1,10 +1,10 @@
 import { CONTACT_EMAIL } from '../../../server/shared/legal';
 
 /**
- * Privacy Policy and Terms of Use, version 1.4, as shown on /privacy and /terms.
+ * Privacy Policy and Terms of Use, version 1.5, as shown on /privacy and /terms.
  *
  * Every statement must describe how Atlas AI works today (checked against the
- * code and the production configuration on 8 November 2026). No planned
+ * code and the production configuration on 13 November 2026). No planned
  * features, no unconfirmed business details.
  *
  * When the meaning changes, bump TERMS_VERSION / PRIVACY_VERSION in
@@ -37,9 +37,25 @@ import { CONTACT_EMAIL } from '../../../server/shared/legal';
  *   the conversation or the account. Cloudflare's data-usage page (updated
  *   16 October 2026): no training on Workers AI content; inputs and outputs not
  *   kept once no longer needed for standard requests; operational metadata kept.
+ * - Email (server/email): sent through Brevo. emailLog/{id} keeps the type, a
+ *   masked address and the delivery status, never the subject, body or code;
+ *   it is not pruned automatically. Optional categories follow
+ *   users/{uid}.emailPrefs (Settings → Security → Notifications).
+ * - Last active (server/access.ts noteActive): users/{uid}.lastActiveAt, the
+ *   time only, written at most every 5 minutes; shown to administrators.
+ * - Activity log (server/account/events.ts): every security event is also
+ *   copied to activity/{id} for administrators; kept 90 days, deleted on purge.
+ * - Recognised devices (server/account/devices.ts): coarse device, country and
+ *   city from the IP, a partly hidden IP; never the full IP.
+ * - Self-service deletion (Settings → Security → Delete account, email code);
+ *   Cancel deletion link in the email, reminder 7 days before the purge,
+ *   restore requests (restoreRequests/{uid}, deleted on purge; request limits
+ *   under HMACs of the email and IP).
+ * - Export as PDF or JSON (Settings → Security → Export your data), and a
+ *   single conversation from its menu.
  */
 
-export const LEGAL_UPDATED = '8 November 2026';
+export const LEGAL_UPDATED = '13 November 2026';
 export { CONTACT_EMAIL };
 
 const GEMINI_TERMS = 'https://aistudio.google.com/docs/terms';
@@ -82,7 +98,7 @@ export const PRIVACY: LegalDoc = {
     {
       heading: 'Information we collect',
       bullets: [
-        'Account details: your name, email address, sign-in method (Google or email and password), the dates you created your account and last signed in, and your profile photo if Google provides one. If you sign in with Google, we receive your name, email address and profile photo from Google. Firebase Authentication manages your password; Atlas AI never sees or stores it.',
+        'Account details: your name, email address, sign-in method (Google or email and password), the dates you created your account and last signed in, the time you last used Atlas AI (see below), and your profile photo if Google provides one. If you sign in with Google, we receive your name, email address and profile photo from Google. Firebase Authentication manages your password; Atlas AI never sees or stores it.',
         'Phone number: the mobile number you verify by text message. It is required for email and password accounts and optional for Google accounts. If you choose "Skip for now" on the phone reminder, we record when you skipped it.',
         'Acceptance records: the versions of the Terms of Use and Privacy Policy you accepted, the time of acceptance (from our server) and your sign-in method, with a history of earlier acceptances.',
         'Access requests: the name, email address, phone number and optional reason you give when you request access, and the decision on your request.',
@@ -91,9 +107,13 @@ export const PRIVACY: LegalDoc = {
         'Information generated from your content: conversation titles, summaries of long conversations, memory notes that Atlas AI saves automatically when memory is turned on, project summaries, and search indexes (numerical "embeddings") of your memories, conversations, documents and knowledge-base items, used to find relevant passages.',
         'Settings and usage: your preferences (such as theme, language, response style, default model and web-search settings), and usage counts such as the number of requests and tokens per model and per day, web-search counts, the number of images created, edited or refused per day, the number of voice, read-aloud and translation requests per day, the Cloudflare Workers AI usage (measured in "Neurons") of your requests, and, if you use the ElevenLabs voice, the number of characters and ElevenLabs credits each voice request used (not the text itself).',
         'Web searches: the search queries Atlas AI sends for you and the results returned. These are saved with your account so that a repeated search can reuse them.',
-        'Security records: sign-ins, failed sign-ins, sign-outs (including automatic sign-outs), password and phone changes, data exports and other account events, each with a general device description such as "Safari on iPhone".',
+        'Security records: sign-ins, failed sign-ins, sign-outs (including automatic sign-outs), password and phone changes, data exports, account deletion and restore requests and other account events, each with a general device description such as "Safari on iPhone". A copy of these events is kept in an activity log that administrators can see. It never includes the content of your conversations or documents.',
+        'Last active: while you use Atlas AI, our server records the time of your most recent request, updated at most every 5 minutes. Only the time is recorded, not what you did. Administrators see it as, for example, "Active now" or "Last seen 3 days ago".',
+        'Recognised devices: to warn you about sign-ins from a new device, for each device you sign in from we keep a general description (device, browser and system), the approximate country and city estimated from your IP address, a partly hidden IP address, and the dates it was first and last used. The full IP address is not stored.',
+        'Email records: for each email Atlas AI sends you, its type (for example a verification code or a sign-in alert), a partly hidden copy of your address and the delivery status reported by our email provider (for example delivered or bounced). The subject, the content and any code in the email are not kept in these records. We also keep your email notification choices.',
         'Text-message records: for each verification or recovery text, the phone number it was sent to, the time, its purpose and whether it was delivered and verified. Verification codes are not kept in these records.',
         'Password-recovery limits: to prevent abuse, we keep the times of recent recovery requests (no more than the last 24 hours) under a one-way hash of the email address and of the IP address used.',
+        'Restore requests: if your account is scheduled for deletion and you ask for it to be restored, the email address you give, your reason, the time and the outcome. To prevent abuse, we keep the times of recent restore requests under a one-way hash of the email address and of the IP address used.',
         'Support reports: the title, category, description, screenshots and messages you send, with your name, email address and account ID, replies from Atlas Support, and in-app notifications about them.',
         'Error reports: when the app hits an error or a request fails or is slow, a short technical report (the error message with email addresses, phone numbers and similar details removed, the part of the app involved and the time taken) is written to our server log. It does not include your messages or documents.',
         'Analytics: only if you allow it. See "Analytics, cookies and browser storage".',
@@ -108,6 +128,8 @@ export const PRIVACY: LegalDoc = {
         'To create or edit an image when you ask for one, check the request against our rules first, and keep the image in your account so that you can see, download and delete it.',
         'To show you your usage, apply usage and cost limits and prevent abuse.',
         'To respond to support reports and notify you in the app about replies and status changes.',
+        'To send you emails about your account: verification and password-reset codes, sign-in and security alerts, account approval, support updates, messages from the administrator, and notices about deleting or restoring your account. Emails that protect your account (codes, password changes and account deletion notices) are always sent; you can turn off the others in Settings → Security → Notifications.',
+        'To let administrators manage accounts: see when each account was last active and a log of account events, spot misuse, and handle access and restore requests.',
         'To keep a record of administrator actions (for example approving or suspending an account) for accountability.',
         'To find and fix errors and keep Atlas AI working.',
         'If you allow analytics: to understand in general terms how the app is used.',
@@ -144,6 +166,7 @@ export const PRIVACY: LegalDoc = {
         'Vercel: hosts the app and runs the server functions that every request passes through, including their logs.',
         'SerpAPI and Tavily: receive web-search queries. Tavily also receives the addresses of web pages to read during research.',
         'Vynfy: receives your phone number and sends the verification and recovery texts.',
+        'Brevo: receives your email address, your name and the content of each email Atlas AI sends you (such as a code or an alert), sends it, and reports whether it was delivered.',
         'Websites you add to your knowledge base: our server requests the page from the address you provide.',
       ],
     },
@@ -152,7 +175,7 @@ export const PRIVACY: LegalDoc = {
       bullets: [
         'The Atlas AI database (Cloud Firestore) is in Google’s "nam5" multi-region location in the United States.',
         'Atlas AI’s server functions run on Vercel in the United States (Washington, D.C. region).',
-        'Firebase Authentication and Google Analytics run on Google’s infrastructure. Vynfy sends text messages from Accra, Ghana. AI and search providers process information in the locations they choose, which may be outside Ghana.',
+        'Firebase Authentication and Google Analytics run on Google’s infrastructure. Vynfy sends text messages from Accra, Ghana. AI, search and email providers process information in the locations they choose, which may be outside Ghana.',
         'This means that information you provide in Ghana is transferred to, stored in and processed in the United States and other countries whose data protection laws may differ from Ghana’s. We rely on these providers’ own security and privacy commitments; we have not entered into separate data transfer agreements with them.',
       ],
     },
@@ -179,7 +202,7 @@ export const PRIVACY: LegalDoc = {
       bullets: [
         'We do not sell your personal information.',
         'Atlas AI does not show advertising.',
-        'The administrator screens in Atlas AI show account details, access status, usage counts and the number of conversations, documents and memories an account has, but not their content, and the database rules do not let administrators read that content through the app. As the operator of the database, the owner has technical access to stored data through Google Cloud’s administration tools and uses it only to operate, secure or support Atlas AI, to deal with a problem you report, or where the law requires.',
+        'The administrator screens in Atlas AI show account details, access status, when an account was last active, a log of account events (such as sign-ins, with a general device description), usage counts and the number of conversations, documents and memories an account has, but not their content, and the database rules do not let administrators read that content through the app. As the operator of the database, the owner has technical access to stored data through Google Cloud’s administration tools and uses it only to operate, secure or support Atlas AI, to deal with a problem you report, or where the law requires.',
         'Atlas AI creates or edits an image only when you ask for one. Images you attach are otherwise sent to the AI model only so that it can read them.',
       ],
     },
@@ -189,9 +212,11 @@ export const PRIVACY: LegalDoc = {
       bullets: [
         'Your content (conversations, memories, documents, projects, knowledge base, saved responses): until you delete it or your account is deleted. You can delete individual items at any time.',
         'Images Atlas AI created for you, with their prompts: until you delete the image in Images, delete the conversation it was created in, or your account is deleted. Deleting an image does not delete the chat message that showed it, and deleting only that message does not delete the image.',
-        'Profile, settings, usage counts, security records, acceptance history, saved web-search results, support reports, notifications and text-message records: for as long as your account exists, then deleted with it.',
+        'Profile (including your last-active time), settings, usage counts, security records, recognised devices, acceptance history, saved web-search results, support reports, notifications and text-message records: for as long as your account exists, then deleted with it.',
+        'Activity log entries seen by administrators: 90 days, then deleted automatically, and deleted earlier if your account is permanently deleted.',
+        'Email records: kept so that we can check emails are being delivered. They are not yet deleted automatically and are not removed when an account is deleted; they hold only a partly hidden address. You can ask us to delete them.',
         'Verification and recovery codes: a code stops working after 5 minutes or after too many attempts. Codes that Atlas AI creates are stored only as one-way hashes; codes created by Vynfy are checked by Vynfy and not stored by Atlas AI.',
-        'Account deletion: you can ask for your account to be deleted (see "Your rights"). An administrator schedules the deletion; the account is disabled at once and can still be restored for 30 days. After 30 days a daily job permanently deletes it, together with everything listed above and your sign-in account.',
+        'Account deletion: you can delete your account yourself in Settings → Security → Delete account, or ask us to (see "Your rights"). The account is disabled at once and can still be restored for 30 days: with the Cancel deletion button in the email we send you (a reminder follows 7 days before the end), by choosing "Ask to restore it" on the sign-in screen, or by contacting us. After 30 days a daily job permanently deletes it, together with everything listed above, any restore request and your sign-in account.',
         'Kept after an account is permanently deleted: the record of administrator actions about the account (which includes its email address) and its access request, for accountability. They are deleted automatically 30 days after the account is permanently deleted, by the same daily job.',
         'Password-recovery limit records: only the last 24 hours of request times are kept.',
       ],
@@ -211,7 +236,8 @@ export const PRIVACY: LegalDoc = {
       ],
       bullets: [
         'See and update your name and phone number in Settings.',
-        'Download a copy of your profile, conversations, memories, projects and activity in Settings → Security → Export your data.',
+        'Download a copy of your profile, conversations, memories, projects and activity, as an easy-to-read PDF or a complete JSON file, in Settings → Security → Export your data. You can also export a single conversation as a PDF, Markdown or text file from its menu.',
+        'Delete your account yourself in Settings → Security → Delete account, and change your mind within 30 days.',
         'Turn memory and automatic web search on or off, and turn analytics on or off.',
         'Delete individual conversations, memories, documents and other items, and each image Atlas AI created for you (in Images).',
         'Download each image Atlas AI created for you, in its original quality, with its Download button.',
@@ -223,7 +249,7 @@ export const PRIVACY: LegalDoc = {
       heading: 'How your information is protected',
       bullets: [
         'Database security rules allow each account to read and change only its own records. Support reports can be read only by their author and administrators. Images Atlas AI created can be read and deleted only by your account, and only our server can add them.',
-        'Sensitive operations (phone verification, password recovery, account changes, approvals and support reports) run on our server, which checks your identity on every request.',
+        'Sensitive operations (phone verification, password recovery, account changes, account deletion, approvals and support reports) run on our server, which checks your identity on every request. Deleting your account also needs a code sent to your email address, and the links in deletion emails act only when you press a button on the page they open.',
         'Verification codes and recovery tokens are stored only as one-way hashes. The keys for the AI, search and text-message services are kept on the server and never sent to your browser.',
         'Information is sent over encrypted connections (HTTPS), and Google encrypts the stored database.',
         'On the website, you are signed out after 60 minutes without activity (this does not apply to the installed app). You can sign out of all devices in Settings → Security.',
@@ -341,7 +367,7 @@ export const TERMS: LegalDoc = {
       heading: 'Suspension and ending your use',
       bullets: [
         'We may suspend or remove your access, or delete your account, if you break these terms, if your use creates risk or cost for others, if the law requires it, or if we stop offering Atlas AI. Where reasonable, we will tell you why.',
-        `You may stop using Atlas AI at any time. To have your account deleted, write to ${CONTACT_EMAIL} or use Settings → Report an issue. An administrator schedules the deletion: your account is disabled at once, can still be restored for 30 days, and is then permanently deleted, as described in the Privacy Policy.`,
+        `You may stop using Atlas AI at any time. You can delete your account yourself in Settings → Security → Delete account, or ask us to by writing to ${CONTACT_EMAIL} or using Settings → Report an issue. Your account is disabled at once, can still be restored for 30 days (with the link in the email we send you, from the sign-in screen, or by contacting us), and is then permanently deleted, as described in the Privacy Policy.`,
       ],
     },
     {
@@ -353,7 +379,7 @@ export const TERMS: LegalDoc = {
     {
       heading: 'Third-party services',
       paragraphs: [
-        'Atlas AI relies on third-party services: Google (Firebase Authentication, Cloud Firestore, Google Analytics if you allow it, and Gemini), OpenRouter and the model providers it forwards requests to, Cloudflare (Workers AI), ElevenLabs (optional voice), SerpAPI and Tavily (web search), Vynfy (text messages) and Vercel (hosting). Their availability and terms are outside our control, and we are not responsible for their acts or omissions, except where the law makes us responsible.',
+        'Atlas AI relies on third-party services: Google (Firebase Authentication, Cloud Firestore, Google Analytics if you allow it, and Gemini), OpenRouter and the model providers it forwards requests to, Cloudflare (Workers AI), ElevenLabs (optional voice), SerpAPI and Tavily (web search), Vynfy (text messages), Brevo (email) and Vercel (hosting). Their availability and terms are outside our control, and we are not responsible for their acts or omissions, except where the law makes us responsible.',
       ],
     },
     {

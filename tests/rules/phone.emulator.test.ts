@@ -44,7 +44,7 @@ async function newPasswordUser(email: string) {
   await authCall(`projects/${PROJECT}/accounts:update`, { localId: r.localId, emailVerified: true }, true);
   const token = (await signIn(email)).idToken;
   // the registration form records Terms of Use / Privacy Policy acceptance (real API)
-  const res = await accountApi(new Request('http://x/api/account', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ action: 'acceptTerms', termsVersion: '1.4', privacyVersion: '1.4' }) }));
+  const res = await accountApi(new Request('http://x/api/account', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ action: 'acceptTerms', termsVersion: '1.5', privacyVersion: '1.5' }) }));
   expect(res.status).toBe(200);
   return token;
 }
