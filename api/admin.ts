@@ -69,6 +69,7 @@ import {
   type AuthAccount,
 } from '../server/admin.js';
 import { maskPhone } from '../server/auth/phone.js';
+import { closeRequest, pendingRestoreRequests, remindDue } from '../server/account/restore.js';
 import { env } from '../server/env.js';
 import type { Firestore } from '../server/firestore.js';
 import { noteUnauthorizedAccess, recordAdminAction } from '../server/account/events.js';
@@ -99,6 +100,8 @@ const schema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('reactivate'), uid }),
   z.object({ action: z.literal('delete'), uid, confirmEmail: z.string().max(320) }),
   z.object({ action: z.literal('restore'), uid }),
+  z.object({ action: z.literal('restoreRequests') }),
+  z.object({ action: z.literal('restoreDecline'), uid }),
   z.object({
     action: z.literal('purge'),
     uid,
@@ -193,11 +196,13 @@ const schema = z.discriminatedUnion('action', [
     action: z.literal('messageAudience'),
     audience: z.enum(['all', 'approved', 'pending', 'selected', 'me']),
     uids: z.array(z.string().min(1).max(128)).max(MAX_RECIPIENTS).optional(),
+    purpose: z.enum(['announcement', 'support']).optional(),
   }),
   z.object({
     action: z.literal('messageSend'),
     audience: z.enum(['all', 'approved', 'pending', 'selected', 'me']),
     uids: z.array(z.string().min(1).max(128)).max(MAX_RECIPIENTS).optional(),
+    purpose: z.enum(['announcement', 'support']).optional(),
     email: z.object({ subject: z.string().max(150), body: z.string().max(5000) }).nullable(),
     sms: z.string().max(SMS_MAX + 10).nullable(),
     confirm: z.literal(true),
@@ -491,6 +496,13 @@ export const GET = handle(async (request) => {
   if (!adminConfigured())
     throw new HttpError(503, 'admin_unconfigured', 'Service account not configured.');
   const db = await adminDb();
+  // one reminder 7 days before permanent deletion (accounts deleted by their owner)
+  const reminders = env().otpSecret.length >= 32
+    ? await remindDue({ db, accounts: accountAdmin(), mail: emailDeps(db), secret: env().otpSecret }).catch((err) => {
+        console.error('[restore] reminders failed', err instanceof Error ? err.message : err);
+        return 0;
+      })
+    : 0;
   const result = await purgeDue(db);
   // Records kept after a purge (admin log entries, access request) go 30 days later.
   const retention = await cleanupPurgedRecords(db).catch((err) => {
@@ -506,6 +518,7 @@ export const GET = handle(async (request) => {
   return json({
     ok: true,
     purged: result.purged.length,
+    reminders,
     failed: result.failed.length,
     retentionRemoved: retention.removed,
     knowledge,
@@ -685,6 +698,7 @@ export const POST = handle(async (request) => {
     const plan = recipients(await messageCandidates(db), b.audience, {
       uids: b.uids,
       selfUid: ctx.user.uid,
+      purpose: b.purpose,
     });
     return json({
       total: plan.total,
@@ -695,11 +709,12 @@ export const POST = handle(async (request) => {
   }
 
   if (b.action === 'messageSend') {
-    const input: MessageInput = { audience: b.audience, uids: b.uids, email: b.email, sms: b.sms };
+    const input: MessageInput = { audience: b.audience, uids: b.uids, purpose: b.purpose, email: b.email, sms: b.sms };
     validateMessage(input);
     const plan = recipients(await messageCandidates(db), b.audience, {
       uids: b.uids,
       selfUid: ctx.user.uid,
+      purpose: b.purpose,
     });
     const rec = await startMessage(db, input, plan, ctx.user.email ?? ctx.user.uid);
     const what = [b.email ? 'email' : '', b.sms ? 'SMS' : ''].filter(Boolean).join(' and ');
@@ -707,9 +722,9 @@ export const POST = handle(async (request) => {
       action: 'message_sent',
       adminUid: ctx.user.uid,
       adminEmail: ctx.user.email,
-      targetUid: 'adminMessages',
+      targetUid: b.purpose === 'support' && b.uids?.length === 1 ? b.uids[0] : 'adminMessages',
       targetEmail: null,
-      detail: `${what} to ${rec.recipients} (${b.audience})`,
+      detail: `${b.purpose === 'support' ? 'support ' : ''}${what} to ${rec.recipients} (${b.audience})`,
     });
     const mail = emailDeps(db);
     waitUntil(
@@ -1026,6 +1041,27 @@ export const POST = handle(async (request) => {
     });
   }
 
+  if (b.action === 'restoreRequests') {
+    const requests = await pendingRestoreRequests(db);
+    return json({
+      requests: requests.map((r) => ({
+        uid: r.uid,
+        email: r.email,
+        reason: r.reason,
+        requestedAt: r.confirmedAt ?? r.createdAt,
+        purgeAfter: r.purgeAfter,
+        deletedBy: r.deletedBy,
+      })),
+    });
+  }
+  if (b.action === 'restoreDecline') {
+    const target = await accountAdmin().get(b.uid);
+    if (!(await closeRequest(db, b.uid, 'declined', Date.now(), actor.uid, emailDeps(db))))
+      throw new HttpError(400, 'no_request', 'There is no restore request waiting for this account.');
+    await recordAdminAction(db, { action: 'restore_request_declined', adminUid: actor.uid, adminEmail: actor.email, targetUid: b.uid, targetEmail: target?.email ?? null });
+    return json({ ok: true });
+  }
+
   if (b.action === 'requestDelete') {
     await deleteRequest(db, actor, b.uid);
     return json({ ok: true });
@@ -1148,6 +1184,8 @@ export const POST = handle(async (request) => {
     if (target.row.status !== 'deleted')
       throw new HttpError(400, 'not_deleted', 'This account is not scheduled for deletion.');
     await restoreAccount(db, actor, target.account);
+    // a waiting restore request is answered with an email
+    await closeRequest(db, b.uid, 'restored', Date.now(), actor.uid, emailDeps(db)).catch(() => false);
     return json({ ok: true });
   }
   // purge

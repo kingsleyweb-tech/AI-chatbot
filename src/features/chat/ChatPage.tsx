@@ -1,7 +1,7 @@
 import { unlockAudio } from '@/lib/speech';
 import { primeVoiceAudio } from '@/lib/voiceEngine';
 import { VoiceMode } from './VoiceMode';
-import { limit, orderBy, query } from 'firebase/firestore';
+import { getDocs, limit, orderBy, query } from 'firebase/firestore';
 import { ArrowDown, Bookmark, Download, FileText, FolderInput, Menu as MenuIcon, MoreHorizontal, PanelLeftOpen, Pencil, SquarePen, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
@@ -155,6 +155,16 @@ export default function ChatPage() {
 
   const convState = useDocument<Conversation>(conversationId ? paths.conversation(uid, conversationId) : null, [uid, conversationId]);
   const conv = convState.data;
+  /** Exports cover the whole conversation, not only the messages loaded on screen. */
+  const exportAll = async (fn: (c: Conversation, m: Message[]) => unknown) => {
+    if (!conv) return;
+    try {
+      const snap = await getDocs(query(paths.messages(uid, conv.id), orderBy('createdAt', 'asc')));
+      await fn(conv, snap.docs.map((d) => ({ ...(d.data() as Omit<Message, 'id'>), id: d.id })));
+    } catch {
+      toast('The export could not be created. Try again.', 'error');
+    }
+  };
   const messagesState = useQuery<Message>(
     conversationId ? query(paths.messages(uid, conversationId), orderBy('createdAt', 'desc'), limit(count)) : null,
     [uid, conversationId, count],
@@ -565,9 +575,9 @@ export default function ChatPage() {
               },
               { label: 'Move to project', icon: <FolderInput className="size-4" />, onSelect: () => setMoveOpen(true) },
               'separator',
-              { label: 'Export as Markdown', icon: <Download className="size-4" />, onSelect: () => exportMarkdown(conv, messages) },
-              { label: 'Export as text', icon: <Download className="size-4" />, onSelect: () => exportText(conv, messages) },
-              { label: 'Export as PDF', icon: <Download className="size-4" />, onSelect: () => void exportPdf(conv, messages) },
+              { label: 'Export as Markdown', icon: <Download className="size-4" />, onSelect: () => void exportAll(exportMarkdown) },
+              { label: 'Export as text', icon: <Download className="size-4" />, onSelect: () => void exportAll(exportText) },
+              { label: 'Export as PDF', icon: <Download className="size-4" />, onSelect: () => void exportAll(exportPdf) },
               'separator',
               { label: 'Delete', icon: <Trash2 className="size-4" />, danger: true, onSelect: () => del.open(conv) },
             ]}

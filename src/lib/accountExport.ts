@@ -126,3 +126,16 @@ export async function downloadAccountExport(
   void api('account', { json: { action: 'exported' } }).catch(() => undefined);
   return data;
 }
+
+/** Build the export and open the print dialog to save it as a readable PDF. */
+export async function printAccountExport(
+  uid: string,
+  onProgress?: (label: string) => void,
+): Promise<AccountExport> {
+  const data = await buildAccountExport(uid, onProgress);
+  onProgress?.('Laying out the PDF');
+  const { printAccountPdf } = await import('./accountPdf');
+  await printAccountPdf(data);
+  void api('account', { json: { action: 'exported' } }).catch(() => undefined);
+  return data;
+}

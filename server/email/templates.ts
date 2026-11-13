@@ -20,7 +20,11 @@ export type EmailType =
   | 'security_change'
   | 'support_update'
   | 'access_approved'
-  | 'admin_message';
+  | 'admin_message'
+  | 'account_deletion'
+  | 'deletion_reminder'
+  | 'restore_confirm'
+  | 'restore_result';
 
 export const EMAIL_TYPES: readonly EmailType[] = [
   'welcome',
@@ -36,6 +40,10 @@ export const EMAIL_TYPES: readonly EmailType[] = [
   'support_update',
   'access_approved',
   'admin_message',
+  'account_deletion',
+  'deletion_reminder',
+  'restore_confirm',
+  'restore_result',
 ];
 
 /** What signed in, for login and security emails (coarse, never the full user agent). */
@@ -78,6 +86,14 @@ export interface TemplateData {
     /** first part of the team's reply */
     reply?: string | null;
   };
+  /** account_deletion: when the account will be permanently deleted (epoch ms) */
+  purgeAfter?: number;
+  /** account_deletion: where to write to keep the account */
+  contact?: string;
+  /** signed token for the account-restore page (cancel deletion / confirm a restore request) */
+  restoreToken?: string;
+  /** restore_result */
+  restoreOutcome?: 'restored' | 'declined';
   /** admin_message: written by an administrator (plain text, escaped like everything else) */
   message?: { subject: string; body: string };
 }
@@ -264,6 +280,15 @@ const FOOT_OPTIONAL =
 const NOT_YOU =
   'If this was not you, change your password now and sign out of every device from Settings › Security and activity.';
 
+/** "13 December 2026" in the person's time zone (UTC when unknown). */
+function dateOnly(at: number, timeZone?: string | null): string {
+  try {
+    return new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: timeZone || 'UTC' }).format(at);
+  } catch {
+    return new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }).format(at);
+  }
+}
+
 export function render(type: EmailType, d: TemplateData, base: string): RenderedEmail {
   const security = `${base}/settings/security`;
   const minutes = d.minutes ?? 10;
@@ -422,6 +447,75 @@ export function render(type: EmailType, d: TemplateData, base: string): Rendered
         button('Review account security', security),
       ];
       footer = `${FOOT_ACCOUNT} ${FOOT_OPTIONAL}`;
+      break;
+    case 'account_deletion':
+    case 'deletion_reminder': {
+      const until = dateOnly(d.purgeAfter ?? (d.at ?? Date.now()) + 30 * 86_400_000, d.timeZone);
+      const cancel = d.restoreToken ? `${base}/account-restore?k=cancel&t=${encodeURIComponent(d.restoreToken)}` : null;
+      const keep = cancel
+        ? `To keep it, press the button below before ${until}.`
+        : `To keep it, write to ${d.contact ?? 'Atlas AI support'} before ${until}.`;
+      if (type === 'account_deletion') {
+        subject = 'Your Atlas AI account will be deleted';
+        title = 'Your account is scheduled for deletion';
+        preheader = `It will be permanently deleted on ${until}.`;
+        blocks = [
+          p(greeting(d.name)),
+          p('You asked to delete your Atlas AI account. It has been switched off and every device has been signed out.'),
+          details([
+            ['Requested', d.at ? formatWhen(d.at, d.timeZone) : null],
+            ['Permanent deletion', until],
+          ]),
+          p(`Until then your conversations, memories, documents and settings are kept, and the account can be restored. ${keep} After that date everything is deleted for good and cannot be recovered.`),
+          ...(cancel ? [button('Cancel deletion', cancel)] : []),
+          notice(`If you did not ask for this, ${cancel ? 'cancel the deletion with the button above and then change your password' : `write to ${d.contact ?? 'Atlas AI support'} right away so we can restore your account and secure it`}.`),
+        ];
+      } else {
+        subject = 'Your Atlas AI account will be deleted in 7 days';
+        title = 'Last reminder: your account will be deleted';
+        preheader = `On ${until} your account and everything in it will be deleted for good.`;
+        blocks = [
+          p(greeting(d.name)),
+          p(`Your Atlas AI account is scheduled for permanent deletion on ${until}. Your conversations, memories, documents and settings are still kept until then.`),
+          p(`If you want to keep your account, ${cancel ? 'press the button below' : `write to ${d.contact ?? 'Atlas AI support'}`}. If you are happy for it to go, there is nothing to do.`),
+          ...(cancel ? [button('Keep my account', cancel)] : []),
+        ];
+      }
+      break;
+    }
+    case 'restore_confirm': {
+      const link = `${base}/account-restore?k=confirm&t=${encodeURIComponent(d.restoreToken ?? '')}`;
+      subject = 'Confirm your Atlas AI restore request';
+      title = 'Confirm your restore request';
+      preheader = 'Confirm that you asked to get your Atlas AI account back.';
+      blocks = [
+        p(greeting(d.name)),
+        p('Someone asked to restore the Atlas AI account that uses this email address. If it was you, confirm the request and an administrator will review it.'),
+        button('Confirm my request', link),
+        small(`The link works for 24 hours.${d.purgeAfter ? ` Your account can be restored until ${dateOnly(d.purgeAfter, d.timeZone)}.` : ''} If you did not ask for this, ignore this email: nothing will change.`),
+      ];
+      break;
+    }
+    case 'restore_result':
+      if (d.restoreOutcome === 'restored') {
+        subject = 'Your Atlas AI account is back';
+        title = 'Your account has been restored';
+        preheader = 'You can sign in again.';
+        blocks = [
+          p(greeting(d.name)),
+          p('Your restore request was approved. Your account, conversations and data are back, and you can sign in again.'),
+          button('Sign in', `${base}/login`),
+        ];
+      } else {
+        subject = 'Your Atlas AI restore request';
+        title = 'Your restore request was declined';
+        preheader = 'An administrator reviewed your request.';
+        blocks = [
+          p(greeting(d.name)),
+          p(`An administrator reviewed your request and could not restore the account.${d.purgeAfter ? ` It will be permanently deleted on ${dateOnly(d.purgeAfter, d.timeZone)}.` : ''}`),
+          small(`Questions? Write to ${d.contact ?? 'Atlas AI support'}.`),
+        ];
+      }
       break;
     case 'support_update': {
       const s = d.support ?? {

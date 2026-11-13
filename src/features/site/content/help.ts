@@ -69,7 +69,7 @@ export const HELP_TOPICS: { title: string; description: string; icon: string; fa
     faqs: [
       { q: 'Can administrators read my chats?', a: 'No. Administrators manage accounts and access but cannot read your conversations in the app.', doc: '/docs/data-and-privacy' },
       { q: 'How do I sign out other devices?', a: 'Settings → Security lists your devices. Remove one, or sign out of all devices.', doc: '/docs/account-security' },
-      { q: 'How do I delete my account?', a: 'Settings → Delete account. It is disabled at once and permanently deleted after 30 days.', doc: '/docs/delete-account' },
+      { q: 'How do I delete my account?', a: 'Settings → Security → Delete account, then confirm with the code we email you. It is disabled at once and permanently deleted after 30 days; until then it can be restored.', doc: '/docs/delete-account' },
       { q: 'Does Atlas AI use tracking cookies?', a: 'No advertising cookies. Google Analytics runs only if you allow it.', doc: '/cookies' },
     ],
   },

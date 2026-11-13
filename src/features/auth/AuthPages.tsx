@@ -16,7 +16,7 @@ import {
   UserPlus,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { Link, Navigate, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { LogoMark, TAGLINE } from '@/components/Logo';
 import { Button, Input, Label, Spinner, Textarea } from '@/components/ui';
 import { api, ApiError, publicApi } from '@/lib/api';
@@ -44,7 +44,7 @@ import { EMAIL_FIRST_REMINDER_MS } from '../shell/emailReminderRules';
 import { acceptTermsOnServer, useAuth, type AccessState } from '@/state/auth';
 import { PRIVACY_VERSION, TERMS_VERSION } from '@shared/legal';
 
-type Mode = 'login' | 'register' | 'reset' | 'verify' | 'phone' | 'denied' | 'request' | 'consent';
+type Mode = 'login' | 'register' | 'reset' | 'verify' | 'phone' | 'denied' | 'request' | 'consent' | 'restore';
 
 /** Where each access state belongs. */
 function routeFor(access: AccessState): string | null {
@@ -357,6 +357,17 @@ function Login() {
             />
           </div>
           <ErrorText>{shown}</ErrorText>
+          {/scheduled for deletion/.test(shown) && (
+            <p className="rounded-lg border border-border bg-surface-2 px-3 py-2.5 text-[13px] text-muted">
+              Deleted your account in the last 30 days and want it back?{' '}
+              <Link
+                to={`/account-restore${email.includes('@') ? `?email=${encodeURIComponent(email.trim())}` : ''}`}
+                className="font-medium text-accent hover:underline"
+              >
+                Ask to restore it
+              </Link>
+            </p>
+          )}
           <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy}>
             Sign in
           </Button>
@@ -1421,9 +1432,17 @@ function Denied() {
           <p className="mt-1.5 text-sm text-muted">
             {access === 'suspended'
               ? 'An administrator has suspended this account, so it cannot be used right now. Your data has not been deleted. Contact the administrator if you think this is a mistake.'
-              : 'An administrator has scheduled this account for deletion. It can still be restored by the administrator for a limited time; after that it is permanently removed.'}
+              : 'This account is scheduled for deletion. It can still be restored for 30 days from the day it was deleted; after that it is permanently removed.'}
           </p>
         </div>
+        {access === 'deleted' && (
+          <Link
+            to={`/account-restore${user?.email ? `?email=${encodeURIComponent(user.email)}` : ''}`}
+            className="mb-2 block text-center text-sm font-medium text-accent hover:underline"
+          >
+            Ask to restore my account
+          </Link>
+        )}
         <Button variant="primary" size="lg" className="w-full" onClick={() => signOut()}>
           Sign out
         </Button>
@@ -1750,6 +1769,159 @@ function AccessRequest() {
   );
 }
 
+/**
+ * /account-restore: getting a deleted account back during its 30 days.
+ * ?k=cancel&t=…   "Cancel deletion" link from the deletion or reminder email
+ * ?k=confirm&t=…  confirm a restore request (link emailed after the form)
+ * otherwise       the request form (address and an optional reason)
+ * Links act only when the button is pressed, so mail scanners that open links do nothing.
+ */
+function AccountRestore() {
+  const [params] = useSearchParams();
+  const kind = params.get('k');
+  const token = params.get('t') ?? '';
+  const [email, setEmail] = useState(params.get('email') ?? '');
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  const [error, setError] = useState('');
+  const fail = (err: unknown) =>
+    setError(err instanceof ApiError ? err.message : 'Something went wrong. Check your connection and try again.');
+  const back = (
+    <Link to="/login" className="mt-5 block text-center text-sm font-medium text-accent hover:underline">
+      Back to sign in
+    </Link>
+  );
+
+  if (kind === 'cancel' || kind === 'confirm') {
+    const cancel = kind === 'cancel';
+    const act = async () => {
+      setBusy(true);
+      setError('');
+      try {
+        await publicApi('recovery', { action: cancel ? 'cancelDeletion' : 'restoreConfirm', token });
+        setDone(true);
+      } catch (err) {
+        fail(err);
+      } finally {
+        setBusy(false);
+      }
+    };
+    if (done)
+      return (
+        <Shell>
+          <Heading
+            title={cancel ? 'Your account is back' : 'Request confirmed'}
+            subtitle={
+              cancel
+                ? 'The deletion was cancelled and nothing was lost. Sign in to continue. If you did not delete the account yourself, change your password after signing in.'
+                : 'An administrator will review your request. We will email you when it has been decided.'
+            }
+          />
+          {cancel ? (
+            <Link to="/login" className="block">
+              <Button variant="primary" size="lg" className="w-full">
+                Sign in
+              </Button>
+            </Link>
+          ) : (
+            back
+          )}
+        </Shell>
+      );
+    return (
+      <Shell>
+        <Heading
+          title={cancel ? 'Keep your account?' : 'Confirm your restore request'}
+          subtitle={
+            cancel
+              ? 'This cancels the deletion of your Atlas AI account. Your conversations and data stay as they were, and you can sign in again straight away.'
+              : 'Confirm that you asked to get your Atlas AI account back. An administrator will then review the request.'
+          }
+        />
+        <div className="space-y-3">
+          <ErrorText>{error}</ErrorText>
+          <Button variant="primary" size="lg" className="w-full" loading={busy} disabled={!token} onClick={() => void act()}>
+            {cancel ? 'Cancel deletion and keep my account' : 'Confirm my request'}
+          </Button>
+        </div>
+        {back}
+      </Shell>
+    );
+  }
+
+  if (done)
+    return (
+      <Shell>
+        <Heading
+          title="Check your email"
+          subtitle={
+            <>
+              If <b className="font-medium text-fg">{email.trim()}</b> belongs to an account that can still be restored, we have
+              sent it a link to confirm your request. It works for 24 hours.
+            </>
+          }
+        />
+        {back}
+      </Shell>
+    );
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    setError('');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim())) return setError('Enter the email address of the account.');
+    setBusy(true);
+    try {
+      await publicApi('recovery', { action: 'restoreRequest', email: email.trim(), reason: reason.trim() || undefined });
+      setDone(true);
+    } catch (err) {
+      fail(err);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Shell>
+      <Heading
+        title="Restore your account"
+        subtitle="A deleted account is kept for 30 days. Ask for it back and an administrator will review your request."
+      />
+      <form className="space-y-3.5" onSubmit={(e) => void submit(e)} noValidate>
+        <div>
+          <Label htmlFor="restore-email">Email address of the account</Label>
+          <Input
+            id="restore-email"
+            type="email"
+            autoComplete="email"
+            autoCapitalize="none"
+            spellCheck={false}
+            placeholder="you@example.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+        </div>
+        <div>
+          <Label htmlFor="restore-reason">Why do you want it back? (optional)</Label>
+          <Textarea
+            id="restore-reason"
+            rows={3}
+            maxLength={500}
+            placeholder="For example: I deleted it by mistake."
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+          />
+        </div>
+        <ErrorText>{error}</ErrorText>
+        <Button type="submit" variant="primary" size="lg" className="w-full" loading={busy}>
+          Send request
+        </Button>
+        <p className="text-center text-xs text-muted">We will email you a link to confirm the request is yours.</p>
+      </form>
+      {back}
+    </Shell>
+  );
+}
+
 export default function AuthPages({ mode }: { mode: Mode }) {
   const { access } = useAuth();
   const navigate = useNavigate();
@@ -1771,5 +1943,6 @@ export default function AuthPages({ mode }: { mode: Mode }) {
   if (mode === 'phone') return <PhoneVerify />;
   if (mode === 'request') return <AccessRequest />;
   if (mode === 'consent') return <Consent />;
+  if (mode === 'restore') return <AccountRestore />;
   return <Denied />;
 }

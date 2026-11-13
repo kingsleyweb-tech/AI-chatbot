@@ -70,6 +70,7 @@ export const ACTION_LABELS: Record<string, string> = {
   environment_disabled: 'Switched off an API environment',
   environment_enabled: 'Switched an API environment back on',
   environment_ceiling_changed: 'Changed the Temporary environment ceiling',
+  restore_request_declined: 'Declined a restore request',
 };
 
 /** Groups for the audit log filter */

@@ -10,6 +10,9 @@
 export const TERMS_VERSION = '1.4';
 export const PRIVACY_VERSION = '1.4';
 
+/** Public contact address (Privacy Policy, Terms, account emails). */
+export const CONTACT_EMAIL = 'kingsleyanaab99@gmail.com';
+
 export type ConsentMethod = 'google' | 'email_password' | 'other';
 
 export interface ConsentRecord {

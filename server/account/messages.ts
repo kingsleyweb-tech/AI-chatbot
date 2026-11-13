@@ -26,6 +26,12 @@ export const SMS_MAX = 306;
 export const TEMPLATES_PATH = 'config/messageTemplates';
 
 export type Audience = 'all' | 'approved' | 'pending' | 'selected' | 'me';
+/**
+ * announcement: news for a group; follows the "announcements" switch.
+ * support: a reply to one person about their own account or problem; follows their support
+ * email and support text switches instead, and also reaches a suspended account.
+ */
+export type MessagePurpose = 'announcement' | 'support';
 
 export interface MessageTemplate {
   id: string;
@@ -54,6 +60,7 @@ export interface MessageCandidate {
 export interface MessageInput {
   audience: Audience;
   uids?: string[];
+  purpose?: MessagePurpose;
   email: { subject: string; body: string } | null;
   sms: string | null;
 }
@@ -63,6 +70,7 @@ export interface MessageRecord {
   at: number;
   by: string;
   audience: Audience;
+  purpose?: MessagePurpose;
   subject: string | null;
   smsText: string | null;
   bodyPreview: string | null;
@@ -120,21 +128,24 @@ export async function deleteTemplate(db: Firestore, id: string, now = Date.now()
 export function recipients(
   all: MessageCandidate[],
   audience: Audience,
-  opts: { uids?: string[]; selfUid: string },
+  opts: { uids?: string[]; selfUid: string; purpose?: MessagePurpose },
 ): { emails: MessageCandidate[]; texts: MessageCandidate[]; total: number } {
   const wanted = new Set(opts.uids ?? []);
+  const support = opts.purpose === 'support';
   const people = all.filter((c) => {
     if (audience === 'me') return c.uid === opts.selfUid;
-    if (c.status !== 'active') return false;
+    // a support reply may explain a suspension; deleted accounts are never contacted
+    if (support ? c.status === 'deleted' : c.status !== 'active') return false;
     if (audience === 'approved') return c.accessStatus === 'approved';
     if (audience === 'pending') return c.accessStatus === 'pending';
     if (audience === 'selected') return wanted.has(c.uid);
     return true;
   });
-  // A test to yourself ignores your own announcement switch.
-  const wants = (c: MessageCandidate) => audience === 'me' || prefsFrom(c.prefs).announcements;
-  const emails = people.filter((c) => c.email && c.emailVerified && wants(c));
-  const texts = people.filter((c) => c.phone && wants(c));
+  // A test to yourself ignores your own switches.
+  const wantsEmail = (c: MessageCandidate) => audience === 'me' || (support ? prefsFrom(c.prefs).support : prefsFrom(c.prefs).announcements);
+  const wantsText = (c: MessageCandidate) => audience === 'me' || (support ? prefsFrom(c.prefs).supportSms : prefsFrom(c.prefs).announcements);
+  const emails = people.filter((c) => c.email && c.emailVerified && wantsEmail(c));
+  const texts = people.filter((c) => c.phone && wantsText(c));
   return { emails, texts, total: people.length };
 }
 
@@ -147,6 +158,8 @@ export function validateMessage(m: MessageInput) {
     throw new HttpError(400, 'bad_message', `Keep the text message under ${SMS_MAX} characters.`);
   if (m.audience === 'selected' && !m.uids?.length)
     throw new HttpError(400, 'bad_message', 'Choose at least one person.');
+  if (m.purpose === 'support' && (m.audience !== 'selected' || m.uids?.length !== 1))
+    throw new HttpError(400, 'bad_message', 'A support message goes to exactly one person.');
 }
 
 export interface SendDeps {
@@ -175,6 +188,7 @@ export async function startMessage(
     at: now,
     by,
     audience: m.audience,
+    purpose: m.purpose ?? 'announcement',
     subject: m.email?.subject.trim().slice(0, 150) ?? null,
     smsText: m.sms ? smsBody(m.sms) : null,
     bodyPreview: m.email ? m.email.body.trim().slice(0, 200) : null,
@@ -213,7 +227,7 @@ export async function deliver(
       }
       const r = await sendEmail(deps.mail, {
         type: 'admin_message',
-        category: 'announcements',
+        category: m.purpose === 'support' ? 'support' : 'announcements',
         to: c.email!,
         uid: c.uid,
         data: {

@@ -8,12 +8,12 @@ import {
   type User,
 } from 'firebase/auth';
 import { limit, orderBy, query, type Timestamp } from 'firebase/firestore';
-import { Download, KeyRound, LogOut, ShieldCheck, Smartphone } from 'lucide-react';
+import { Download, FileText, KeyRound, LogOut, ShieldCheck, Smartphone } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { Badge, Button, ConfirmDialog, Dialog, Input, Label, Spinner } from '@/components/ui';
 import { AnalyticsSwitch } from '@/components/AnalyticsConsent';
-import { downloadAccountExport } from '@/lib/accountExport';
+import { downloadAccountExport, printAccountExport } from '@/lib/accountExport';
 import { analyticsAvailable } from '@/lib/analyticsConsent';
 import { api, ApiError } from '@/lib/api';
 import { authErrorMessage } from '@/lib/authProviders';
@@ -22,6 +22,7 @@ import { useQuery } from '@/lib/hooks';
 import { useAuth, useUid } from '@/state/auth';
 import { useToast } from '@/state/toast';
 import { phoneError, type DeliveryState } from '../auth/otpUi';
+import { DeleteAccountSection } from './DeleteAccount';
 import { EmailNotifications, RecognisedDevices } from './EmailNotifications';
 import { EmailAddressRow, useVerifiedEmailGuard } from './EmailVerification';
 import { PhoneVerifyFlow, type PendingCode } from './PhoneVerifyFlow';
@@ -487,14 +488,13 @@ export function SecuritySection() {
     }
   };
 
-  const exportData = async () => {
+  const exportData = async (kind: 'pdf' | 'json') => {
     setExporting('Preparing');
     try {
-      const data = await downloadAccountExport(uid, setExporting);
+      const data = await (kind === 'pdf' ? printAccountExport : downloadAccountExport)(uid, setExporting);
+      const done = kind === 'pdf' ? 'Choose “Save as PDF” in the print window.' : 'Export saved to your downloads.';
       toast(
-        data.skipped.length
-          ? `Export saved. Not included: ${data.skipped.join(', ')}.`
-          : 'Export saved to your downloads.',
+        data.skipped.length ? `${done} Not included: ${data.skipped.join(', ')}.` : done,
         data.skipped.length ? 'info' : 'success',
       );
     } catch {
@@ -602,20 +602,33 @@ export function SecuritySection() {
           description={
             exporting
               ? `Collecting: ${exporting}`
-              : 'Download your profile, conversations, memories, projects and activity as a JSON file.'
+              : 'Your profile, conversations, memories, projects and activity. PDF is easy to read and print; JSON is complete and machine-readable.'
           }
         >
-          <Button
-            size="sm"
-            variant="outline"
-            icon={<Download className="size-4" />}
-            loading={Boolean(exporting)}
-            onClick={guard(() => void exportData(), 'export your data')}
-          >
-            Export
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              icon={<FileText className="size-4" />}
+              disabled={Boolean(exporting)}
+              onClick={guard(() => void exportData('pdf'), 'export your data')}
+            >
+              PDF
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              icon={<Download className="size-4" />}
+              loading={Boolean(exporting)}
+              onClick={guard(() => void exportData('json'), 'export your data')}
+            >
+              JSON
+            </Button>
+          </div>
         </Row>
       </Section>
+
+      <DeleteAccountSection onExport={guard(() => void exportData('pdf'), 'export your data')} />
 
       {pwDialog && <PasswordDialog open mode={pwDialog} onClose={() => setPwDialog(null)} />}
       <ConfirmDialog

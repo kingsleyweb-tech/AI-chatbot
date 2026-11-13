@@ -116,6 +116,33 @@ describe('recipients', () => {
     expect(recipients(all, 'selected', { selfUid: 'x', uids: ['c', 'd'] }).texts.map((c) => c.uid)).toEqual(['c']);
   });
 
+  it('a support reply to one person follows their support switches, not announcements', () => {
+    const people = [
+      person({ uid: 'e', prefs: { announcements: false } }),
+      person({ uid: 'f', prefs: { support: false } }),
+      person({ uid: 'g', prefs: { supportSms: false } }),
+      person({ uid: 'd', status: 'suspended' }),
+      person({ uid: 'z', status: 'deleted' }),
+    ];
+    const one = (uid: string) => recipients(people, 'selected', { selfUid: 'x', uids: [uid], purpose: 'support' });
+    expect(one('e').emails).toHaveLength(1); // announcements off does not block a support reply
+    expect(one('e').texts).toHaveLength(1);
+    expect(one('f').emails).toHaveLength(0); // support emails off
+    expect(one('f').texts).toHaveLength(1);
+    expect(one('g').texts).toHaveLength(0); // support texts off
+    expect(one('d').total).toBe(1); // a suspended account can be told why
+    expect(one('z').total).toBe(0); // deleted accounts are never contacted
+    // as an announcement, the same people are filtered as before
+    expect(recipients(people, 'selected', { selfUid: 'x', uids: ['e', 'd'] }).total).toBe(1);
+  });
+
+  it('a support message goes to exactly one chosen person', () => {
+    const base: MessageInput = { audience: 'selected', purpose: 'support', uids: ['a'], email: null, sms: 'Hi' };
+    expect(() => validateMessage(base)).not.toThrow();
+    expect(() => validateMessage({ ...base, uids: ['a', 'b'] })).toThrow(/exactly one/);
+    expect(() => validateMessage({ ...base, audience: 'all', uids: undefined })).toThrow(/exactly one/);
+  });
+
   it('a test to yourself ignores your own switches', () => {
     const r = recipients(all, 'me', { selfUid: 'admin' });
     expect(r.total).toBe(1);

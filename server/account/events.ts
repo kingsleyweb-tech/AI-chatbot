@@ -79,6 +79,7 @@ export const ADMIN_ACTIONS = [
   'environment_disabled',
   'environment_enabled',
   'environment_ceiling_changed',
+  'restore_request_declined',
 ] as const;
 export type AdminAction = (typeof ADMIN_ACTIONS)[number];
 

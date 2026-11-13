@@ -5,6 +5,7 @@ import {
   accountBlock,
   approvalConfig,
   decideAccess,
+  evaluateAccess,
   requestDeviceKey,
   requireVerifiedEmail,
 } from '../server/access.js';
@@ -15,7 +16,10 @@ import {
 } from '../server/account/alerts.js';
 import { acceptTerms } from '../server/account/consent.js';
 import { clientInfo, listDevices } from '../server/account/devices.js';
-import { sendEmailCode, verifyEmailCode } from '../server/auth/emailCode.js';
+import { hasRecentStepUp, sendEmailCode, verifyEmailCode } from '../server/auth/emailCode.js';
+import { scheduleDeletion } from '../server/account/lifecycle.js';
+import { restoreToken } from '../server/account/restore.js';
+import { CONTACT_EMAIL } from '../server/shared/legal.js';
 import { emailDeps, sendEmail } from '../server/email/index.js';
 import { EMAIL_PREF_KEYS, prefsFrom } from '../server/email/service.js';
 import { deviceLabel, recordSecurityEvent } from '../server/account/events.js';
@@ -62,6 +66,7 @@ const schema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('passwordChanged') }),
   z.object({ action: z.literal('providerLinked'), provider: z.enum(['password', 'google.com']) }),
   z.object({ action: z.literal('revokeSessions') }),
+  z.object({ action: z.literal('deleteAccount'), confirm: z.literal('DELETE') }),
   z.object({ action: z.literal('exported') }),
   z.object({ action: z.literal('signedOut'), reason: z.enum(['user', 'inactivity']) }),
   z.object({ action: z.literal('emailCodeSend'), purpose: z.enum(['verify_email', 'sensitive']) }),
@@ -440,6 +445,39 @@ export const POST = handle(async (request) => {
       ),
     );
     return json({ ok: true, providers: account.providers });
+  }
+
+  if (b.action === 'deleteAccount') {
+    // The account holder deletes their own account: switched off now, deleted for good after
+    // DELETION_GRACE_DAYS (an administrator can restore it until then). Needs a verified email
+    // and an email code confirmed in the last 10 minutes; administrators cannot delete
+    // themselves here, so the dashboard is never left without one.
+    requireVerifiedEmail(user);
+    if (!(await hasRecentStepUp(db, user.uid)))
+      throw new HttpError(403, 'step_up_required', 'Confirm with the code we email you first.');
+    const { admin } = evaluateAccess(user.email, user.emailVerified, await accessConfig(db, true), env().adminEmails);
+    if (admin || isSuperAdmin(user, env().adminEmails))
+      throw new HttpError(403, 'admin_account', 'Administrator accounts cannot be deleted from Settings.');
+    const now = Date.now();
+    const { purgeAfter } = await scheduleDeletion(db, { uid: user.uid, email: account.email ?? user.email }, account, now, 'user');
+    waitUntil(
+      sendEmail(mail, {
+        type: 'account_deletion',
+        category: 'critical',
+        to: account.email ?? user.email ?? '',
+        uid: user.uid,
+        data: {
+          name: account.displayName,
+          at: now,
+          purgeAfter,
+          contact: CONTACT_EMAIL,
+          timeZone: client.timeZone,
+          // "Cancel deletion" button, bound to this deletion (see server/account/restore.ts)
+          restoreToken: secret.length >= 32 ? restoreToken(secret, 'cancel', user.uid, now) : undefined,
+        },
+      }).catch(() => undefined),
+    );
+    return json({ ok: true, purgeAfter });
   }
 
   // revokeSessions: every device, including this one, must sign in again.

@@ -34,6 +34,9 @@ export interface ProfileStatus {
   sessionsValidAfter?: number;
   suspendedAt?: string;
   deletionScheduledAt?: string;
+  deletionStamp?: number | null;
+  deletedBy?: 'admin' | 'user' | null;
+  deletionReminderAt?: number | null;
   purgeAfter?: number;
   phoneNumber?: string | null;
   email?: string | null;
@@ -69,24 +72,58 @@ export async function reactivateAccount(db: Firestore, actor: Actor, target: Aut
   await log(db, 'user_reactivated', actor, target);
 }
 
-export async function scheduleDeletion(db: Firestore, actor: Actor, target: AuthAccount, now = Date.now()) {
+/**
+ * Disable the account now and delete it permanently after DELETION_GRACE_DAYS.
+ * `by: 'user'` is the account holder deleting their own account from Settings
+ * (api/account.ts checks a fresh email code first); it is still recorded in
+ * the admin log so administrators can see it and restore it within the period.
+ */
+export async function scheduleDeletion(
+  db: Firestore,
+  actor: Actor,
+  target: AuthAccount,
+  now = Date.now(),
+  by: 'admin' | 'user' = 'admin',
+) {
   const purgeAfter = now + DELETION_GRACE_DAYS * 86_400_000;
   await accountAdmin().update(target.uid, { disabled: true, revokeSessions: true });
   await db.set(
     `users/${target.uid}`,
-    { accountStatus: 'deleted', deletionScheduledAt: new Date(now), purgeAfter, sessionsValidAfter: nowSec(now), email: target.email },
+    {
+      accountStatus: 'deleted',
+      deletionScheduledAt: new Date(now),
+      // binds the "Cancel deletion" link to this deletion (server/account/restore.ts)
+      deletionStamp: now,
+      deletedBy: by,
+      deletionReminderAt: null,
+      purgeAfter,
+      sessionsValidAfter: nowSec(now),
+      email: target.email,
+    },
     true,
   );
-  await recordSecurityEvent(db, target.uid, 'account_deletion_scheduled', { by: 'admin' }, now);
-  await log(db, 'user_deletion_scheduled', actor, target, `permanent deletion after ${new Date(purgeAfter).toISOString().slice(0, 10)}`);
+  await recordSecurityEvent(db, target.uid, 'account_deletion_scheduled', { by }, now);
+  const when = new Date(purgeAfter).toISOString().slice(0, 10);
+  await log(db, 'user_deletion_scheduled', actor, target, by === 'user' ? `requested by the account holder; permanent deletion after ${when}` : `permanent deletion after ${when}`);
   return { purgeAfter };
 }
 
-export async function restoreAccount(db: Firestore, actor: Actor, target: AuthAccount, now = Date.now()) {
+/** `by: 'user'`: the account holder used the "Cancel deletion" link from the deletion email. */
+export async function restoreAccount(
+  db: Firestore,
+  actor: Actor,
+  target: AuthAccount,
+  now = Date.now(),
+  by: 'admin' | 'user' = 'admin',
+) {
   await accountAdmin().update(target.uid, { disabled: false });
-  await db.set(`users/${target.uid}`, { accountStatus: 'active', deletionScheduledAt: null, purgeAfter: null, suspendedAt: null }, true);
-  await recordSecurityEvent(db, target.uid, 'account_restored', { by: 'admin' }, now);
-  await log(db, 'user_restored', actor, target);
+  await db.set(
+    `users/${target.uid}`,
+    { accountStatus: 'active', deletionScheduledAt: null, deletionStamp: null, deletedBy: null, deletionReminderAt: null, purgeAfter: null, suspendedAt: null },
+    true,
+  );
+  await recordSecurityEvent(db, target.uid, 'account_restored', { by }, now);
+  await log(db, 'user_restored', actor, target, by === 'user' ? 'cancelled by the account holder with the link in the deletion email' : undefined);
 }
 
 /** Delete a document and everything nested under it (including "missing" parents). */
@@ -145,6 +182,7 @@ export async function purgeAccount(db: Firestore, actor: Actor | null, target: A
   const writes: Write[] = [
     { op: 'delete', path: `otp/${target.uid}` },
     { op: 'delete', path: `otpRecovery/${target.uid}` },
+    { op: 'delete', path: `restoreRequests/${target.uid}` },
   ];
   const secret = env().otpSecret;
   if (profile?.phoneNumber && secret.length >= 32) {

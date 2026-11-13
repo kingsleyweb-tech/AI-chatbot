@@ -6,6 +6,7 @@ import { emailDeps } from '../server/email/index.js';
 import { accountAdmin, adminConfigured, adminDb, checkPassword } from '../server/admin.js';
 import { phoneLogin, type PhoneLoginDeps } from '../server/auth/phoneLogin.js';
 import { recordFailedLogin, resetPassword, startRecovery, verifyRecovery, type RecoveryDeps } from '../server/auth/recovery.js';
+import { cancelDeletion, confirmRestore, requestRestore, type RestoreDeps } from '../server/account/restore.js';
 import { env } from '../server/env.js';
 import { handle, HttpError, json, readJson } from '../server/http.js';
 import { getSmsProvider } from '../server/sms/provider.js';
@@ -16,6 +17,10 @@ const schema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('reset'), recoveryId: z.string().max(64), resetToken: z.string().max(100), password: z.string().max(200) }),
   z.object({ action: z.literal('failedLogin'), email: z.string().min(3).max(320) }),
   z.object({ action: z.literal('phoneLogin'), phone: z.string().min(6).max(24), password: z.string().min(1).max(200) }),
+  // getting a deleted account back (server/account/restore.ts)
+  z.object({ action: z.literal('restoreRequest'), email: z.string().min(3).max(320), reason: z.string().max(500).optional() }),
+  z.object({ action: z.literal('restoreConfirm'), token: z.string().max(220) }),
+  z.object({ action: z.literal('cancelDeletion'), token: z.string().max(220) }),
 ]);
 
 let depsOverride: Partial<RecoveryDeps> | null = null;
@@ -95,6 +100,22 @@ export const POST = handle(async (request) => {
       clientIp(request),
     );
     return json({ ok: true, email: r.email });
+  }
+  if (b.action === 'restoreRequest' || b.action === 'restoreConfirm' || b.action === 'cancelDeletion') {
+    if (!adminConfigured() || env().otpSecret.length < 32)
+      throw new HttpError(503, 'restore_unavailable', `This is not available right now. Write to the address in the Privacy Policy instead.`);
+    const db = await adminDb();
+    const rd: RestoreDeps = { db, accounts: accountAdmin(), mail: emailDeps(db), secret: env().otpSecret };
+    if (b.action === 'restoreRequest') {
+      await requestRestore(rd, b.email, b.reason, clientIp(request));
+      return json({ ok: true });
+    }
+    if (b.action === 'restoreConfirm') {
+      await confirmRestore(rd, b.token);
+      return json({ ok: true });
+    }
+    await cancelDeletion(rd, b.token);
+    return json({ ok: true });
   }
   const d = await deps(request);
   if (b.action === 'start') return json({ ok: true, ...(await startRecovery(d, b.email, clientIp(request), b.channel ?? 'sms')) });

@@ -54,44 +54,65 @@ export function exportText(conv: Conversation, messages: Message[]) {
   download(toPlainText(conv, messages), `${safeName(conv.title)}.txt`, 'text/plain;charset=utf-8');
 }
 
-/**
- * PDF export via the system print dialog ("Save as PDF" on desktop,
- * Share > Save to Files / Print on iPhone). Renders Markdown to static HTML.
- */
-export async function exportPdf(conv: Conversation, messages: Message[]) {
+/** Shared look of every PDF made by Atlas AI (printed by the browser, so nothing leaves the device). */
+export const PRINT_CSS = `
+body{font:13.5px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#111;max-width:760px;margin:32px auto;padding:0 24px}
+h1.t{font-size:22px;margin:0 0 4px} .meta{color:#666;font-size:12px;margin-bottom:24px}
+h2.part{font-size:18px;margin:32px 0 8px;padding-top:8px;border-top:2px solid #0f766e;page-break-before:always}
+h2.part.first{page-break-before:auto}
+h3.conv{font-size:15px;margin:22px 0 2px} .sub{color:#666;font-size:12px;margin-bottom:6px}
+section{padding:10px 0;border-top:1px solid #e5e5e5;page-break-inside:auto}
+.who{font-weight:600;font-size:11.5px;color:#0f766e;margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em}
+section.user .who{color:#555}
+pre{background:#f5f5f4;padding:10px;border-radius:6px;white-space:pre-wrap;word-break:break-word;font-size:12px}
+code{font-family:ui-monospace,Menlo,Consolas,monospace}
+table{border-collapse:collapse;width:100%;font-size:12px;margin:6px 0} th,td{border:1px solid #ddd;padding:4px 8px;text-align:left;vertical-align:top}
+th{background:#f5f5f4} .src{font-size:12px;color:#555;margin-top:8px} a{color:#0f766e;word-break:break-all}
+ul.contents{columns:2;font-size:13px} .empty{color:#777;font-style:italic}
+.hint{background:#ecfeff;border:1px solid #a5f3fc;border-radius:8px;padding:10px 12px;font-size:12.5px;margin-bottom:20px}
+@media print{.hint{display:none}}
+.katex-html{display:none}
+`;  /* maths: the browser draws the MathML copy, so no KaTeX stylesheet is needed */
+
+type RenderMd = (content: string) => string;
+
+/** Markdown to static HTML (lazy: react-dom/server and the Markdown component load only when exporting). */
+export async function markdownRenderer(): Promise<RenderMd> {
   const [{ renderToStaticMarkup }, { createElement }, { StaticMarkdown }] = await Promise.all([
     import('react-dom/server'),
     import('react'),
     import('@/components/Markdown'),
   ]);
-  const body = messages
+  return (content) => renderToStaticMarkup(createElement(StaticMarkdown, { content }));
+}
+
+/** The messages of one conversation as HTML sections. */
+export function messagesHtml(messages: Message[], md: RenderMd): string {
+  return messages
     .map((m) => {
-      const html = renderToStaticMarkup(createElement(StaticMarkdown, { content: m.content }));
-      const who = m.role === 'user' ? 'You' : `Atlas AI${m.model ? ` · ${modelShortName(m.model)}` : ''}`;
+      const html = m.content ? md(m.content) : m.error ? `<p class="empty">Error: ${escapeHtml(m.error.message)}</p>` : '';
+      const when = toDate(m.createdAt)?.toLocaleString() ?? '';
+      const who = m.role === 'user' ? 'You' : `Atlas AI${m.model ? ` · ${escapeHtml(modelShortName(m.model))}` : ''}`;
+      const att = m.attachments?.length ? `<div class="src">Attachments: ${escapeHtml(m.attachments.map((a) => a.name).join(', '))}</div>` : '';
       const sources = m.sources?.length
         ? `<div class="src"><b>Sources</b><ol>${m.sources
             .map((s) => `<li>${escapeHtml(s.title)}${s.url ? ` &mdash; <a href="${escapeHtml(s.url)}">${escapeHtml(s.url)}</a>` : ''}</li>`)
             .join('')}</ol></div>`
         : '';
-      return `<section class="${m.role}"><div class="who">${who}</div><div class="md">${html}</div>${sources}</section>`;
+      return `<section class="${m.role}"><div class="who">${who}${when ? ` <span style="font-weight:400;text-transform:none;color:#888">· ${escapeHtml(when)}</span>` : ''}</div><div class="md">${html}</div>${att}${sources}</section>`;
     })
     .join('');
-  const katexCss = 'https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.css';
-  const doc = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(conv.title)}</title>
-<link rel="stylesheet" href="${katexCss}">
-<style>
-body{font:14px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#111;max-width:760px;margin:32px auto;padding:0 24px}
-h1.t{font-size:22px;margin:0 0 4px} .meta{color:#666;font-size:12px;margin-bottom:24px}
-section{padding:12px 0;border-top:1px solid #e5e5e5;page-break-inside:auto}
-.who{font-weight:600;font-size:12px;color:#0f766e;margin-bottom:6px;text-transform:uppercase;letter-spacing:.04em}
-section.user .who{color:#555}
-pre{background:#f5f5f4;padding:10px;border-radius:6px;white-space:pre-wrap;word-break:break-word;font-size:12px}
-code{font-family:ui-monospace,Menlo,Consolas,monospace}
-table{border-collapse:collapse} th,td{border:1px solid #ddd;padding:4px 8px}
-.src{font-size:12px;color:#555;margin-top:8px} a{color:#0f766e}
-</style></head><body><h1 class="t">${escapeHtml(conv.title)}</h1><div class="meta">Exported from Atlas AI &middot; ${new Date().toLocaleString()}</div>${body}</body></html>`;
+}
 
+/**
+ * Open the system print dialog for a finished HTML body ("Save as PDF" on
+ * computers and Android, Share > Print > Save to Files on iPhone). The page
+ * title becomes the suggested file name.
+ */
+export async function printDocument(title: string, body: string) {
+  const doc = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>${PRINT_CSS}</style></head><body>${body}</body></html>`;
   const iframe = document.createElement('iframe');
+  iframe.setAttribute('aria-hidden', 'true');
   iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0';
   document.body.appendChild(iframe);
   const w = iframe.contentWindow!;
@@ -104,6 +125,13 @@ table{border-collapse:collapse} th,td{border:1px solid #ddd;padding:4px 8px}
   setTimeout(() => iframe.remove(), 60_000);
 }
 
-function escapeHtml(s: string) {
+/** One conversation as a PDF. Pass every message (not only the ones loaded on screen). */
+export async function exportPdf(conv: Conversation, messages: Message[]) {
+  const md = await markdownRenderer();
+  const body = `<h1 class="t">${escapeHtml(conv.title)}</h1><div class="meta">Exported from Atlas AI &middot; ${escapeHtml(new Date().toLocaleString())} &middot; ${messages.length} messages</div>${messagesHtml(messages, md)}`;
+  await printDocument(safeName(conv.title), body);
+}
+
+export function escapeHtml(s: string) {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 }

@@ -216,6 +216,7 @@ function Routed() {
               <Route path="/denied" element={<AuthPages mode="denied" />} />
               <Route path="/request-access" element={<AuthPages mode="request" />} />
               <Route path="/consent" element={<AuthPages mode="consent" />} />
+              <Route path="/account-restore" element={<AuthPages mode="restore" />} />
               <Route element={<PublicSite />}>
                 <Route path="/about" element={<AboutPage />} />
                 <Route path="/features" element={<FeaturesPage />} />

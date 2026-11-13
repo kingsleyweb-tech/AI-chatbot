@@ -137,7 +137,7 @@ Deleting a conversation removes its messages.`,
 - **Account:** change your display name, see your email, phone number and sign-in method.
 - **Security and activity:** see recent sign-ins and security events, and **sign out of all devices**. Other devices are signed out automatically.
 - **Download your data:** export your conversations, memories and other records as a file.
-- **Delete account:** your account is disabled immediately and permanently deleted after **30 days**. Until then an administrator can restore it if you change your mind.
+- **Delete account:** Settings › Security › Delete account. Type DELETE and enter the code we email you. Your account is disabled immediately and permanently deleted after **30 days**. Until then it can be restored: press **Cancel deletion** in the email you receive (you also get a reminder 7 days before the end), or choose **Ask to restore it** on the sign-in screen.
 
 Email and password accounts need a verified phone number. Google sign-in does not.`,
   },

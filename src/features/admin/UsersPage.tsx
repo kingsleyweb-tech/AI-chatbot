@@ -8,6 +8,7 @@ import { useAuth } from '@/state/auth';
 import { useToast } from '@/state/toast';
 import { Page } from '../shell/Page';
 import { ACTION_LABELS, fmt, type LogEntry } from './auditLog';
+import { RestoreRequests } from './RestoreRequests';
 
 /** Mirrors AdminUserRow in api/admin.ts (no secrets, masked phone only). */
 interface UserRow {
@@ -179,6 +180,7 @@ export default function UsersPage() {
           </div>
         ) : (
           <>
+            <RestoreRequests onChanged={afterChange} onOpen={setOpenUid} />
             <div className="mb-6 grid grid-cols-2 divide-x divide-y divide-border overflow-hidden rounded-2xl border border-border sm:grid-cols-4 sm:divide-y-0 lg:grid-cols-8 [&>*:nth-child(n+5)]:sm:border-t lg:[&>*:nth-child(n+5)]:border-t-0">
               <Stat label="Total users" value={stats.total} />
               <Stat label="Approved" value={stats.approved} />

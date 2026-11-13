@@ -1,3 +1,5 @@
+import { CONTACT_EMAIL } from '../../../server/shared/legal';
+
 /**
  * Privacy Policy and Terms of Use, version 1.4, as shown on /privacy and /terms.
  *
@@ -38,7 +40,7 @@
  */
 
 export const LEGAL_UPDATED = '8 November 2026';
-export const CONTACT_EMAIL = 'kingsleyanaab99@gmail.com';
+export { CONTACT_EMAIL };
 
 const GEMINI_TERMS = 'https://aistudio.google.com/docs/terms';
 const CLOUDFLARE_DATA = 'https://developers.cloudflare.com/workers-ai/platform/data-usage/';

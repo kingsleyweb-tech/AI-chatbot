@@ -422,7 +422,7 @@ Check your status on the request screen with **Refresh status**. The app opens a
 
 ## Delete your account
 
-**Settings → Delete account** disables your account immediately. It is permanently deleted after **30 days**; until then an administrator can restore it if you change your mind.`,
+**Settings → Security → Delete account** disables your account immediately (you confirm by typing DELETE and entering a code sent to your email). To change your mind, press **Cancel deletion** in the email you receive (a reminder follows 7 days before the end), or choose **Ask to restore it** on the sign-in screen. It is permanently deleted after **30 days**; until then an administrator can restore it if you change your mind.`,
   },
 
   // ---------------------------------------------------------------- Privacy & data
