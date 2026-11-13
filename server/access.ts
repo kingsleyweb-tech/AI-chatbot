@@ -164,6 +164,30 @@ function denied(state: GateState): HttpError {
  * email on the legacy allowlist (config/access). The Firestore rules apply
  * the same conditions to every database read and write.
  */
+/** How often "last active" is written per account (Admin › Users and Activity show it). */
+export const ACTIVE_WRITE_MS = 5 * 60_000;
+const lastActiveWrite = new Map<string, number>();
+
+/**
+ * users/{uid}.lastActiveAt: when the account last used the app (time only, never
+ * what was done). Written at most once every ACTIVE_WRITE_MS per account, so a busy
+ * user costs a few writes an hour. Never blocks or fails the request.
+ */
+export async function noteActive(sdb: Firestore, uid: string, stored: number | undefined, now = Date.now()) {
+  const last = Math.max(stored ?? 0, lastActiveWrite.get(uid) ?? 0);
+  if (now - last < ACTIVE_WRITE_MS) return;
+  lastActiveWrite.set(uid, now);
+  if (lastActiveWrite.size > 5000) lastActiveWrite.clear();
+  await sdb.set(`users/${uid}`, { lastActiveAt: now }, true).catch((err) => {
+    console.warn('[active] not recorded', err instanceof Error ? err.message : err);
+  });
+}
+
+/** test hook */
+export function clearActiveCache() {
+  lastActiveWrite.clear();
+}
+
 export async function requireAllowedUser(request: Request): Promise<Ctx> {
   const user = await requireUser(request);
   if (needsPhone(user)) {
@@ -184,6 +208,7 @@ export async function requireAllowedUser(request: Request): Promise<Ctx> {
       if (block) throw block;
       const r = decideAccess(user, profile?.data, config, env().adminEmails);
       if (r.state !== 'approved') throw denied(r.state);
+      await noteActive(sdb, user.uid, (profile?.data as { lastActiveAt?: number } | undefined)?.lastActiveAt);
       return { user, db, admin: r.admin };
     } catch (err) {
       // The server identity is unavailable (rules not published yet): fall back to the user's own token.

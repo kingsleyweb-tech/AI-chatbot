@@ -1,4 +1,4 @@
-import { Activity, ArrowRight, Gauge, HeartPulse, Infinity as InfinityIcon, ScrollText, UserPlus, Users } from 'lucide-react';
+import { Activity, ArrowRight, Gauge, HeartPulse, Infinity as InfinityIcon, Radio, ScrollText, UserPlus, Users } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { Spinner } from '@/components/ui';
@@ -15,6 +15,9 @@ interface Stats {
   newUsers: number;
   newDays: number;
   pendingApproval: number;
+  activeNow: number;
+  activeToday: number;
+  activeWeek: number;
 }
 
 function Tile({ label, value, hint, to }: { label: string; value: ReactNode; hint?: string; to?: string }) {
@@ -35,6 +38,7 @@ function Tile({ label, value, hint, to }: { label: string; value: ReactNode; hin
 }
 
 const SECTIONS = [
+  { to: '/admin/activity', icon: Radio, label: 'Activity & Requests', text: 'Restore requests, scheduled deletions and what users do.' },
   { to: '/admin/users', icon: Users, label: 'User Management', text: 'Accounts, suspension, deletion and approval.' },
   { to: '/admin/requests', icon: UserPlus, label: 'Access Requests', text: 'Approve or reject new sign-ups.' },
   { to: '/admin/usage', icon: Gauge, label: 'AI Usage & Limits', text: 'Allowances, profiles and resets.' },
@@ -70,6 +74,7 @@ export default function AdminOverviewPage() {
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Tile label="Accounts" value={stats ? stats.total : dash} hint={stats ? `${stats.active} active · ${stats.suspended} suspended` : undefined} to="/admin/users" />
         <Tile label="New accounts" value={stats ? stats.newUsers : dash} hint={stats ? `last ${stats.newDays} days` : undefined} to="/admin/users" />
+        <Tile label="Active now" value={stats ? stats.activeNow : dash} hint={stats ? `${stats.activeToday} in 24 hours · ${stats.activeWeek} in 7 days` : undefined} to="/admin/users" />
         <Tile label="Waiting for approval" value={pending} to="/admin/requests" />
         <Tile label="At an AI limit" value={usage ? exhausted : dash} hint={usage ? `${near} near a limit` : undefined} to="/admin/usage" />
         <Tile label="Unlimited grants" value={usage ? unlimited : dash} hint="administrators not counted" to="/admin/unlimited" />

@@ -69,10 +69,10 @@ import {
   type AuthAccount,
 } from '../server/admin.js';
 import { maskPhone } from '../server/auth/phone.js';
-import { closeRequest, pendingRestoreRequests, remindDue } from '../server/account/restore.js';
+import { allRestoreRequests, closeRequest, pendingRestoreRequests, remindDue } from '../server/account/restore.js';
 import { env } from '../server/env.js';
 import type { Firestore } from '../server/firestore.js';
-import { noteUnauthorizedAccess, recordAdminAction } from '../server/account/events.js';
+import { listActivity, noteUnauthorizedAccess, pruneActivity, recordAdminAction } from '../server/account/events.js';
 import { handle, HttpError, json, readJson } from '../server/http.js';
 import { DEFAULT_FEEDS } from '../server/news/sources.js';
 import { loadFeeds, newsAdminView, saveFeedConfig } from '../server/news/stats.js';
@@ -100,7 +100,8 @@ const schema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('reactivate'), uid }),
   z.object({ action: z.literal('delete'), uid, confirmEmail: z.string().max(320) }),
   z.object({ action: z.literal('restore'), uid }),
-  z.object({ action: z.literal('restoreRequests') }),
+  z.object({ action: z.literal('restoreRequests'), history: z.boolean().optional() }),
+  z.object({ action: z.literal('activity'), before: z.number().int().positive().optional() }),
   z.object({ action: z.literal('restoreDecline'), uid }),
   z.object({
     action: z.literal('purge'),
@@ -220,6 +221,7 @@ interface Profile extends ProfileStatus {
   photoURL?: string | null;
   phoneVerified?: boolean;
   lastLoginAt?: string;
+  lastActiveAt?: number;
   accessStatus?: string;
   consent?: Partial<ConsentRecord> | null;
 }
@@ -232,6 +234,8 @@ export interface AdminUserRow {
   providers: string[];
   createdAt: number | null;
   lastLoginAt: number | null;
+  /** last time the account used the app (written at most every 5 minutes; time only) */
+  lastActiveAt: number | null;
   status: 'active' | 'suspended' | 'deleted';
   phoneMasked: string | null;
   phoneVerified: boolean;
@@ -253,6 +257,8 @@ export interface AdminUserRow {
 }
 
 const NEW_DAYS = 7;
+/** "Active now": used the app within this window (last-active is written at most every 5 minutes) */
+const ACTIVE_NOW_MS = 10 * 60_000;
 
 /** "Your account has been approved" by email and SMS, after the response. */
 function notifyApproved(db: Firestore, uids: string[]) {
@@ -321,6 +327,7 @@ function row(a: AuthAccount, p: Profile | undefined, access: AccessConfig | null
     providers: a.providers,
     createdAt: a.createdAt,
     lastLoginAt: a.lastLoginAt,
+    lastActiveAt: typeof p?.lastActiveAt === 'number' ? p.lastActiveAt : null,
     status,
     phoneMasked: p?.phoneNumber ? maskPhone(p.phoneNumber) : null,
     phoneVerified: a.claims.phoneVerified === true && Boolean(p?.phoneNumber),
@@ -365,6 +372,10 @@ export function stats(rows: AdminUserRow[], now = Date.now()) {
     pendingDeletion: rows.filter((r) => r.status === 'deleted').length,
     newUsers: rows.filter((r) => (r.createdAt ?? 0) >= recent).length,
     newDays: NEW_DAYS,
+    /** accounts that used the app in the last 10 minutes, 24 hours and 7 days */
+    activeNow: rows.filter((r) => (r.lastActiveAt ?? 0) >= now - ACTIVE_NOW_MS).length,
+    activeToday: rows.filter((r) => (r.lastActiveAt ?? 0) >= now - 86_400_000).length,
+    activeWeek: rows.filter((r) => (r.lastActiveAt ?? 0) >= now - 7 * 86_400_000).length,
     google: rows.filter((r) => r.providers.includes('google.com')).length,
     password: rows.filter((r) => r.providers.includes('password')).length,
     phoneVerified: rows.filter((r) => r.phoneVerified).length,
@@ -503,6 +514,7 @@ export const GET = handle(async (request) => {
         return 0;
       })
     : 0;
+  const activityRemoved = await pruneActivity(db).catch(() => 0);
   const result = await purgeDue(db);
   // Records kept after a purge (admin log entries, access request) go 30 days later.
   const retention = await cleanupPurgedRecords(db).catch((err) => {
@@ -519,6 +531,7 @@ export const GET = handle(async (request) => {
     ok: true,
     purged: result.purged.length,
     reminders,
+    activityRemoved,
     failed: result.failed.length,
     retentionRemoved: retention.removed,
     knowledge,
@@ -1042,16 +1055,32 @@ export const POST = handle(async (request) => {
   }
 
   if (b.action === 'restoreRequests') {
-    const requests = await pendingRestoreRequests(db);
+    const requests = b.history ? await allRestoreRequests(db) : await pendingRestoreRequests(db);
     return json({
       requests: requests.map((r) => ({
         uid: r.uid,
         email: r.email,
         reason: r.reason,
+        status: r.status,
         requestedAt: r.confirmedAt ?? r.createdAt,
+        decidedAt: r.decidedAt ?? null,
         purgeAfter: r.purgeAfter,
         deletedBy: r.deletedBy,
       })),
+    });
+  }
+  if (b.action === 'activity') {
+    // What happened on accounts (sign-ins, sign-ups, security changes, deletions, restores).
+    // Never conversation content; names and addresses come from the profiles.
+    const rows = await listActivity(db, b.before, 100);
+    const uids = [...new Set(rows.map((r) => r.data.uid))];
+    const profiles = await Promise.all(
+      uids.map((u) => db.get<{ email?: string | null; displayName?: string | null; name?: string | null }>(`users/${u}`).catch(() => null)),
+    );
+    const who = new Map(uids.map((u, i) => [u, { email: profiles[i]?.data.email ?? null, name: profiles[i]?.data.displayName ?? profiles[i]?.data.name ?? null }]));
+    return json({
+      entries: rows.map((r) => ({ id: r.id, ...r.data, ...who.get(r.data.uid) })),
+      more: rows.length === 100,
     });
   }
   if (b.action === 'restoreDecline') {

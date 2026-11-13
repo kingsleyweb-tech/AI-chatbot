@@ -39,7 +39,11 @@ export class FakeDb {
     const depth = coll.split('/').length + 1;
     let rows = [...this.docs.entries()]
       .filter(([p]) => p.startsWith(coll + '/') && p.split('/').length === depth)
-      .filter(([, d]) => (opts.where ?? []).every(([f, op, v]) => op === 'EQUAL' && d[f] === v))
+      .filter(([, d]) =>
+        (opts.where ?? []).every(([f, op, v]) =>
+          op === 'EQUAL' ? d[f] === v : op === 'LESS_THAN' ? (d[f] as number) < (v as number) : op === 'GREATER_THAN' ? (d[f] as number) > (v as number) : false,
+        ),
+      )
       .map(([p, d]) => ({ id: p.split('/').pop()!, path: p, data: structuredClone(d) as T, updateTime: this.times.get(p) }));
     if (opts.orderBy) {
       const f = opts.orderBy;

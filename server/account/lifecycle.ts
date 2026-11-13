@@ -24,7 +24,7 @@ import { accountAdmin, SERVER_UID, type AuthAccount } from '../admin.js';
 import { phoneKey } from '../auth/otp.js';
 import { env } from '../env.js';
 import type { Firestore, Write } from '../firestore.js';
-import { recordAdminAction, recordSecurityEvent, type AdminAction } from './events.js';
+import { deleteActivityOf, recordAdminAction, recordSecurityEvent, type AdminAction } from './events.js';
 
 export const DELETION_GRACE_DAYS = 30;
 export type AccountStatus = 'active' | 'suspended' | 'deleted';
@@ -205,7 +205,8 @@ export async function purgeAccount(db: Firestore, actor: Actor | null, target: A
   // ElevenLabs request history (no text, but tied to the account)
   const voiceLogs = await db.list('elevenlabsRequests', { where: [['uid', 'EQUAL', target.uid]], limit: 500 });
   for (const l of voiceLogs) await db.delete(l.path);
-  const documents = (await deleteTree(db, `users/${target.uid}`)) + (await deleteReportsOf(db, target.uid)) + smsLogs.length + voiceLogs.length;
+  const documents =
+    (await deleteTree(db, `users/${target.uid}`)) + (await deleteReportsOf(db, target.uid)) + (await deleteActivityOf(db, target.uid)) + smsLogs.length + voiceLogs.length;
   await db.commit(writes);
   if (await accountAdmin().get(target.uid)) await accountAdmin().remove(target.uid);
   if (actor) await log(db, 'user_purged', actor, target, `${documents} documents removed`);

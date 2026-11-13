@@ -25,6 +25,7 @@ import { sendEmail, type EmailDeps } from '../email/service.js';
 import type { Firestore } from '../firestore.js';
 import { HttpError } from '../http.js';
 import { CONTACT_EMAIL } from '../shared/legal.js';
+import { recordSecurityEvent } from './events.js';
 import { restoreAccount, type ProfileStatus } from './lifecycle.js';
 
 export type RestoreLinkKind = 'cancel' | 'confirm';
@@ -134,6 +135,7 @@ export async function requestRestore(deps: RestoreDeps, rawEmail: string, reason
     deletedBy: p.deletedBy ?? 'admin',
   };
   await deps.db.set(`restoreRequests/${account.uid}`, req);
+  await recordSecurityEvent(deps.db, account.uid, 'restore_requested', { detail: req.reason ? `Reason: ${req.reason}` : 'No reason given' }, now);
   await sendEmail(deps.mail, {
     type: 'restore_confirm',
     category: 'critical',
@@ -156,6 +158,13 @@ export async function confirmRestore(deps: RestoreDeps, token: string): Promise<
   const p = (await deps.db.get<ProfileStatus>(`users/${t.uid}`))?.data;
   if (!p || p.accountStatus !== 'deleted' || !p.purgeAfter || p.purgeAfter <= now) throw invalid();
   await deps.db.set(path, { status: 'pending', confirmedAt: now }, true);
+  await recordSecurityEvent(deps.db, t.uid, 'restore_confirmed', { detail: 'Email address confirmed; waiting for an administrator' }, now);
+}
+
+/** Every request, newest first (Admin › Activity & Requests history). */
+export async function allRestoreRequests(db: Firestore, limit = 200): Promise<RestoreRequest[]> {
+  const rows = await db.list<RestoreRequest>('restoreRequests', { limit });
+  return rows.map((r) => r.data).sort((a, b) => b.createdAt - a.createdAt);
 }
 
 /** Confirmed requests waiting for a decision (Admin › Users). */

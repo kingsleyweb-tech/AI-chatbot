@@ -120,6 +120,7 @@ describe('admin statistics', () => {
     providers: ['password'],
     createdAt: Date.parse('2026-01-01'),
     lastLoginAt: null,
+    lastActiveAt: null,
     status: 'active',
     phoneMasked: null,
     phoneVerified: false,
@@ -143,6 +144,20 @@ describe('admin statistics', () => {
       now,
     );
     expect(s).toMatchObject({ total: 3, active: 1, suspended: 1, pendingDeletion: 1, newUsers: 1, google: 2, password: 2, phoneVerified: 1, phoneUnverified: 2, phoneRequiredPending: 2 });
+  });
+
+  it('counts who was active now, in 24 hours and in 7 days', () => {
+    const s = stats(
+      [
+        r({ lastActiveAt: now - 2 * 60_000 }),
+        r({ lastActiveAt: now - 3 * 3_600_000 }),
+        r({ lastActiveAt: now - 3 * 86_400_000 }),
+        r({ lastActiveAt: now - 40 * 86_400_000 }),
+        r({ lastActiveAt: null }),
+      ],
+      now,
+    );
+    expect(s).toMatchObject({ activeNow: 1, activeToday: 2, activeWeek: 3 });
   });
 });
 

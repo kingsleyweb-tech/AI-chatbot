@@ -41,6 +41,7 @@ const UnlimitedAccessPage = lazy(() => import('./features/admin/UnlimitedAccessP
 const UsageAnalyticsPage = lazy(() => import('./features/admin/UsageAnalyticsPage'));
 const SystemHealthPage = lazy(() => import('./features/admin/SystemHealthPage'));
 const AuditLogsPage = lazy(() => import('./features/admin/AuditLogsPage'));
+const ActivityPage = lazy(() => import('./features/admin/ActivityPage'));
 const AccessSettingsPage = lazy(() => import('./features/admin/AccessSettingsPage'));
 const UsagePage = lazy(() => import('./features/usage/UsagePage'));
 const ReportIssuePage = lazy(() => import('./features/support/ReportIssuePage'));
@@ -270,6 +271,7 @@ function Routed() {
                 <Route index element={<AdminOnly><AdminOverviewPage /></AdminOnly>} />
                 <Route path="users" element={<AdminOnly><UsersPage /></AdminOnly>} />
                 <Route path="requests" element={<AdminOnly><AccessRequestsPage /></AdminOnly>} />
+                <Route path="activity" element={<AdminOnly><ActivityPage /></AdminOnly>} />
                 <Route path="usage" element={<AdminOnly><UsageEnvironmentScope><UsageLimitsPage /></UsageEnvironmentScope></AdminOnly>} />
                 <Route path="unlimited" element={<AdminOnly><UsageEnvironmentScope><UnlimitedAccessPage /></UsageEnvironmentScope></AdminOnly>} />
                 <Route path="analytics" element={<AdminOnly><UsageEnvironmentScope><UsageAnalyticsPage /></UsageEnvironmentScope></AdminOnly>} />

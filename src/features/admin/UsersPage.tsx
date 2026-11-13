@@ -9,6 +9,7 @@ import { useToast } from '@/state/toast';
 import { Page } from '../shell/Page';
 import { ACTION_LABELS, fmt, type LogEntry } from './auditLog';
 import { RestoreRequests } from './RestoreRequests';
+import { ActiveDot, ActiveSummary, activeLevel, activeText } from './activeStatus';
 
 /** Mirrors AdminUserRow in api/admin.ts (no secrets, masked phone only). */
 interface UserRow {
@@ -19,6 +20,7 @@ interface UserRow {
   providers: string[];
   createdAt: number | null;
   lastLoginAt: number | null;
+  lastActiveAt: number | null;
   status: 'active' | 'suspended' | 'deleted';
   phoneMasked: string | null;
   phoneVerified: boolean;
@@ -38,6 +40,9 @@ interface Stats {
   pendingDeletion: number;
   newUsers: number;
   newDays: number;
+  activeNow: number;
+  activeToday: number;
+  activeWeek: number;
   google: number;
   password: number;
   phoneVerified: number;
@@ -58,6 +63,16 @@ interface Detail {
 }
 
 type Action = { kind: 'suspend' | 'reactivate' | 'delete' | 'restore' | 'purge'; user: UserRow };
+
+function matchesActivity(at: number | null, f: 'all' | 'now' | 'today' | 'week' | 'inactive30' | 'never') {
+  const ago = at ? Date.now() - at : Infinity;
+  if (f === 'now') return activeLevel(at) === 'now';
+  if (f === 'today') return ago < 86_400_000;
+  if (f === 'week') return ago < 7 * 86_400_000;
+  if (f === 'inactive30') return ago >= 30 * 86_400_000;
+  if (f === 'never') return !at;
+  return true;
+}
 
 const providerName = (p: string) => (p === 'google.com' ? 'Google' : p === 'password' ? 'Email' : p === 'apple.com' ? 'Apple' : p);
 
@@ -100,6 +115,8 @@ export default function UsersPage() {
   const [status, setStatus] = useState<'all' | UserRow['status'] | UserRow['accessStatus']>('all');
   const [registered, setRegistered] = useState<'all' | '7' | '30' | '90'>('all');
   const [phone, setPhone] = useState<'all' | 'verified' | 'unverified'>('all');
+  const [activity, setActivity] = useState<'all' | 'now' | 'today' | 'week' | 'inactive30' | 'never'>('all');
+  const [sort, setSort] = useState<'registered' | 'active'>('registered');
   const [openUid, setOpenUid] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -137,16 +154,18 @@ export default function UsersPage() {
     if (!rows) return [];
     const needle = q.trim().toLowerCase();
     const since = registered === 'all' ? 0 : Date.now() - Number(registered) * 86_400_000;
-    return rows.filter(
+    const list = rows.filter(
       (r) =>
         (!needle || r.name.toLowerCase().includes(needle) || (r.email ?? '').toLowerCase().includes(needle) || (r.phoneMasked ?? '').replace(/\D/g, '').includes(needle.replace(/\D/g, '') || '\u0000')) &&
         (provider === 'all' || r.providers.includes(provider)) &&
         (status === 'all' ||
           (status === 'active' || status === 'suspended' || status === 'deleted' ? r.status === status : r.accessStatus === status && r.status === 'active')) &&
         (phone === 'all' || (phone === 'verified') === r.phoneVerified) &&
+        matchesActivity(r.lastActiveAt, activity) &&
         (r.createdAt ?? 0) >= since,
     );
-  }, [rows, q, provider, status, registered, phone]);
+    return sort === 'active' ? [...list].sort((a, b) => (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0)) : list;
+  }, [rows, q, provider, status, registered, phone, activity, sort]);
 
   if (!admin) return <Navigate to="/settings" replace />;
 
@@ -212,7 +231,7 @@ export default function UsersPage() {
                     <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-subtle" />
                     <Input aria-label="Search users" placeholder="Search by name, email or phone" value={q} onChange={(e) => setQ(e.target.value)} className="pl-9" />
                   </div>
-                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:flex">
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:flex lg:flex-wrap">
                     <Select
                       id="f-provider"
                       value={provider}
@@ -249,6 +268,28 @@ export default function UsersPage() {
                       ]}
                     />
                     <Select
+                      id="f-activity"
+                      value={activity}
+                      onChange={setActivity}
+                      options={[
+                        { value: 'all', label: 'Any activity' },
+                        { value: 'now', label: 'Active now' },
+                        { value: 'today', label: 'Active in 24 hours' },
+                        { value: 'week', label: 'Active in 7 days' },
+                        { value: 'inactive30', label: 'Inactive 30+ days' },
+                        { value: 'never', label: 'Never active' },
+                      ]}
+                    />
+                    <Select
+                      id="f-sort"
+                      value={sort}
+                      onChange={setSort}
+                      options={[
+                        { value: 'registered', label: 'Newest first' },
+                        { value: 'active', label: 'Recently active first' },
+                      ]}
+                    />
+                    <Select
                       id="f-registered"
                       value={registered}
                       onChange={setRegistered}
@@ -262,6 +303,7 @@ export default function UsersPage() {
                   </div>
                 </div>
 
+                <ActiveSummary now={stats.activeNow} today={stats.activeToday} week={stats.activeWeek} className="mb-3" />
                 {filtered.length === 0 ? (
                   <p className="py-10 text-center text-sm text-muted">{rows.length ? 'No users match these filters.' : 'No users yet.'}</p>
                 ) : (
@@ -270,7 +312,7 @@ export default function UsersPage() {
                       <span>User</span>
                       <span>Sign-in and phone</span>
                       <span>Registered</span>
-                      <span>Last sign-in</span>
+                      <span>Last active</span>
                       <span>Status</span>
                     </div>
                     <ul className="divide-y divide-border">
@@ -285,6 +327,7 @@ export default function UsersPage() {
                               <Avatar user={r} />
                               <span className="min-w-0">
                                 <span className="flex items-center gap-1.5 truncate text-[15px]">
+                                  <ActiveDot at={r.lastActiveAt} className="md:hidden" />
                                   <span className="truncate">{r.name}</span>
                                   {r.admin && <Badge>{r.owner ? 'Owner' : 'Admin'}</Badge>}
                                   {r.accessStatus === 'pending' && <Badge tone="warn">Pending approval</Badge>}
@@ -302,7 +345,10 @@ export default function UsersPage() {
                               <span className="block truncate text-xs text-muted">{r.phoneMasked ? `${r.phoneMasked}${r.phoneVerified ? ' · verified' : ' · unverified'}` : 'No phone'}</span>
                             </span>
                             <span className="hidden text-sm text-muted md:block">{fmt(r.createdAt)}</span>
-                            <span className="hidden text-sm text-muted md:block">{fmt(r.lastLoginAt)}</span>
+                            <span className="hidden min-w-0 items-center gap-2 text-sm text-muted md:flex">
+                              <ActiveDot at={r.lastActiveAt} />
+                              <span className={cn('truncate', activeLevel(r.lastActiveAt) === 'now' && 'font-medium text-fg')}>{activeText(r.lastActiveAt)}</span>
+                            </span>
                             <span className="justify-self-end md:justify-self-start">
                               <StatusBadge status={r.status} />
                             </span>
@@ -437,6 +483,12 @@ function UserDetail({ uid, selfUid, onClose, onChanged }: { uid: string; selfUid
               )}
             </DetailRow>
             <DetailRow label="Registered">{fmt(u.createdAt, true)}</DetailRow>
+            <DetailRow label="Last active">
+              <span className="inline-flex items-center gap-2">
+                <ActiveDot at={u.lastActiveAt} /> {activeText(u.lastActiveAt)}
+                {u.lastActiveAt ? <span className="text-muted">({fmt(u.lastActiveAt, true)})</span> : null}
+              </span>
+            </DetailRow>
             <DetailRow label="Last sign-in">{fmt(u.lastLoginAt, true)}</DetailRow>
             {u.status === 'suspended' && <DetailRow label="Suspended">{fmt(detail.account.suspendedAt, true)}</DetailRow>}
             {u.status === 'deleted' && <DetailRow label="Permanent deletion">{u.purgeAfter ? fmt(u.purgeAfter, true) : 'Scheduled'}</DetailRow>}

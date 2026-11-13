@@ -15,6 +15,7 @@ import {
   MessageSquareText,
   Newspaper,
   PanelLeftClose,
+  Radio,
   ScrollText,
   ShieldCheck,
   UserPlus,
@@ -78,6 +79,7 @@ export function AdminSidebar({ onClose, onCollapse }: { onClose?: () => void; on
             </div>
             <Heading>Access</Heading>
             <div className="space-y-0.5">
+              <NavItem to="/admin/activity" icon={<Radio className={icon} />} label="Activity & Requests" onClick={close} />
               <NavItem to="/admin/users" icon={<Users className={icon} />} label="User Management" onClick={close} />
               <NavItem to="/admin/requests" icon={<UserPlus className={icon} />} label="Access Requests" count={pending} onClick={close} />
               <NavItem to="/admin/access" icon={<ShieldCheck className={icon} />} label="Access & Registration" onClick={close} />

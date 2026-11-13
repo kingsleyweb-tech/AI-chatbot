@@ -34,6 +34,8 @@ export const SECURITY_EVENTS = [
   'terms_accepted',
   'email_verified',
   'device_removed',
+  'restore_requested',
+  'restore_confirmed',
 ] as const;
 export type SecurityEventType = (typeof SECURITY_EVENTS)[number];
 
@@ -142,6 +144,76 @@ export async function recordSecurityEvent(
     .catch((err) =>
       console.warn('[security] event not recorded', type, err instanceof Error ? err.message : err),
     );
+  // Central copy for Admin › Activity & Requests (what happened, never conversation content).
+  await recordActivity(db, uid, type, meta, now);
+}
+
+export const ACTIVITY_PATH = 'activity';
+export const ACTIVITY_RETENTION_DAYS = 90;
+export interface ActivityEntry {
+  uid: string;
+  type: SecurityEventType;
+  atMs: number;
+  device: string | null;
+  provider: string | null;
+  by: 'user' | 'admin' | 'system';
+  detail: string | null;
+}
+
+/** activity/{id}: one line per account event across every user, kept 90 days (daily job). */
+export async function recordActivity(
+  db: Firestore,
+  uid: string,
+  type: SecurityEventType,
+  meta: { provider?: string; device?: string; by?: 'user' | 'admin' | 'system'; detail?: string } = {},
+  now = Date.now(),
+): Promise<void> {
+  const entry: ActivityEntry = {
+    uid,
+    type,
+    atMs: now,
+    device: meta.device ?? null,
+    provider: meta.provider ?? null,
+    by: meta.by ?? 'user',
+    detail: meta.detail?.slice(0, 200) ?? null,
+  };
+  await db
+    .set(`${ACTIVITY_PATH}/${eventId(now)}`, entry)
+    .catch((err) =>
+      console.warn('[activity] not recorded', type, err instanceof Error ? err.message : err),
+    );
+}
+
+/** Newest first; `before` pages back. */
+export async function listActivity(db: Firestore, before?: number, limit = 100) {
+  return db.list<ActivityEntry>(ACTIVITY_PATH, {
+    orderBy: 'atMs',
+    direction: 'DESCENDING',
+    limit,
+    ...(before ? { where: [['atMs', 'LESS_THAN', before]] as [string, string, unknown][] } : {}),
+  });
+}
+
+/** Daily job: remove entries older than the retention period. */
+export async function pruneActivity(db: Firestore, now = Date.now()): Promise<number> {
+  const old = await db.list<ActivityEntry>(ACTIVITY_PATH, {
+    where: [['atMs', 'LESS_THAN', now - ACTIVITY_RETENTION_DAYS * 86_400_000]],
+    limit: 400,
+  });
+  if (old.length) await db.commit(old.map((d) => ({ op: 'delete' as const, path: d.path })));
+  return old.length;
+}
+
+/** Permanent deletion: the account's lines go too. */
+export async function deleteActivityOf(db: Firestore, uid: string): Promise<number> {
+  let n = 0;
+  for (let guard = 0; guard < 50; guard++) {
+    const rows = await db.list<ActivityEntry>(ACTIVITY_PATH, { where: [['uid', 'EQUAL', uid]], limit: 400 });
+    if (!rows.length) break;
+    await db.commit(rows.map((d) => ({ op: 'delete' as const, path: d.path })));
+    n += rows.length;
+  }
+  return n;
 }
 
 export async function recordAdminAction(
