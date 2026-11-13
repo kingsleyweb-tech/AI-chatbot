@@ -76,7 +76,7 @@ import { listActivity, noteUnauthorizedAccess, pruneActivity, recordAdminAction 
 import { handle, HttpError, json, readJson } from '../server/http.js';
 import { DEFAULT_FEEDS } from '../server/news/sources.js';
 import { loadFeeds, newsAdminView, saveFeedConfig } from '../server/news/stats.js';
-import { emailOverview } from '../server/email/log.js';
+import { emailOverview, pruneEmailLog } from '../server/email/log.js';
 import { EmailError, getEmailProvider } from '../server/email/provider.js';
 import { optionalLimit } from '../server/email/service.js';
 import { smsOverview } from '../server/sms/log.js';
@@ -515,6 +515,7 @@ export const GET = handle(async (request) => {
       })
     : 0;
   const activityRemoved = await pruneActivity(db).catch(() => 0);
+  const emailLogRemoved = await pruneEmailLog(db).catch(() => 0);
   const result = await purgeDue(db);
   // Records kept after a purge (admin log entries, access request) go 30 days later.
   const retention = await cleanupPurgedRecords(db).catch((err) => {
@@ -532,6 +533,7 @@ export const GET = handle(async (request) => {
     purged: result.purged.length,
     reminders,
     activityRemoved,
+    emailLogRemoved,
     failed: result.failed.length,
     retentionRemoved: retention.removed,
     knowledge,

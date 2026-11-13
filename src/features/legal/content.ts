@@ -39,7 +39,7 @@ import { CONTACT_EMAIL } from '../../../server/shared/legal';
  *   kept once no longer needed for standard requests; operational metadata kept.
  * - Email (server/email): sent through Brevo. emailLog/{id} keeps the type, a
  *   masked address and the delivery status, never the subject, body or code;
- *   it is not pruned automatically. Optional categories follow
+ *   kept 90 days (pruneEmailLog, daily cron) and deleted on purge. Optional categories follow
  *   users/{uid}.emailPrefs (Settings → Security → Notifications).
  * - Last active (server/access.ts noteActive): users/{uid}.lastActiveAt, the
  *   time only, written at most every 5 minutes; shown to administrators.
@@ -214,7 +214,7 @@ export const PRIVACY: LegalDoc = {
         'Images Atlas AI created for you, with their prompts: until you delete the image in Images, delete the conversation it was created in, or your account is deleted. Deleting an image does not delete the chat message that showed it, and deleting only that message does not delete the image.',
         'Profile (including your last-active time), settings, usage counts, security records, recognised devices, acceptance history, saved web-search results, support reports, notifications and text-message records: for as long as your account exists, then deleted with it.',
         'Activity log entries seen by administrators: 90 days, then deleted automatically, and deleted earlier if your account is permanently deleted.',
-        'Email records: kept so that we can check emails are being delivered. They are not yet deleted automatically and are not removed when an account is deleted; they hold only a partly hidden address. You can ask us to delete them.',
+        'Email records: 90 days, then deleted automatically, and deleted earlier if your account is permanently deleted.',
         'Verification and recovery codes: a code stops working after 5 minutes or after too many attempts. Codes that Atlas AI creates are stored only as one-way hashes; codes created by Vynfy are checked by Vynfy and not stored by Atlas AI.',
         'Account deletion: you can delete your account yourself in Settings → Security → Delete account, or ask us to (see "Your rights"). The account is disabled at once and can still be restored for 30 days: with the Cancel deletion button in the email we send you (a reminder follows 7 days before the end), by choosing "Ask to restore it" on the sign-in screen, or by contacting us. After 30 days a daily job permanently deletes it, together with everything listed above, any restore request and your sign-in account.',
         'Kept after an account is permanently deleted: the record of administrator actions about the account (which includes its email address) and its access request, for accountability. They are deleted automatically 30 days after the account is permanently deleted, by the same daily job.',

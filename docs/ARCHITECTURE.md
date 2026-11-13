@@ -234,7 +234,7 @@ All user data is under `users/{uid}`:
   - a per-address limit for notifications (6 per hour)
   - an app-wide daily cap (`emailStats/{day}`, `EMAIL_DAILY_CAP`)
 - **Templates** (`server/email/templates.ts`): table-based HTML plus plain text, with the logo (`/pwa-192.png` on `PUBLIC_APP_URL`) and the Atlas AI name, in deep teal and cyan. Every value is escaped.
-- **Log** (`emailLog`, server-only): type, masked recipient, provider message id and status. It never holds the subject, body, code or full address.
+- **Log** (`emailLog`, server-only): type, masked recipient, provider message id and status. It never holds the subject, body, code or full address. Kept 90 days (`pruneEmailLog` in the daily cron) and deleted with the account on permanent deletion (`deleteEmailLogOf`).
   - *Accepted* means Brevo took the email.
   - *Delivered*, *bounced*, *blocked* and *deferred* come only from Brevo's event API, which is polled when an administrator opens Admin > Email.
 - **Email codes** (`emailCodes/{uid}_{purpose}`):

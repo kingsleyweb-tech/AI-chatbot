@@ -143,6 +143,30 @@ export interface EmailOverview {
   recent: (EmailLogEntry & { id: string })[];
 }
 
+/** Email records are kept 90 days (Privacy Policy), then removed by the daily cron. */
+export const EMAIL_LOG_RETENTION_DAYS = 90;
+
+export async function pruneEmailLog(db: Firestore, now = Date.now()): Promise<number> {
+  const old = await db.list<EmailLogEntry>('emailLog', {
+    where: [['at', 'LESS_THAN', now - EMAIL_LOG_RETENTION_DAYS * 86_400_000]],
+    limit: 400,
+  });
+  if (old.length) await db.commit(old.map((d) => ({ op: 'delete' as const, path: d.path })));
+  return old.length;
+}
+
+/** Permanent deletion: the account's email records go too. */
+export async function deleteEmailLogOf(db: Firestore, uid: string): Promise<number> {
+  let n = 0;
+  for (let guard = 0; guard < 50; guard++) {
+    const rows = await db.list<EmailLogEntry>('emailLog', { where: [['uid', 'EQUAL', uid]], limit: 400 });
+    if (!rows.length) break;
+    await db.commit(rows.map((d) => ({ op: 'delete' as const, path: d.path })));
+    n += rows.length;
+  }
+  return n;
+}
+
 /** Stats over the most recent 500 entries and the latest 60 rows. Delivered counts only provider-confirmed deliveries. */
 export async function emailOverview(
   db: Firestore,
